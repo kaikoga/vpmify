@@ -53,6 +53,10 @@ func TestPathFor(t *testing.T) {
 	if got, ok := root.PathFor(version(t, "1.0.0")); got != "" || !ok {
 		t.Errorf("root: PathFor = %q %v", got, ok)
 	}
+	rootRule := mustParse(t, `{"id": "pkg", `+gitSource+`, "paths": [{"tags": ">=1.0.0", "path": ""}]}`)
+	if got, ok := rootRule.PathFor(version(t, "1.0.0")); got != "" || !ok {
+		t.Errorf(`"path": "": PathFor = %q %v`, got, ok)
+	}
 }
 
 func TestParseRejects(t *testing.T) {
@@ -63,6 +67,7 @@ func TestParseRejects(t *testing.T) {
   "paths": [{"tags": ">=1.0.0", "path": "A"}, {"tags": "<=1.0.0", "path": "B"}]}`, "overlaps"},
 		{"path and paths", `{"id": "pkg", ` + gitSource + `, "path": "A", "paths": [{"path": "B"}]}`, "either path or paths"},
 		{"bad folder", `{"id": "pkg", ` + gitSource + `, "paths": [{"path": "../A"}]}`, "bad folder"},
+		{"paths without path", `{"id": "pkg", ` + gitSource + `, "paths": [{"tags": ">=1.0.0"}]}`, `has no "path"`},
 		{"npm with path", `{"id": "pkg", "source": {"type": "npm", "registry": "https://r", "name": "p"}, "path": "A"}`, "npm source takes no"},
 		{"old select", `{"id": "pkg", ` + gitSource + `, "select": "all"}`, "pull --all"},
 		{"old paths", `{"id": "pkg", ` + gitSource + `, "paths": ["A", "B"]}`, `"paths": [{"tags"`},

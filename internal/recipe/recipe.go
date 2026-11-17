@@ -48,10 +48,12 @@ type Recipe struct {
 	overrides []parsedOverride
 }
 
-// PathRule is the folder of the package for the tags in range.
+// PathRule is the folder of the package for the tags in range. Path is a
+// pointer so that a rule without "path" is refused instead of reading the
+// repository root, which "" means.
 type PathRule struct {
-	Tags string `json:"tags,omitempty"`
-	Path string `json:"path"`
+	Tags string  `json:"tags,omitempty"`
+	Path *string `json:"path"`
 }
 
 type parsedPathRule struct {
@@ -207,7 +209,10 @@ func (r *Recipe) checkPaths() error {
 		return fmt.Errorf("path: %w", err)
 	}
 	for i, p := range r.Paths {
-		if err := checkFolder(p.Path); err != nil {
+		if p.Path == nil {
+			return fmt.Errorf(`paths[%d] has no "path" ("" is the repository root)`, i)
+		}
+		if err := checkFolder(*p.Path); err != nil {
 			return fmt.Errorf("paths[%d]: %w", i, err)
 		}
 		tags, err := semver.ParseRange(p.Tags)
@@ -220,7 +225,7 @@ func (r *Recipe) checkPaths() error {
 				return fmt.Errorf("paths[%d].tags %q overlaps paths[%d].tags %q", i, p.Tags, j, prev.tags)
 			}
 		}
-		r.paths = append(r.paths, parsedPathRule{tags: tags, path: p.Path})
+		r.paths = append(r.paths, parsedPathRule{tags: tags, path: *p.Path})
 	}
 	return nil
 }
