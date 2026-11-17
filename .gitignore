@@ -1,0 +1,6 @@
+# The binary that `go build ./cmd/vpmify` writes in the repository root.
+/vpmify
+/vpmify.exe
+
+# Work notes kept out of the repository (named *_Private by convention).
+/**/*_Private*
