@@ -245,7 +245,10 @@ func TestRemoveLeavesAFolderAnotherRecipeUses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if msgs := problemMessages(problems); len(msgs) != 1 || !strings.Contains(msgs[0], "all provide "+pkgName) {
+	// kit2, made by hand, has no version list either.
+	if msgs := problemMessages(problems); len(msgs) != 2 ||
+		!strings.Contains(msgs[0], "kit2: no version list yet; run `vpmify update kit2`") ||
+		!strings.Contains(msgs[1], "all provide "+pkgName) {
 		t.Errorf("problems = %v", msgs)
 	}
 

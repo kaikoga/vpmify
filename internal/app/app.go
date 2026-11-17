@@ -4,12 +4,14 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -264,7 +266,8 @@ func (a *App) loadIndex(r *recipe.Recipe) (*index.Index, error) {
 		return nil, fmt.Errorf("no version list yet; run `vpmify update %s`", r.ID)
 	}
 	if err != nil {
-		return nil, err
+		// update writes the list anew whatever is there, so it mends this.
+		return nil, fmt.Errorf("the version list cannot be read (%w); run `vpmify update %s`", err, r.ID)
 	}
 	if idx.Key != r.ListingKey() {
 		return nil, fmt.Errorf("the recipe changed since its version list was read; run `vpmify update %s`", r.ID)
@@ -369,13 +372,23 @@ func (a *App) pull(ctx context.Context, targets []target, opt PullOptions) error
 	}
 	// The other recipes' placed versions are built again too, so that
 	// pulling a new dependency fixes its dependents without naming them.
+	// A recipe or version list that cannot be used is the business of a
+	// pull that names it; a build that fails is this pull's failure.
 	for _, id := range all {
 		if _, named := extra[id]; named || !st.HasPlaced(id) {
 			continue
 		}
-		if err := a.pullRecipe(ctx, st, id, pullRequest{}, managed, nil); err != nil {
-			a.logf("note: %s: placed versions not checked: %v", id, err)
+		err := a.pullRecipe(ctx, st, id, pullRequest{}, managed, nil)
+		var unusable unusableError
+		switch {
+		case errors.As(err, &unusable):
+			a.logf("note: %s: cannot check whether placed versions need building again: %v", id, err)
+		case err != nil:
+			errs = append(errs, fmt.Errorf("%s: %w", id, err))
 		}
+	}
+	if err := a.placeDependencies(ctx, st, managed); err != nil {
+		errs = append(errs, err)
 	}
 	// Register whatever is in the store, even when a recipe failed, so that
 	// versions placed before stay usable.
@@ -385,18 +398,21 @@ func (a *App) pull(ctx context.Context, targets []target, opt PullOptions) error
 	return errors.Join(errs...)
 }
 
-// managedNames returns the package names of every recipe the user has.
-// A recipe file that cannot be read is left out here; pulling it reports
-// the error.
-func (a *App) managedNames() (map[string]bool, error) {
+// providers maps the package name of every recipe the user has to the
+// recipe's id.
+type providers map[string]string
+
+// managedNames returns the providers of every recipe the user has. A recipe
+// file that cannot be read is left out here; pulling it reports the error.
+func (a *App) managedNames() (providers, error) {
 	ids, err := a.recipeIDs()
 	if err != nil {
 		return nil, err
 	}
-	names := map[string]bool{}
+	names := providers{}
 	for _, id := range ids {
 		if r, err := a.loadRecipe(id); err == nil {
-			names[r.Source.Name] = true
+			names[r.Source.Name] = id
 		}
 	}
 	return names, nil
@@ -405,16 +421,23 @@ func (a *App) managedNames() (map[string]bool, error) {
 // promoted returns the UPM dependencies of rel that a recipe provides,
 // sorted. They are copied into vpmDependencies, so that ALCOM installs them
 // along with the package.
-func promoted(r *recipe.Recipe, rel source.Release, managed map[string]bool) []string {
+func promoted(r *recipe.Recipe, rel source.Release, managed providers) []string {
 	var out []string
 	for name := range rel.Dependencies {
-		if managed[name] && name != r.Source.Name {
+		if _, ok := managed[name]; ok && name != r.Source.Name {
 			out = append(out, name)
 		}
 	}
 	sort.Strings(out)
 	return out
 }
+
+// unusableError is a recipe or version list that cannot be used as it is,
+// as opposed to a failure while placing a version.
+type unusableError struct{ err error }
+
+func (e unusableError) Error() string { return e.err.Error() }
+func (e unusableError) Unwrap() error { return e.err }
 
 // pullRequest says which versions pullRecipe adds. The zero value adds
 // none, and only builds placed versions again when they need it.
@@ -430,32 +453,36 @@ type pullRequest struct {
 // list, and builds placed versions again when the recipe now builds them
 // differently. With fresh non-nil it builds every placed version again
 // from a new download.
-func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pullRequest, managed map[string]bool, fresh map[string]bool) error {
+func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pullRequest, managed providers, fresh map[string]bool) error {
 	r, err := a.loadRecipe(id)
 	if err != nil {
-		return err
+		return unusableError{err}
 	}
 	idx, err := a.loadIndex(r)
 	if err != nil {
-		return err
+		return unusableError{err}
 	}
 	releases, err := idx.SourceReleases()
 	if err != nil {
-		return err
+		return unusableError{err}
 	}
 	byVersion := map[string]source.Release{}
 	for _, rel := range releases {
 		byVersion[rel.Version.String()] = rel
 	}
 	var selected []source.Release
+	// chooseErr is returned after the named and placed versions are done:
+	// a recipe whose range is empty still takes a version named outright.
+	var chooseErr error
 	if req.choose {
 		accepted := acceptedReleases(r, releases)
-		if len(accepted) == 0 {
-			return fmt.Errorf("no version in the version list matches the recipe")
-		}
-		selected = accepted
-		if !req.all {
+		switch {
+		case len(accepted) > 0 && req.all:
+			selected = accepted
+		case len(accepted) > 0:
 			selected = newestPerUnity(r, accepted)
+		case len(req.extra) == 0:
+			chooseErr = fmt.Errorf("no version in the version list matches the recipe")
 		}
 	}
 	for _, v := range req.extra {
@@ -504,7 +531,7 @@ func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pu
 		}
 		a.logf("%s: placing %s %s (%s)", id, name, v, rel.Origin)
 		for _, dep := range state.SortedKeys(rel.Dependencies) {
-			if !managed[dep] && !strings.HasPrefix(dep, "com.unity.") {
+			if _, ok := managed[dep]; !ok && !strings.HasPrefix(dep, "com.unity.") {
 				a.logf("  note: %s depends on %s, which no recipe provides", name, dep)
 			}
 		}
@@ -517,10 +544,153 @@ func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pu
 		}
 		placed++
 	}
-	if placed == 0 && req.choose {
+	if placed == 0 && req.choose && chooseErr == nil {
 		a.logf("%s: up to date (%d versions placed; version list of %s)", id, len(ps.Versions), idx.Updated.Local().Format("2006-01-02 15:04"))
 	}
-	return nil
+	return chooseErr
+}
+
+// placeDependencies places, for each placed version whose vpmDependencies
+// name a package a recipe provides, a version of that package that
+// satisfies it when none is placed, so that ALCOM can install the dependent
+// (kaikoga 2026-11-18). A pull that names only the dependent, or another
+// recipe, would otherwise leave it pointing at nothing.
+func (a *App) placeDependencies(ctx context.Context, st *state.State, managed providers) error {
+	failed := map[string]error{}
+	tried := map[string]bool{}
+	// A placed dependency may need its own dependencies, so this goes on
+	// until nothing new is needed.
+	for {
+		needs := map[string][]string{}
+		var order []string
+		for _, n := range a.unmetDependencies(st, managed) {
+			key := n.dependent + " " + n.dep + " " + n.rng.String()
+			if tried[key] {
+				continue
+			}
+			tried[key] = true
+			v, err := a.dependencyVersion(n.id, n.rng)
+			if err != nil {
+				failed[key] = fmt.Errorf("%s needs %s %s: %w", n.dependent, n.dep, n.rng, err)
+				continue
+			}
+			if _, ok := needs[n.id]; !ok {
+				order = append(order, n.id)
+			}
+			if !slices.Contains(needs[n.id], v) {
+				needs[n.id] = append(needs[n.id], v)
+			}
+		}
+		if len(order) == 0 {
+			break
+		}
+		for _, id := range order {
+			a.logf("%s: placing %s, which placed versions depend on", id, strings.Join(needs[id], ", "))
+			if err := a.pullRecipe(ctx, st, id, pullRequest{extra: needs[id]}, managed, nil); err != nil {
+				failed["pull "+id] = fmt.Errorf("%s: %w", id, err)
+			}
+		}
+	}
+	var errs []error
+	for _, k := range state.SortedKeys(failed) {
+		errs = append(errs, failed[k])
+	}
+	return errors.Join(errs...)
+}
+
+// unmet is one vpmDependencies entry no placed version satisfies.
+type unmet struct {
+	dependent string // "<name> <version>" of the placed version
+	dep       string
+	id        string // the recipe that provides dep
+	rng       semver.Range
+}
+
+// unmetDependencies reads the vpmDependencies of every placed version, as
+// ALCOM will, and returns the entries on packages a recipe provides that no
+// placed version satisfies.
+func (a *App) unmetDependencies(st *state.State, managed providers) []unmet {
+	var out []unmet
+	for _, id := range state.SortedKeys(st.Recipes) {
+		rs := st.Recipes[id]
+		for _, name := range state.SortedKeys(rs.Packages) {
+			ps := rs.Packages[name]
+			for _, v := range ps.SortedVersions() {
+				deps, err := readVPMDependencies(ps.Versions[v].Path)
+				if err != nil {
+					continue // doctor reports a broken folder
+				}
+				for _, dep := range state.SortedKeys(deps) {
+					depID, ok := managed[dep]
+					if !ok {
+						continue
+					}
+					rng, err := semver.ParseRange(deps[dep])
+					if err != nil || satisfied(st, depID, dep, rng) {
+						continue
+					}
+					out = append(out, unmet{dependent: name + " " + v, dep: dep, id: depID, rng: rng})
+				}
+			}
+		}
+	}
+	return out
+}
+
+func satisfied(st *state.State, id, name string, rng semver.Range) bool {
+	for v := range st.PlacedVersions(id, name) {
+		if pv, err := semver.Parse(v); err == nil && rng.Contains(pv) {
+			return true
+		}
+	}
+	return false
+}
+
+// dependencyVersion picks the version of recipe id to place for rng: the
+// version its lower bound names when the version list has it, which keeps
+// packages released in lockstep (UniVRM's) together, or else the newest
+// version that satisfies it.
+func (a *App) dependencyVersion(id string, rng semver.Range) (string, error) {
+	r, err := a.loadRecipe(id)
+	if err != nil {
+		return "", err
+	}
+	idx, err := a.loadIndex(r)
+	if err != nil {
+		return "", err
+	}
+	releases, err := idx.SourceReleases()
+	if err != nil {
+		return "", err
+	}
+	if lower, ok := strings.CutPrefix(strings.TrimSpace(rng.String()), ">="); ok {
+		for _, rel := range releases {
+			if rel.Version.String() == strings.TrimSpace(lower) {
+				return rel.Version.String(), nil
+			}
+		}
+	}
+	for i := len(releases) - 1; i >= 0; i-- {
+		if rng.Contains(releases[i].Version) {
+			return releases[i].Version.String(), nil
+		}
+	}
+	return "", fmt.Errorf("the version list of %s has no version that satisfies it (`vpmify update %s` reads it again)", id, id)
+}
+
+// readVPMDependencies returns the vpmDependencies of the package in dir.
+func readVPMDependencies(dir string) (map[string]string, error) {
+	data, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil {
+		return nil, err
+	}
+	var m struct {
+		VPMDependencies map[string]string `json:"vpmDependencies"`
+	}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, err
+	}
+	return m.VPMDependencies, nil
 }
 
 func appendRelease(list []source.Release, rel source.Release) []source.Release {

@@ -375,6 +375,52 @@ func TestPullRefusesAVersionListOfAnotherRecipe(t *testing.T) {
 	}
 }
 
+// A version named outright is placed even when the recipe's range is
+// empty, as when upstream has only prereleases.
+func TestPullNamedVersionWithAnEmptyRange(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0-beta.1", "2021.3")
+	ctx := context.Background()
+	if err := f.app.Add(ctx, f.writeRecipe("")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if err := f.app.Pull(ctx, nil, PullOptions{}); err == nil || !strings.Contains(err.Error(), "no version in the version list matches") {
+		t.Errorf("err = %v", err)
+	}
+	if err := f.app.Pull(ctx, []string{"kit@1.0.0-beta.1"}, PullOptions{}); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if got, want := f.placed(), []string{"1.0.0-beta.1@2021.3"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("placed = %v, want %v", got, want)
+	}
+}
+
+func TestBrokenVersionListPointsAtUpdate(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	ctx := context.Background()
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if err := os.WriteFile(f.app.Layout.Index("kit"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.app.Pull(ctx, nil, PullOptions{}); err == nil || !strings.Contains(err.Error(), "run `vpmify update kit`") {
+		t.Errorf("pull: err = %v", err)
+	}
+	problems, err := f.app.Doctor(false)
+	if err != nil || len(problems) != 1 || !strings.Contains(problems[0].Message, "run `vpmify update kit`") {
+		t.Errorf("doctor: problems = %v, err = %v", problemMessages(problems), err)
+	}
+	// update mends it.
+	if err := f.app.Update(ctx, nil); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if problems, err := f.app.Doctor(false); err != nil || len(problems) != 0 {
+		t.Errorf("after update: problems = %v, err = %v", problemMessages(problems), err)
+	}
+}
+
 func TestChangedOverridesRebuildInPlace(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")

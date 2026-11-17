@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -108,6 +110,96 @@ func TestGitRecipesShareArchivesAndPromoteDependencies(t *testing.T) {
 	}
 	if n := gh.Requests["codeload"]; n != 2 {
 		t.Errorf("codeload requests after refetch = %d, want 2", n)
+	}
+}
+
+// Pulling only the dependent after adding its dependency's recipe places
+// the dependency too: its vpmDependencies would point at nothing otherwise.
+func TestPullPlacesTheDependencyItWrites(t *testing.T) {
+	f := newFixture(t)
+	gh := monorepo("1.0.0", "1.1.0")
+	f.app.Client.HTTP.Transport = gh
+	ctx := context.Background()
+	if err := f.addAndPull(PullOptions{}, f.writeGitRecipe("pkg", "com.example.pkg", "Packages/Pkg")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	// An older pkg too, so its dependency is not the newest base.
+	if err := f.app.Pull(ctx, []string{"pkg@1.0.0"}, PullOptions{}); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if err := f.app.Add(ctx, f.writeGitRecipe("base", "com.example.base", "Packages/Base")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if err := f.app.Pull(ctx, []string{"pkg"}, PullOptions{}); err != nil {
+		t.Fatal(err, f.log)
+	}
+	m := readManifest(t, f.app.Layout.PackageDir("com.example.pkg", "1.0.0"))
+	if got, want := m["vpmDependencies"], map[string]any{"com.example.base": ">=1.0.0"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("vpmDependencies = %v, want %v", got, want)
+	}
+	// The versions the dependents name, not only the newest.
+	if got, want := f.placed(), []string{"1.0.0@2021.3", "1.1.0@2021.3", "1.0.0@2021.3", "1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("placed = %v, want %v", got, want)
+	}
+}
+
+func TestPullFailsWhenTheDependencyCannotBePlaced(t *testing.T) {
+	f := newFixture(t)
+	gh := monorepo("1.0.0", "1.1.0")
+	f.app.Client.HTTP.Transport = gh
+	ctx := context.Background()
+	if err := f.addAndPull(PullOptions{}, f.writeGitRecipe("pkg", "com.example.pkg", "Packages/Pkg")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	// base's recipe reads only tags before pkg's version.
+	content := `{"id": "base", "source": {"type": "git", "url": "https://github.com/owner/mono.git", "name": "com.example.base", "tagPattern": "v*", "tags": "<1.1.0"},
+  "path": "Packages/Base"}`
+	p := filepath.Join(t.TempDir(), "base.json")
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.app.Add(ctx, p); err != nil {
+		t.Fatal(err, f.log)
+	}
+	err := f.app.Pull(ctx, []string{"pkg"}, PullOptions{})
+	if err == nil || !strings.Contains(err.Error(), "com.example.pkg 1.1.0 needs com.example.base >=1.1.0") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+type failCodeload struct{ next http.RoundTripper }
+
+func (f failCodeload) RoundTrip(req *http.Request) (*http.Response, error) {
+	if strings.Contains(req.URL.Host, "codeload") {
+		return nil, errors.New("network down")
+	}
+	return f.next.RoundTrip(req)
+}
+
+// A rebuild of a recipe the pull does not name fails the pull.
+func TestPullFailsWhenAnUnnamedRebuildFails(t *testing.T) {
+	f := newFixture(t)
+	gh := monorepo("1.0.0", "1.1.0")
+	f.app.Client.HTTP.Transport = gh
+	ctx := context.Background()
+	if err := f.addAndPull(PullOptions{},
+		f.writeGitRecipe("pkg", "com.example.pkg", "Packages/Pkg"),
+		f.writeGitRecipe("base", "com.example.base", "Packages/Base")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	// New overrides keep the version list but change how pkg is built.
+	content := `{"id": "pkg", "source": {"type": "git", "url": "https://github.com/owner/mono.git", "name": "com.example.pkg", "tagPattern": "v*"},
+  "path": "Packages/Pkg", "overrides": [{"set": {"displayName": "X"}}]}`
+	if err := os.WriteFile(f.app.recipePath("pkg"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(f.app.Layout.Cache()); err != nil {
+		t.Fatal(err)
+	}
+	f.app.Client.HTTP.Transport = failCodeload{gh}
+	err := f.app.Pull(ctx, []string{"base"}, PullOptions{})
+	if err == nil || !strings.Contains(err.Error(), "pkg: com.example.pkg 1.1.0") {
+		t.Errorf("err = %v", err)
 	}
 }
 

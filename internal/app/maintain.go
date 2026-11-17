@@ -166,6 +166,11 @@ func (a *App) Doctor(fix bool) ([]Problem, error) {
 				continue
 			}
 			providers[r.Source.Name] = append(providers[r.Source.Name], id)
+			// A missing, stale or broken version list needs the network to
+			// mend, so doctor only points at update.
+			if _, err := a.loadIndex(r); err != nil {
+				add(&Problem{Message: fmt.Sprintf("%s: %v", id, err)})
+			}
 		}
 		for _, name := range state.SortedKeys(providers) {
 			if ids := providers[name]; len(ids) > 1 {
