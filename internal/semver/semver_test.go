@@ -74,3 +74,40 @@ func mustParse(t *testing.T, s string) Version {
 	}
 	return v
 }
+
+func TestOverlaps(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{">=0.131.0", "<0.131.0", false},
+		{">=0.131.0", "<=0.131.0", true},
+		{">0.131.0", "<=0.131.0", false},
+		{"", ">=1.0.0", true},
+		{"*", "", true},
+		{">=1.0.0 <2.0.0", ">=2.0.0", false},
+		{">=1.0.0 <2.0.0", ">=1.5.0 <3.0.0", true},
+		{"1.0.0 || >=3.0.0", ">=2.0.0 <3.0.0", false},
+		{"1.0.0 || >=3.0.0", "<=1.0.0", true},
+		{"=1.0.0", "1.0.0", true},
+		{"=1.0.0", "1.0.1", false},
+		// A range no version satisfies overlaps nothing.
+		{">=2.0.0 <1.0.0", "", false},
+	}
+	for _, c := range cases {
+		a, err := ParseRange(c.a)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := ParseRange(c.b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := Overlaps(a, b); got != c.want {
+			t.Errorf("Overlaps(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+		if got := Overlaps(b, a); got != c.want {
+			t.Errorf("Overlaps(%q, %q) = %v, want %v", c.b, c.a, got, c.want)
+		}
+	}
+}

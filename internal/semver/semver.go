@@ -190,6 +190,79 @@ func ParseRange(s string) (Range, error) {
 // String returns the range as it was written.
 func (r Range) String() string { return r.raw }
 
+// bound is one end of an interval; set is false for an open end.
+type bound struct {
+	v         Version
+	set, incl bool
+}
+
+type interval struct{ lo, hi bound }
+
+func (in interval) empty() bool {
+	if !in.lo.set || !in.hi.set {
+		return false
+	}
+	c := Compare(in.lo.v, in.hi.v)
+	return c > 0 || (c == 0 && !(in.lo.incl && in.hi.incl))
+}
+
+func (in interval) intersect(o interval) interval {
+	out := in
+	if o.lo.set && (!out.lo.set || Compare(o.lo.v, out.lo.v) > 0 || (Compare(o.lo.v, out.lo.v) == 0 && !o.lo.incl)) {
+		out.lo = o.lo
+	}
+	if o.hi.set && (!out.hi.set || Compare(o.hi.v, out.hi.v) < 0 || (Compare(o.hi.v, out.hi.v) == 0 && !o.hi.incl)) {
+		out.hi = o.hi
+	}
+	return out
+}
+
+func (c comparator) interval() interval {
+	switch c.op {
+	case ">=":
+		return interval{lo: bound{c.v, true, true}}
+	case ">":
+		return interval{lo: bound{c.v, true, false}}
+	case "<=":
+		return interval{hi: bound{c.v, true, true}}
+	case "<":
+		return interval{hi: bound{c.v, true, false}}
+	default:
+		return interval{lo: bound{c.v, true, true}, hi: bound{c.v, true, true}}
+	}
+}
+
+func (r Range) intervals() []interval {
+	if len(r.sets) == 0 {
+		return []interval{{}}
+	}
+	var out []interval
+	for _, set := range r.sets {
+		var in interval
+		for _, c := range set {
+			in = in.intersect(c.interval())
+		}
+		if !in.empty() {
+			out = append(out, in)
+		}
+	}
+	return out
+}
+
+// Overlaps reports whether some version could satisfy both ranges. It errs
+// on the side of overlap: an interval such as ">1.0.0 <1.0.1-0", which no
+// version satisfies, still counts.
+func Overlaps(a, b Range) bool {
+	for _, x := range a.intervals() {
+		for _, y := range b.intervals() {
+			if !x.intersect(y).empty() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Contains reports whether v satisfies the range.
 func (r Range) Contains(v Version) bool {
 	if len(r.sets) == 0 {
