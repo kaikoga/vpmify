@@ -507,17 +507,8 @@ func (a *App) Remove(ctx context.Context, id, version string) error {
 		if version == "" {
 			delete(st.Recipes, id)
 		}
-		if err := st.Save(a.Layout.State()); err != nil {
+		if err := a.forget(st, dirs); err != nil {
 			return err
-		}
-		if err := a.register(st); err != nil {
-			return err
-		}
-		for _, d := range dirs {
-			a.logf("deleting %s", d)
-			if err := os.RemoveAll(d); err != nil {
-				return err
-			}
 		}
 		if version == "" {
 			if err := os.Remove(a.recipePath(id)); err != nil && !errors.Is(err, fs.ErrNotExist) {

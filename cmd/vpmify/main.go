@@ -10,6 +10,8 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"slices"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -28,6 +30,10 @@ commands:
   sync [<id>[@<version>]...]   place selected versions and register them with ALCOM
   list [--json]                show placed versions
   remove <id> [<version>]      unregister and delete a version, or the whole recipe
+  prune [--yes] [<id>...]      show placed versions the recipes no longer select;
+                               --yes unregisters and deletes them
+  doctor [--fix]               find disagreements among recipes, the store and
+                               ALCOM's settings; --fix fixes what it can
   version                      print the version
 
 Data lives next to ALCOM's folder: $XDG_DATA_HOME/Vpmify (default
@@ -93,6 +99,22 @@ func run(args []string, stdout, stderr io.Writer) int {
 			v = rest[1]
 		}
 		err = a.Remove(ctx, rest[0], v)
+	case "prune":
+		ids, yes, perr := splitFlag(rest, "--yes", "-y")
+		if perr != nil {
+			return usageError(stderr, perr.Error())
+		}
+		err = prune(a, stdout, ids, yes)
+	case "doctor":
+		args, fix, perr := splitFlag(rest, "--fix")
+		if perr != nil || len(args) > 0 {
+			return usageError(stderr, "doctor takes only --fix")
+		}
+		var ok bool
+		ok, err = doctor(a, stdout, fix)
+		if err == nil && !ok {
+			return 1
+		}
 	default:
 		return usageError(stderr, fmt.Sprintf("unknown command %q", cmd))
 	}
@@ -107,6 +129,79 @@ func usageError(stderr io.Writer, msg string) int {
 	fmt.Fprintln(stderr, "vpmify:", msg)
 	fmt.Fprint(stderr, usage)
 	return 2
+}
+
+// splitFlag takes a boolean flag out of args, wherever it is, so that
+// `prune kit --yes` works as well as `prune --yes kit`.
+func splitFlag(args []string, names ...string) (rest []string, set bool, err error) {
+	for _, arg := range args {
+		if slices.Contains(names, arg) {
+			set = true
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return nil, false, fmt.Errorf("unknown flag %q", arg)
+		}
+		rest = append(rest, arg)
+	}
+	return rest, set, nil
+}
+
+func prune(a *app.App, stdout io.Writer, ids []string, yes bool) error {
+	pruned, err := a.Prune(ids, yes)
+	if len(pruned) == 0 {
+		if err == nil {
+			fmt.Fprintln(stdout, "nothing to prune")
+		}
+		return err
+	}
+	tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "RECIPE\tPACKAGE\tVERSION\tREASON")
+	for _, p := range pruned {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", p.Recipe, p.Package, p.Version, p.Reason)
+	}
+	if ferr := tw.Flush(); ferr != nil {
+		return ferr
+	}
+	if err != nil {
+		return err
+	}
+	if yes {
+		fmt.Fprintf(stdout, "removed %d versions\n", len(pruned))
+	} else {
+		fmt.Fprintln(stdout, "projects that have these versions locked cannot resolve them once removed.")
+		fmt.Fprintln(stdout, "run `vpmify prune --yes` with the same arguments to remove them.")
+	}
+	return nil
+}
+
+// doctor prints the problems and reports whether none is left.
+func doctor(a *app.App, stdout io.Writer, fix bool) (bool, error) {
+	problems, err := a.Doctor(fix)
+	if len(problems) == 0 {
+		if err == nil {
+			fmt.Fprintln(stdout, "no problems found")
+		}
+		return err == nil, err
+	}
+	left := 0
+	for _, p := range problems {
+		mark := "!"
+		switch {
+		case p.Fixed:
+			mark = "fixed:"
+		case p.Fix != "":
+			left++
+			mark = "fixable:"
+		default:
+			left++
+		}
+		fmt.Fprintln(stdout, mark, p.Message)
+		if p.Fix != "" && !p.Fixed {
+			fmt.Fprintln(stdout, "    --fix would", p.Fix)
+		}
+	}
+	return left == 0, err
 }
 
 func list(a *app.App, stdout, stderr io.Writer, asJSON bool) error {

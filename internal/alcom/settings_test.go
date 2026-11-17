@@ -147,7 +147,7 @@ func TestOwns(t *testing.T) {
 		"/elsewhere/a":                  false,
 	}
 	for p, want := range cases {
-		if got := r.owns(filepath.FromSlash(p)); got != want {
+		if got := r.Owns(filepath.FromSlash(p)); got != want {
 			t.Errorf("owns(%s) = %v, want %v", p, got, want)
 		}
 	}

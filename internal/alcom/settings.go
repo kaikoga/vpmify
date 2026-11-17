@@ -182,7 +182,7 @@ func (r *Reconciler) apply(want []string) (Change, error) {
 	var next []string
 	for _, f := range current {
 		clean := filepath.Clean(f)
-		if r.owns(clean) && !wantSet[clean] {
+		if r.Owns(clean) && !wantSet[clean] {
 			change.Removed = append(change.Removed, f)
 			continue
 		}
@@ -226,7 +226,7 @@ func (r *Reconciler) matches(want []string) (bool, error) {
 	seen := map[string]bool{}
 	for _, f := range current {
 		clean := filepath.Clean(f)
-		if r.owns(clean) && !wantSet[clean] {
+		if r.Owns(clean) && !wantSet[clean] {
 			return false, nil
 		}
 		seen[clean] = true
@@ -239,7 +239,8 @@ func (r *Reconciler) matches(want []string) (bool, error) {
 	return true, nil
 }
 
-func (r *Reconciler) owns(folder string) bool {
+// Owns reports whether folder is under Owned, so Reconcile may unregister it.
+func (r *Reconciler) Owns(folder string) bool {
 	rel, err := filepath.Rel(filepath.Clean(r.Owned), folder)
 	if err != nil {
 		return false

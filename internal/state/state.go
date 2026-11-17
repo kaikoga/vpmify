@@ -126,18 +126,21 @@ func (p *PackageState) SortedVersions() []string {
 	for k := range p.Versions {
 		keys = append(keys, k)
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		a, aerr := semver.Parse(keys[i])
-		b, berr := semver.Parse(keys[j])
-		if aerr != nil || berr != nil {
-			if aerr != nil && berr != nil {
-				return keys[i] < keys[j]
-			}
-			return aerr != nil
-		}
-		return semver.Compare(a, b) < 0
-	})
+	sort.Slice(keys, func(i, j int) bool { return VersionLess(keys[i], keys[j]) })
 	return keys
+}
+
+// VersionLess orders version keys the way SortedVersions does.
+func VersionLess(x, y string) bool {
+	a, aerr := semver.Parse(x)
+	b, berr := semver.Parse(y)
+	if aerr != nil || berr != nil {
+		if aerr != nil && berr != nil {
+			return x < y
+		}
+		return aerr != nil
+	}
+	return semver.Compare(a, b) < 0
 }
 
 // SortedKeys returns the keys of a map, sorted.
