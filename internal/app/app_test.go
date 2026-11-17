@@ -132,7 +132,6 @@ func jsonString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
-
 func (f *fixture) writeRecipe(extra string) string {
 	f.t.Helper()
 	content := `{

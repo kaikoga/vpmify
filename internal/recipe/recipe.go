@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"regexp"
+	"strings"
 
 	"github.com/kaikoga/vpmify/internal/semver"
 )
@@ -29,29 +31,40 @@ const (
 	SourceGit = "git"
 )
 
-// Recipe describes one upstream source.
+// Recipe describes one package and where it comes from.
 type Recipe struct {
-	ID         string     `json:"id"`
-	Source     Source     `json:"source"`
-	Path       string     `json:"path,omitempty"`
+	ID     string `json:"id"`
+	Source Source `json:"source"`
+	// Paths are the folders, inside a Git repository, where the package's
+	// package.json may be. Each tag uses the first folder whose package.json
+	// has Source.Name, so a package that moved (UniVRM moved Assets/VRM to
+	// Packages/VRM) is still one recipe. Empty means the repository root.
+	Paths      []string   `json:"paths,omitempty"`
 	Select     string     `json:"select,omitempty"`
 	Versions   string     `json:"versions,omitempty"`
 	Prerelease bool       `json:"prerelease,omitempty"`
 	Overrides  []Override `json:"overrides,omitempty"`
 
 	versions  semver.Range
+	tags      semver.Range
 	overrides []parsedOverride
 }
 
 // Source says where the package comes from.
 type Source struct {
 	Type string `json:"type"`
-	// Registry and Name are for npm-compatible registries.
+	// Name is the package name, as package.json writes it.
+	Name string `json:"name"`
+	// Registry is for npm-compatible registries.
 	Registry string `json:"registry,omitempty"`
-	Name     string `json:"name,omitempty"`
-	// URL and TagPattern are for Git repositories.
+	// URL, TagPattern and Tags are for Git repositories. TagPattern is a
+	// glob on tag names (default "*"). Tags is a range on the version in the
+	// tag name (a leading "v" dropped), which limits the tags Vpmify reads;
+	// it differs from Recipe.Versions, the range on the package's version,
+	// because a repository's tags need not follow its packages' versions.
 	URL        string `json:"url,omitempty"`
 	TagPattern string `json:"tagPattern,omitempty"`
+	Tags       string `json:"tags,omitempty"`
 }
 
 // Override sets top-level fields of package.json for the versions in range.
@@ -103,13 +116,38 @@ func (r *Recipe) check() error {
 	if !idPattern.MatchString(r.ID) {
 		return fmt.Errorf("id %q must be lowercase letters, digits, '.', '_' or '-'", r.ID)
 	}
+	if r.Source.Name == "" {
+		return fmt.Errorf("source needs the package name")
+	}
 	switch r.Source.Type {
 	case SourceNPM:
-		if r.Source.Registry == "" || r.Source.Name == "" {
-			return fmt.Errorf("npm source needs registry and name")
+		if r.Source.Registry == "" {
+			return fmt.Errorf("npm source needs registry")
+		}
+		if len(r.Paths) > 0 || r.Source.URL != "" || r.Source.TagPattern != "" || r.Source.Tags != "" {
+			return fmt.Errorf("npm source takes no paths, url, tagPattern or tags")
 		}
 	case SourceGit:
-		return fmt.Errorf("git source is not supported yet")
+		if r.Source.URL == "" {
+			return fmt.Errorf("git source needs url")
+		}
+		if r.Source.Registry != "" {
+			return fmt.Errorf("git source takes no registry")
+		}
+		if _, err := path.Match(r.Source.TagPattern, ""); err != nil {
+			return fmt.Errorf("tagPattern: %w", err)
+		}
+		tags, err := semver.ParseRange(r.Source.Tags)
+		if err != nil {
+			return fmt.Errorf("tags: %w", err)
+		}
+		r.tags = tags
+		for _, p := range r.Paths {
+			clean := path.Clean("/" + p)
+			if strings.Contains(p, "\\") || clean != "/"+strings.Trim(p, "/") {
+				return fmt.Errorf("paths: bad folder %q", p)
+			}
+		}
 	default:
 		return fmt.Errorf("unknown source type %q", r.Source.Type)
 	}
@@ -143,6 +181,12 @@ func (r *Recipe) check() error {
 	return nil
 }
 
+// AcceptsTag reports whether the recipe reads a tag whose name holds
+// version v (Git sources).
+func (r *Recipe) AcceptsTag(v semver.Version) bool {
+	return r.tags.Contains(v)
+}
+
 // Accepts reports whether the recipe takes version v at all.
 func (r *Recipe) Accepts(v semver.Version) bool {
 	if v.IsPrerelease() && !r.Prerelease {
@@ -164,19 +208,21 @@ func (r *Recipe) OverridesFor(v semver.Version) []map[string]json.RawMessage {
 
 // convertRevision changes when Vpmify starts to convert differently, so that
 // versions placed by an older Vpmify are built again.
-const convertRevision = 1
+const convertRevision = 2
 
-// Fingerprint identifies how version v is built from upstream. A placed
-// version whose fingerprint differs is built again.
-func (r *Recipe) Fingerprint(v semver.Version) string {
+// Fingerprint identifies how version v is built from upstream: from the
+// folder dir of the archive, with the dependencies in promoted copied into
+// vpmDependencies. A placed version whose fingerprint differs is built again.
+func (r *Recipe) Fingerprint(v semver.Version, dir string, promoted []string) string {
 	h := sha256.New()
 	// encoding/json writes map keys sorted, so this is stable.
 	data, _ := json.Marshal(struct {
 		Revision  int                          `json:"revision"`
 		Source    Source                       `json:"source"`
-		Path      string                       `json:"path"`
+		Dir       string                       `json:"dir"`
+		Promoted  []string                     `json:"promoted"`
 		Overrides []map[string]json.RawMessage `json:"overrides"`
-	}{convertRevision, r.Source, r.Path, r.OverridesFor(v)})
+	}{convertRevision, r.Source, dir, promoted, r.OverridesFor(v)})
 	h.Write(data)
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }

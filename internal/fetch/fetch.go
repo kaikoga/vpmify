@@ -78,6 +78,30 @@ func (c *Client) GetBytes(ctx context.Context, url string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
+// GetBytesIfExists returns the body at url, or found=false on 404.
+func (c *Client) GetBytesIfExists(ctx context.Context, url string) (data []byte, found bool, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, false, err
+	}
+	if c.UserAgent != "" {
+		req.Header.Set("User-Agent", c.UserAgent)
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, false, err
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+		data, err := io.ReadAll(resp.Body)
+		return data, err == nil, err
+	case http.StatusNotFound:
+		return nil, false, nil
+	}
+	return nil, false, fmt.Errorf("GET %s: %s", url, resp.Status)
+}
+
 // Download saves url to dest, checking it against the digests first. It
 // writes to a temporary file next to dest and renames it, so a broken
 // download never sits at dest.

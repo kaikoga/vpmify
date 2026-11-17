@@ -112,6 +112,38 @@ func TestExtractSkipsLinks(t *testing.T) {
 	}
 }
 
+func TestPromoteDependencies(t *testing.T) {
+	dir := t.TempDir()
+	orig := `{
+  "name": "a",
+  "version": "1.0.0",
+  "dependencies": {"b": "1.2.0", "c": "2.0.0", "com.unity.ugui": "1.0.0"},
+  "vpmDependencies": {"c": "^2.0.0"}
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(orig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := PromoteDependencies(dir, []string{"b", "c", "missing"}); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "package.json"))
+	var m struct {
+		Dependencies    map[string]string `json:"dependencies"`
+		VPMDependencies map[string]string `json:"vpmDependencies"`
+	}
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"b": ">=1.2.0", "c": "^2.0.0"}
+	if !reflect.DeepEqual(m.VPMDependencies, want) {
+		t.Errorf("vpmDependencies = %v, want %v", m.VPMDependencies, want)
+	}
+	if len(m.Dependencies) != 3 {
+		t.Errorf("dependencies changed: %v", m.Dependencies)
+	}
+}
+
 func TestOverridesAndManifest(t *testing.T) {
 	dir := t.TempDir()
 	orig := "{\n  \"name\": \"a\",\n  \"version\": \"3.4.0\",\n  \"unity\": \"2021.3\",\n  \"unityRelease\": null,\n  \"description\": \"d\"\n}\n"

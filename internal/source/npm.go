@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"path"
 	"sort"
 	"strings"
 
@@ -26,23 +27,15 @@ type packument struct {
 }
 
 type packumentRecord struct {
-	Version string `json:"version"`
-	Unity   any    `json:"unity"`
-	Dist    struct {
+	Version      string            `json:"version"`
+	Unity        any               `json:"unity"`
+	Dependencies map[string]string `json:"dependencies"`
+	Dist         struct {
 		Tarball   string `json:"tarball"`
 		Integrity string `json:"integrity"`
 		Shasum    string `json:"shasum"`
 	} `json:"dist"`
 }
-
-// Name returns the package name.
-func (n *NPM) Name() string { return n.Package }
-
-// Format returns "tgz".
-func (n *NPM) Format() string { return "tgz" }
-
-// CacheKey returns "<version>.tgz".
-func (n *NPM) CacheKey(r Release) string { return r.Version.String() + ".tgz" }
 
 // Releases lists the versions in the registry, oldest first. Versions whose
 // number is not SemVer are left out.
@@ -66,10 +59,13 @@ func (n *NPM) Releases(ctx context.Context) ([]Release, error) {
 		}
 		unity, _ := rec.Unity.(string)
 		out = append(out, Release{
-			Version:    v,
-			Unity:      unity,
-			ArchiveURL: rec.Dist.Tarball,
-			Digests:    fetch.Digests{Integrity: rec.Dist.Integrity, Shasum: rec.Dist.Shasum},
+			Version:      v,
+			Unity:        unity,
+			Dependencies: rec.Dependencies,
+			ArchiveURL:   rec.Dist.Tarball,
+			Digests:      fetch.Digests{Integrity: rec.Dist.Integrity, Shasum: rec.Dist.Shasum},
+			CacheKey:     path.Join("npm", n.Package, v.String()+".tgz"),
+			Origin:       "npm " + v.String(),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return semver.Compare(out[i].Version, out[j].Version) < 0 })

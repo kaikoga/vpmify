@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -88,9 +89,13 @@ func (a *App) recipeIDs() ([]string, error) {
 	return ids, nil
 }
 
-// Add reads a recipe from a file path or an http(s) URL, saves it among the
-// user's recipes, and syncs it.
-func (a *App) Add(ctx context.Context, ref string) error {
+type addedRecipe struct {
+	recipe *recipe.Recipe
+	data   []byte
+	origin string
+}
+
+func (a *App) readRecipeRef(ctx context.Context, ref string) (addedRecipe, error) {
 	var data []byte
 	var err error
 	origin := ref
@@ -103,28 +108,51 @@ func (a *App) Add(ctx context.Context, ref string) error {
 		data, err = os.ReadFile(ref)
 	}
 	if err != nil {
-		return err
+		return addedRecipe{}, err
 	}
 	r, err := recipe.Parse(data)
 	if err != nil {
-		return fmt.Errorf("%s: %w", ref, err)
+		return addedRecipe{}, fmt.Errorf("%s: %w", ref, err)
 	}
-	err = a.withLock(func() error {
-		if err := fsutil.WriteFileAtomic(a.recipePath(r.ID), data, 0o644); err != nil {
+	return addedRecipe{recipe: r, data: data, origin: origin}, nil
+}
+
+// Add reads recipes from file paths or http(s) URLs, saves them among the
+// user's recipes, and syncs all recipes. Nothing is saved unless every
+// recipe reads well.
+func (a *App) Add(ctx context.Context, refs ...string) error {
+	var added []addedRecipe
+	ids := map[string]string{}
+	for _, ref := range refs {
+		ar, err := a.readRecipeRef(ctx, ref)
+		if err != nil {
 			return err
 		}
+		if prev, ok := ids[ar.recipe.ID]; ok {
+			return fmt.Errorf("%s and %s both have id %q", prev, ref, ar.recipe.ID)
+		}
+		ids[ar.recipe.ID] = ref
+		added = append(added, ar)
+	}
+	return a.withLock(func() error {
 		st, err := state.Load(a.Layout.State())
 		if err != nil {
 			return err
 		}
-		st.Recipe(r.ID).Origin = origin
+		for _, ar := range added {
+			if err := fsutil.WriteFileAtomic(a.recipePath(ar.recipe.ID), ar.data, 0o644); err != nil {
+				return err
+			}
+			st.Recipe(ar.recipe.ID).Origin = ar.origin
+			a.logf("%s: added recipe", ar.recipe.ID)
+		}
 		if err := st.Save(a.Layout.State()); err != nil {
 			return err
 		}
-		a.logf("%s: added recipe", r.ID)
-		return a.sync(ctx, []target{{id: r.ID}})
+		// Sync every recipe: a new package may be a dependency of packages
+		// placed before, which then get it in vpmDependencies.
+		return a.sync(ctx, nil)
 	})
-	return err
 }
 
 type target struct {
@@ -189,9 +217,13 @@ func (a *App) sync(ctx context.Context, targets []target) error {
 	if err != nil {
 		return err
 	}
+	managed, err := a.managedNames()
+	if err != nil {
+		return err
+	}
 	var errs []error
 	for _, id := range order {
-		if err := a.syncRecipe(ctx, st, id, extra[id]); err != nil {
+		if err := a.syncRecipe(ctx, st, id, extra[id], managed); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", id, err))
 		}
 	}
@@ -203,12 +235,43 @@ func (a *App) sync(ctx context.Context, targets []target) error {
 	return errors.Join(errs...)
 }
 
-func (a *App) syncRecipe(ctx context.Context, st *state.State, id string, extra []string) error {
+// managedNames returns the package names of every recipe the user has.
+// A recipe file that cannot be read is left out here; syncing it reports
+// the error.
+func (a *App) managedNames() (map[string]bool, error) {
+	ids, err := a.recipeIDs()
+	if err != nil {
+		return nil, err
+	}
+	names := map[string]bool{}
+	for _, id := range ids {
+		if r, err := a.loadRecipe(id); err == nil {
+			names[r.Source.Name] = true
+		}
+	}
+	return names, nil
+}
+
+// promoted returns the UPM dependencies of rel that a recipe provides,
+// sorted. They are copied into vpmDependencies, so that ALCOM installs them
+// along with the package.
+func promoted(r *recipe.Recipe, rel source.Release, managed map[string]bool) []string {
+	var out []string
+	for name := range rel.Dependencies {
+		if managed[name] && name != r.Source.Name {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (a *App) syncRecipe(ctx context.Context, st *state.State, id string, extra []string, managed map[string]bool) error {
 	r, err := a.loadRecipe(id)
 	if err != nil {
 		return err
 	}
-	src, err := source.New(r.Source, a.Client)
+	src, err := source.New(r, a.Client, a.Layout.Cache())
 	if err != nil {
 		return err
 	}
@@ -232,8 +295,12 @@ func (a *App) syncRecipe(ctx context.Context, st *state.State, id string, extra 
 		selected = appendRelease(selected, rel)
 	}
 
+	name := r.Source.Name
 	rs := st.Recipe(id)
-	ps := rs.Package(src.Name())
+	ps := rs.Package(name)
+	fingerprint := func(rel source.Release) string {
+		return r.Fingerprint(rel.Version, rel.Dir, promoted(r, rel, managed))
+	}
 	// Versions placed before are built again when the recipe now builds
 	// them differently.
 	for _, v := range ps.SortedVersions() {
@@ -241,7 +308,7 @@ func (a *App) syncRecipe(ctx context.Context, st *state.State, id string, extra 
 		if !ok {
 			continue
 		}
-		if ps.Versions[v].Fingerprint != r.Fingerprint(rel.Version) || !fsutil.Exists(ps.Versions[v].Path) {
+		if ps.Versions[v].Fingerprint != fingerprint(rel) || !fsutil.Exists(ps.Versions[v].Path) {
 			selected = appendRelease(selected, rel)
 		}
 	}
@@ -249,14 +316,19 @@ func (a *App) syncRecipe(ctx context.Context, st *state.State, id string, extra 
 	placed := 0
 	for _, rel := range selected {
 		v := rel.Version.String()
-		fp := r.Fingerprint(rel.Version)
-		dir := a.Layout.PackageDir(src.Name(), v)
+		fp := fingerprint(rel)
+		dir := a.Layout.PackageDir(name, v)
 		if vs, ok := ps.Versions[v]; ok && vs.Fingerprint == fp && fsutil.Exists(vs.Path) {
 			continue
 		}
-		a.logf("%s: placing %s %s", id, src.Name(), v)
-		if err := a.place(ctx, r, src, rel, dir); err != nil {
-			return fmt.Errorf("%s %s: %w", src.Name(), v, err)
+		a.logf("%s: placing %s %s (%s)", id, name, v, rel.Origin)
+		for _, dep := range state.SortedKeys(rel.Dependencies) {
+			if !managed[dep] && !strings.HasPrefix(dep, "com.unity.") {
+				a.logf("  note: %s depends on %s, which no recipe provides", name, dep)
+			}
+		}
+		if err := a.place(ctx, r, rel, promoted(r, rel, managed), dir); err != nil {
+			return fmt.Errorf("%s %s: %w", name, v, err)
 		}
 		ps.Versions[v] = &state.VersionState{Path: dir, Fingerprint: fp, Unity: r.Unity(rel.Version, rel.Unity)}
 		if err := st.Save(a.Layout.State()); err != nil {
@@ -317,8 +389,8 @@ func selectReleases(r *recipe.Recipe, releases []source.Release) ([]source.Relea
 // place builds one version in a work folder and renames it into the store.
 // A version already in the store is swapped out only after the new one is
 // complete, so ALCOM never sees a half-built folder at the registered path.
-func (a *App) place(ctx context.Context, r *recipe.Recipe, src source.Source, rel source.Release, dir string) error {
-	archive := filepath.Join(a.Layout.Cache(), r.Source.Type, src.Name(), src.CacheKey(rel))
+func (a *App) place(ctx context.Context, r *recipe.Recipe, rel source.Release, promote []string, dir string) error {
+	archive := filepath.Join(a.Layout.Cache(), filepath.FromSlash(rel.CacheKey))
 	if fsutil.Exists(archive) {
 		if err := rel.Digests.CheckFile(archive); err != nil {
 			a.logf("cached archive is broken (%v); downloading again", err)
@@ -326,9 +398,10 @@ func (a *App) place(ctx context.Context, r *recipe.Recipe, src source.Source, re
 		}
 	}
 	if !fsutil.Exists(archive) {
-		if rel.Digests.Empty() {
+		if rel.Digests.Empty() && !rel.Pinned {
 			return fmt.Errorf("upstream publishes no digest for the archive")
 		}
+		a.logf("  downloading %s", rel.ArchiveURL)
 		if err := a.Client.Download(ctx, rel.ArchiveURL, archive, rel.Digests); err != nil {
 			return err
 		}
@@ -344,14 +417,17 @@ func (a *App) place(ctx context.Context, r *recipe.Recipe, src source.Source, re
 	defer os.RemoveAll(work)
 	pkg := filepath.Join(work, "package")
 
-	res, err := convert.ExtractTarGz(archive, pkg, r.Path)
+	res, err := convert.ExtractTarGz(archive, pkg, rel.Dir)
 	if err != nil {
 		return err
 	}
 	for _, s := range res.Skipped {
 		a.logf("  skipped %s (not a regular file)", s)
 	}
-	if err := convert.CheckManifest(pkg, src.Name(), rel.Version.String()); err != nil {
+	if err := convert.CheckManifest(pkg, r.Source.Name, rel.Version.String()); err != nil {
+		return err
+	}
+	if err := convert.PromoteDependencies(pkg, promote); err != nil {
 		return err
 	}
 	if err := convert.ApplyOverrides(pkg, r.OverridesFor(rel.Version)); err != nil {

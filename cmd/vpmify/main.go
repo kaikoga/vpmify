@@ -24,7 +24,7 @@ var version = "dev"
 const usage = `usage: vpmify <command> [arguments]
 
 commands:
-  add <recipe.json|URL>        add a recipe and sync it
+  add <recipe.json|URL>...     add recipes and sync
   sync [<id>[@<version>]...]   place selected versions and register them with ALCOM
   list [--json]                show placed versions
   remove <id> [<version>]      unregister and delete a version, or the whole recipe
@@ -70,10 +70,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	switch cmd {
 	case "add":
-		if len(rest) != 1 {
-			return usageError(stderr, "add takes one recipe file or URL")
+		if len(rest) == 0 {
+			return usageError(stderr, "add takes recipe files or URLs")
 		}
-		err = a.Add(ctx, rest[0])
+		err = a.Add(ctx, rest...)
 	case "sync":
 		err = a.Sync(ctx, rest)
 	case "list":
