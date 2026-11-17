@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=Vpmify
+Comment=Convert UPM packages into VPM packages for ALCOM
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/vpmify-gui %u
+Terminal=false
+Type=Application
+Icon=vpmify-gui
+Categories=Utility;
+StartupWMClass=vpmify-gui
+
+MimeType=x-scheme-handler/vpmify; 

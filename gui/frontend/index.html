@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <link rel="stylesheet" href="/style.css"/>
+    <title>Vpmify</title>
+</head>
+<body>
+<main>
+    <section>
+        <header>
+            <h1>Placed versions</h1>
+            <button id="reload" type="button">Reload</button>
+        </header>
+        <p id="settings-error" class="error" hidden></p>
+        <table>
+            <thead>
+            <tr><th>Recipe</th><th>Package</th><th>Version</th><th>Unity</th><th>ALCOM</th></tr>
+            </thead>
+            <tbody id="entries"></tbody>
+        </table>
+        <p id="empty" hidden>Nothing placed yet.</p>
+    </section>
+    <section>
+        <h2>Received links</h2>
+        <ul id="urls"></ul>
+        <p id="no-urls">No vpmify: links received.</p>
+    </section>
+</main>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

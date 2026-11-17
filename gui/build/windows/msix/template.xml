@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<MsixPackagingToolTemplate
+    xmlns="http://schemas.microsoft.com/msix/packaging/msixpackagingtool/template/2022">
+    <Settings
+        AllowTelemetry="false"
+        ApplyACLsToPackageFiles="true"
+        GenerateCommandLineFile="true"
+        AllowPromptForPassword="false">
+    </Settings>
+    <Installer
+        Path="vpmify-gui"
+        Arguments=""
+        InstallLocation="C:\Program Files\kaikoga\Vpmify">
+    </Installer>
+    <PackageInformation
+        PackageName="Vpmify"
+        PackageDisplayName="Vpmify"
+        PublisherName="CN=kaikoga"
+        PublisherDisplayName="kaikoga"
+        Version="0.1.0.0"
+        PackageDescription="Convert UPM packages into VPM packages for ALCOM">
+        <Capabilities>
+            <Capability Name="runFullTrust" />
+            
+        </Capabilities>
+        <Applications>
+            <Application
+                Id="net.kaikoga.vpmify"
+                Description="Convert UPM packages into VPM packages for ALCOM"
+                DisplayName="Vpmify"
+                ExecutableName="vpmify-gui"
+                EntryPoint="Windows.FullTrustApplication">
+                
+            </Application>
+        </Applications>
+        <Resources>
+            <Resource Language="en-us" />
+        </Resources>
+        <Dependencies>
+            <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.19041.0" />
+        </Dependencies>
+        <Properties>
+            <Framework>false</Framework>
+            <DisplayName>Vpmify</DisplayName>
+            <PublisherDisplayName>kaikoga</PublisherDisplayName>
+            <Description>Convert UPM packages into VPM packages for ALCOM</Description>
+            <Logo>Assets\AppIcon.png</Logo>
+        </Properties>
+    </PackageInformation>
+    <SaveLocation PackagePath="vpmify-gui.msix" />
+    <PackageIntegrity>
+        <CertificatePath></CertificatePath>
+    </PackageIntegrity>
+</MsixPackagingToolTemplate>

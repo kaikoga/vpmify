@@ -1,0 +1,17 @@
+{
+	"fixed": {
+		"file_version": "0.1.0",
+		"product_version": "0.1.0"
+	},
+	"info": {
+		"0409": {
+			"FileVersion": "0.1.0",
+			"ProductVersion": "0.1.0",
+			"CompanyName": "kaikoga",
+			"FileDescription": "Convert UPM packages into VPM packages for ALCOM",
+			"LegalCopyright": "© 2026 kaikoga",
+			"ProductName": "Vpmify",
+			"Comments": "This is a comment"
+		}
+	}
+}

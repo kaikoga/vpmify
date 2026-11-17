@@ -1,0 +1,40 @@
+:root {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 14px;
+    color-scheme: light dark;
+}
+
+body {
+    margin: 0;
+    padding: 1rem 1.5rem;
+}
+
+header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+h1, h2 {
+    font-size: 1.1rem;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th, td {
+    text-align: left;
+    padding: 0.3rem 0.5rem;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+}
+
+.error {
+    color: #d33;
+}
+
+ul {
+    padding-left: 1.2rem;
+    word-break: break-all;
+}
