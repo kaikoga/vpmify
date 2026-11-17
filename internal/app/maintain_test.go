@@ -13,92 +13,6 @@ import (
 	"github.com/kaikoga/vpmify/internal/state"
 )
 
-func prunedVersions(list []Pruned) []string {
-	var out []string
-	for _, p := range list {
-		out = append(out, p.Version)
-	}
-	return out
-}
-
-func TestPruneKeepsNewestPlacedPerUnity(t *testing.T) {
-	f := newFixture(t)
-	for _, v := range []string{"1.0.0", "1.1.0", "2.0.0"} {
-		f.reg.add(v, "2021.3")
-	}
-	ctx := context.Background()
-	if err := f.app.Add(ctx, f.writeRecipe(overrideNewUnity)); err != nil {
-		t.Fatal(err, f.log)
-	}
-	if err := f.app.Sync(ctx, []string{"kit@1.0.0"}); err != nil {
-		t.Fatal(err, f.log)
-	}
-	// A newer version upstream that sync has not placed yet does not count:
-	// prune looks only at what is placed.
-	f.reg.add("2.1.0", "2021.3")
-
-	pruned, err := f.app.Prune(nil, false)
-	if err != nil {
-		t.Fatal(err, f.log)
-	}
-	if got, want := prunedVersions(pruned), []string{"1.0.0"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("pruned = %v, want %v", got, want)
-	}
-	// Without apply nothing changes.
-	if got, want := f.placed(), []string{"1.0.0@2021.3", "1.1.0@2021.3", "2.0.0@6000.2"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("placed = %v, want %v", got, want)
-	}
-
-	if _, err := f.app.Prune([]string{"kit"}, true); err != nil {
-		t.Fatal(err, f.log)
-	}
-	if got, want := f.placed(), []string{"1.1.0@2021.3", "2.0.0@6000.2"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("placed = %v, want %v", got, want)
-	}
-	if _, err := os.Stat(f.app.Layout.PackageDir(pkgName, "1.0.0")); !os.IsNotExist(err) {
-		t.Errorf("1.0.0 still in the store: %v", err)
-	}
-	if got := f.registered(); len(got) != 3 {
-		t.Errorf("registered = %v", got)
-	}
-}
-
-func TestPruneDropsVersionsOutsideTheRange(t *testing.T) {
-	f := newFixture(t)
-	for _, v := range []string{"1.0.0", "1.1.0", "2.0.0"} {
-		f.reg.add(v, "2021.3")
-	}
-	ctx := context.Background()
-	if err := f.app.Add(ctx, f.writeRecipe(`, "select": "all"`)); err != nil {
-		t.Fatal(err, f.log)
-	}
-	if err := os.WriteFile(f.app.recipePath("kit"), []byte(`{
-  "id": "kit",
-  "source": {"type": "npm", "registry": "`+registryURL+`", "name": "`+pkgName+`"},
-  "select": "all",
-  "versions": ">=1.1.0"
-}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	pruned, err := f.app.Prune(nil, true)
-	if err != nil {
-		t.Fatal(err, f.log)
-	}
-	if len(pruned) != 1 || pruned[0].Version != "1.0.0" || pruned[0].Reason != "outside the recipe's versions" {
-		t.Errorf("pruned = %+v", pruned)
-	}
-	if got, want := f.placed(), []string{"1.1.0@2021.3", "2.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("placed = %v, want %v", got, want)
-	}
-}
-
-func TestPruneUnknownRecipe(t *testing.T) {
-	f := newFixture(t)
-	if _, err := f.app.Prune([]string{"nope"}, false); err == nil {
-		t.Error("no error for a recipe with nothing placed")
-	}
-}
-
 func problemMessages(problems []Problem) []string {
 	var out []string
 	for _, p := range problems {
@@ -296,16 +210,15 @@ func (f *fixture) moveRecord(v string) string {
 	return outside
 }
 
-func TestPruneLeavesFoldersOutsideTheStore(t *testing.T) {
+func TestRemoveLeavesFoldersOutsideTheStore(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
 	if err := f.app.Add(context.Background(), f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
 	outside := f.moveRecord("1.0.0")
-	f.writeStoredRecipe("kit", `, "versions": ">=2.0.0"`)
 
-	if _, err := f.app.Prune(nil, true); err != nil {
+	if err := f.app.Remove(context.Background(), "kit", "1.0.0"); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if got := f.placed(); len(got) != 0 {
@@ -316,25 +229,18 @@ func TestPruneLeavesFoldersOutsideTheStore(t *testing.T) {
 	}
 }
 
-func TestPruneLeavesAFolderAnotherRecipeUses(t *testing.T) {
+func TestRemoveLeavesAFolderAnotherRecipeUses(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
 	if err := f.app.Add(context.Background(), f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
 	// A second recipe for the same package, made by hand: add refuses it.
-	f.writeStoredRecipe("kit2", `, "versions": ">=2.0.0"`)
+	f.writeStoredRecipe("kit2", "")
 	dir := f.app.Layout.PackageDir(pkgName, "1.0.0")
 	f.editState(func(st *state.State) {
 		st.Recipe("kit2").Package(pkgName).Versions["1.0.0"] = &state.VersionState{Path: dir}
 	})
-
-	if _, err := f.app.Prune([]string{"kit2"}, true); err != nil {
-		t.Fatal(err, f.log)
-	}
-	if !exists(dir) {
-		t.Errorf("%s was deleted while kit still records it", dir)
-	}
 	problems, err := f.app.Doctor(false)
 	if err != nil {
 		t.Fatal(err)
@@ -342,16 +248,25 @@ func TestPruneLeavesAFolderAnotherRecipeUses(t *testing.T) {
 	if msgs := problemMessages(problems); len(msgs) != 1 || !strings.Contains(msgs[0], "all provide "+pkgName) {
 		t.Errorf("problems = %v", msgs)
 	}
+
+	if err := f.app.Remove(context.Background(), "kit2", ""); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if !exists(dir) {
+		t.Errorf("%s was deleted while kit still records it", dir)
+	}
+	if got, want := f.placed(), []string{"1.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("placed = %v, want %v", got, want)
+	}
 }
 
-func TestPruneRemovesTheEmptyPackageFolder(t *testing.T) {
+func TestRemoveDeletesTheEmptyPackageFolder(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
 	if err := f.app.Add(context.Background(), f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
-	f.writeStoredRecipe("kit", `, "versions": ">=2.0.0"`)
-	if _, err := f.app.Prune(nil, true); err != nil {
+	if err := f.app.Remove(context.Background(), "kit", "1.0.0"); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if p := filepath.Join(f.app.Layout.Packages(), pkgName); exists(p) {
@@ -362,31 +277,16 @@ func TestPruneRemovesTheEmptyPackageFolder(t *testing.T) {
 	}
 }
 
-func TestPruneNamedUnreadableRecipe(t *testing.T) {
+func TestRemoveWithoutSettingsChangesNothing(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
 	if err := f.app.Add(context.Background(), f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if err := os.WriteFile(f.app.recipePath("kit"), []byte(`{`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.app.Prune([]string{"kit"}, false); err == nil {
-		t.Error("no error for a named recipe that cannot be read")
-	}
-}
-
-func TestPruneWithoutSettingsChangesNothing(t *testing.T) {
-	f := newFixture(t)
-	f.reg.add("1.0.0", "2021.3")
-	if err := f.app.Add(context.Background(), f.writeRecipe("")); err != nil {
-		t.Fatal(err, f.log)
-	}
-	f.writeStoredRecipe("kit", `, "versions": ">=2.0.0"`)
 	if err := os.Remove(f.settings); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.app.Prune(nil, true); err == nil {
+	if err := f.app.Remove(context.Background(), "kit", "1.0.0"); err == nil {
 		t.Error("no error without settings.json")
 	}
 	st, err := state.Load(f.app.Layout.State())
@@ -395,6 +295,142 @@ func TestPruneWithoutSettingsChangesNothing(t *testing.T) {
 	}
 	if len(st.Recipes["kit"].Packages[pkgName].Versions) != 1 {
 		t.Errorf("state changed: %+v", st.Recipes["kit"])
+	}
+	if !exists(f.app.Layout.PackageDir(pkgName, "1.0.0")) {
+		t.Error("the folder was deleted")
+	}
+}
+
+func TestCleanDeletesPlacedVersionsAndKeepsRecipes(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	f.reg.add("1.1.0", "2021.3")
+	ctx := context.Background()
+	if err := f.app.Add(ctx, f.writeRecipe("")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if err := f.app.Sync(ctx, []string{"kit@1.0.0"}); err != nil {
+		t.Fatal(err, f.log)
+	}
+
+	entries, err := f.app.Clean(false)
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	if len(entries) != 2 || entries[0].Version != "1.0.0" || entries[1].Version != "1.1.0" {
+		t.Errorf("entries = %+v", entries)
+	}
+	if got := f.placed(); len(got) != 2 {
+		t.Errorf("placed without apply = %v", got)
+	}
+
+	if _, err := f.app.Clean(true); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if got := f.placed(); len(got) != 0 {
+		t.Errorf("placed = %v", got)
+	}
+	if got := f.registered(); !reflect.DeepEqual(got, []string{f.foreign}) {
+		t.Errorf("registered = %v", got)
+	}
+	for _, d := range []string{f.app.Layout.Packages(), f.app.Layout.Cache(), f.app.Layout.Tmp()} {
+		if exists(d) {
+			t.Errorf("%s is left", d)
+		}
+	}
+	if !exists(f.app.recipePath("kit")) {
+		t.Error("the recipe was deleted")
+	}
+
+	// sync places the selected version again, from a new download.
+	if err := f.app.Sync(ctx, nil); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if got, want := f.placed(), []string{"1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("placed after sync = %v, want %v", got, want)
+	}
+	if f.reg.downloads["1.1.0"] != 2 {
+		t.Errorf("1.1.0 downloaded %d times", f.reg.downloads["1.1.0"])
+	}
+}
+
+func TestCleanWithoutSettings(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	if err := f.app.Add(context.Background(), f.writeRecipe("")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if err := os.Remove(f.settings); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.app.Clean(true); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if exists(f.app.Layout.Packages()) {
+		t.Error("the store is left")
+	}
+}
+
+func TestRefetchBuildsEveryPlacedVersionAgain(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	f.reg.add("1.1.0", "2021.3")
+	ctx := context.Background()
+	if err := f.app.Add(ctx, f.writeRecipe("")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if err := f.app.Sync(ctx, []string{"kit@1.0.0"}); err != nil {
+		t.Fatal(err, f.log)
+	}
+	before := f.registered()
+	broken := filepath.Join(f.app.Layout.PackageDir(pkgName, "1.0.0"), "Runtime", "Kit.cs")
+	if err := os.Remove(broken); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := f.app.Refetch(ctx, nil); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if !exists(broken) {
+		t.Errorf("%s was not built again", broken)
+	}
+	if got, want := f.placed(), []string{"1.0.0@2021.3", "1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("placed = %v, want %v", got, want)
+	}
+	if got := f.registered(); !reflect.DeepEqual(got, before) {
+		t.Errorf("registered changed: %v -> %v", before, got)
+	}
+	for _, v := range []string{"1.0.0", "1.1.0"} {
+		if f.reg.downloads[v] != 2 {
+			t.Errorf("%s downloaded %d times", v, f.reg.downloads[v])
+		}
+	}
+}
+
+func TestRefetchLeavesVersionsUpstreamNoLongerHas(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	f.reg.add("1.1.0", "2021.3")
+	ctx := context.Background()
+	if err := f.app.Add(ctx, f.writeRecipe("")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if err := f.app.Sync(ctx, []string{"kit@1.0.0"}); err != nil {
+		t.Fatal(err, f.log)
+	}
+	f.reg.mu.Lock()
+	delete(f.reg.versions, "1.0.0")
+	delete(f.reg.tarballs, "1.0.0")
+	f.reg.mu.Unlock()
+
+	if err := f.app.Refetch(ctx, []string{"kit"}); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if got, want := f.placed(), []string{"1.0.0@2021.3", "1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("placed = %v, want %v", got, want)
+	}
+	if !strings.Contains(f.log.String(), "upstream no longer has "+pkgName+" 1.0.0") {
+		t.Errorf("log = %s", f.log)
 	}
 }
 

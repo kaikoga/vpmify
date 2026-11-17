@@ -94,6 +94,14 @@ func TestGitRecipesShareArchivesAndPromoteDependencies(t *testing.T) {
 	if n := gh.Requests["codeload"]; n != 1 {
 		t.Errorf("codeload requests = %d, want 1", n)
 	}
+
+	// Refetching downloads the shared archive once more, not once per recipe.
+	if err := f.app.Refetch(ctx, nil); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if n := gh.Requests["codeload"]; n != 2 {
+		t.Errorf("codeload requests after refetch = %d, want 2", n)
+	}
 }
 
 func readManifest(t *testing.T, dir string) map[string]any {

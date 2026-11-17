@@ -27,13 +27,17 @@ const usage = `usage: vpmify <command> [arguments]
 
 commands:
   add <recipe.json|URL>...     add recipes and sync
-  sync [<id>[@<version>]...]   place selected versions and register them with ALCOM
+  sync [--refetch] [<id>[@<version>]...]
+                               place selected versions and register them with ALCOM;
+                               --refetch also downloads and builds every placed
+                               version again
   list [--json]                show placed versions
   remove <id> [<version>]      unregister and delete a version, or the whole recipe
-  prune [--yes] [<id>...]      show placed versions the recipes no longer select;
-                               --yes unregisters and deletes them
   doctor [--fix]               find disagreements among recipes, the store and
                                ALCOM's settings; --fix fixes what it can
+  clean [--yes]                show what clean deletes; --yes unregisters and deletes
+                               every placed version and the downloads, keeping the
+                               recipes
   version                      print the version
 
 Data lives next to ALCOM's folder: $XDG_DATA_HOME/Vpmify (default
@@ -81,7 +85,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		err = a.Add(ctx, rest...)
 	case "sync":
-		err = a.Sync(ctx, rest)
+		targets, refetch, perr := splitFlag(rest, "--refetch")
+		if perr != nil {
+			return usageError(stderr, perr.Error())
+		}
+		if refetch {
+			err = a.Refetch(ctx, targets)
+		} else {
+			err = a.Sync(ctx, targets)
+		}
 	case "list":
 		fs := flag.NewFlagSet("list", flag.ContinueOnError)
 		fs.SetOutput(stderr)
@@ -99,12 +111,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 			v = rest[1]
 		}
 		err = a.Remove(ctx, rest[0], v)
-	case "prune":
-		ids, yes, perr := splitFlag(rest, "--yes", "-y")
-		if perr != nil {
-			return usageError(stderr, perr.Error())
+	case "clean":
+		args, yes, perr := splitFlag(rest, "--yes", "-y")
+		if perr != nil || len(args) > 0 {
+			return usageError(stderr, "clean takes only --yes")
 		}
-		err = prune(a, stdout, ids, yes)
+		err = clean(a, stdout, yes)
 	case "doctor":
 		args, fix, perr := splitFlag(rest, "--fix")
 		if perr != nil || len(args) > 0 {
@@ -132,7 +144,7 @@ func usageError(stderr io.Writer, msg string) int {
 }
 
 // splitFlag takes a boolean flag out of args, wherever it is, so that
-// `prune kit --yes` works as well as `prune --yes kit`.
+// `sync kit --refetch` works as well as `sync --refetch kit`.
 func splitFlag(args []string, names ...string) (rest []string, set bool, err error) {
 	for _, arg := range args {
 		if slices.Contains(names, arg) {
@@ -147,31 +159,32 @@ func splitFlag(args []string, names ...string) (rest []string, set bool, err err
 	return rest, set, nil
 }
 
-func prune(a *app.App, stdout io.Writer, ids []string, yes bool) error {
-	pruned, err := a.Prune(ids, yes)
-	if len(pruned) == 0 {
-		if err == nil {
-			fmt.Fprintln(stdout, "nothing to prune")
+// clean prints the versions clean deletes, so the user can name the ones to
+// place again, and deletes them when yes is true.
+func clean(a *app.App, stdout io.Writer, yes bool) error {
+	entries, err := a.Clean(yes)
+	if len(entries) > 0 {
+		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "RECIPE\tPACKAGE\tVERSION\tUNITY")
+		for _, e := range entries {
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", e.Recipe, e.Package, e.Version, e.Unity)
 		}
-		return err
-	}
-	tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "RECIPE\tPACKAGE\tVERSION\tREASON")
-	for _, p := range pruned {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", p.Recipe, p.Package, p.Version, p.Reason)
-	}
-	if ferr := tw.Flush(); ferr != nil {
-		return ferr
+		if ferr := tw.Flush(); ferr != nil {
+			return ferr
+		}
 	}
 	if err != nil {
 		return err
 	}
-	if yes {
-		fmt.Fprintf(stdout, "removed %d versions\n", len(pruned))
-	} else {
-		fmt.Fprintln(stdout, "projects that have these versions locked cannot resolve them once removed.")
-		fmt.Fprintln(stdout, "run `vpmify prune --yes` with the same arguments to remove them.")
+	if !yes {
+		fmt.Fprintf(stdout, "clean deletes these %d versions and the downloads; the recipes stay.\n", len(entries))
+		fmt.Fprintln(stdout, "a project that locks a version not placed again cannot resolve it.")
+		fmt.Fprintln(stdout, "run `vpmify clean --yes` to delete them.")
+		return nil
 	}
+	fmt.Fprintf(stdout, "deleted %d versions and the downloads.\n", len(entries))
+	fmt.Fprintln(stdout, "run `vpmify sync` to place the selected versions again, and")
+	fmt.Fprintln(stdout, "`vpmify sync <id>@<version>` for each other version a project needs.")
 	return nil
 }
 

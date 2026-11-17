@@ -174,7 +174,7 @@ func (a *App) Add(ctx context.Context, refs ...string) error {
 		}
 		// Sync every recipe: a new package may be a dependency of packages
 		// placed before, which then get it in vpmDependencies.
-		return a.sync(ctx, nil)
+		return a.sync(ctx, nil, false)
 	})
 }
 
@@ -208,10 +208,22 @@ func (a *App) Sync(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	return a.withLock(func() error { return a.sync(ctx, targets) })
+	return a.withLock(func() error { return a.sync(ctx, targets, false) })
 }
 
-func (a *App) sync(ctx context.Context, targets []target) error {
+// Refetch is Sync that also downloads every placed version of the named
+// recipes (all recipes when args is empty) again and builds it again, so a
+// broken store or cache is mended without changing which versions are
+// placed. A version upstream no longer has is left as it is.
+func (a *App) Refetch(ctx context.Context, args []string) error {
+	targets, err := parseTargets(args)
+	if err != nil {
+		return err
+	}
+	return a.withLock(func() error { return a.sync(ctx, targets, true) })
+}
+
+func (a *App) sync(ctx context.Context, targets []target, refetch bool) error {
 	if len(targets) == 0 {
 		ids, err := a.recipeIDs()
 		if err != nil {
@@ -244,9 +256,15 @@ func (a *App) sync(ctx context.Context, targets []target) error {
 	if err != nil {
 		return err
 	}
+	// fresh holds the archives downloaded again in this run; recipes that
+	// share an archive (UniVRM's packages share a tag) download it once.
+	var fresh map[string]bool
+	if refetch {
+		fresh = map[string]bool{}
+	}
 	var errs []error
 	for _, id := range order {
-		if err := a.syncRecipe(ctx, st, id, extra[id], managed); err != nil {
+		if err := a.syncRecipe(ctx, st, id, extra[id], managed, fresh); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", id, err))
 		}
 	}
@@ -289,7 +307,9 @@ func promoted(r *recipe.Recipe, rel source.Release, managed map[string]bool) []s
 	return out
 }
 
-func (a *App) syncRecipe(ctx context.Context, st *state.State, id string, extra []string, managed map[string]bool) error {
+// syncRecipe places the versions recipe id selects. With fresh non-nil it
+// also builds every placed version again from a new download.
+func (a *App) syncRecipe(ctx context.Context, st *state.State, id string, extra []string, managed map[string]bool, fresh map[string]bool) error {
 	r, err := a.loadRecipe(id)
 	if err != nil {
 		return err
@@ -326,12 +346,16 @@ func (a *App) syncRecipe(ctx context.Context, st *state.State, id string, extra 
 	}
 	// Versions placed before are built again when the recipe now builds
 	// them differently.
+	refetch := fresh != nil
 	for _, v := range ps.SortedVersions() {
 		rel, ok := byVersion[v]
 		if !ok {
+			if refetch {
+				a.logf("%s: upstream no longer has %s %s; left as it is", id, name, v)
+			}
 			continue
 		}
-		if ps.Versions[v].Fingerprint != fingerprint(rel) || !fsutil.Exists(ps.Versions[v].Path) {
+		if refetch || ps.Versions[v].Fingerprint != fingerprint(rel) || !fsutil.Exists(ps.Versions[v].Path) {
 			selected = appendRelease(selected, rel)
 		}
 	}
@@ -341,8 +365,14 @@ func (a *App) syncRecipe(ctx context.Context, st *state.State, id string, extra 
 		v := rel.Version.String()
 		fp := fingerprint(rel)
 		dir := a.Layout.PackageDir(name, v)
-		if vs, ok := ps.Versions[v]; ok && vs.Fingerprint == fp && fsutil.Exists(vs.Path) {
+		if vs, ok := ps.Versions[v]; ok && !refetch && vs.Fingerprint == fp && fsutil.Exists(vs.Path) {
 			continue
+		}
+		if refetch && !fresh[rel.CacheKey] {
+			fresh[rel.CacheKey] = true
+			if err := os.Remove(filepath.Join(a.Layout.Cache(), filepath.FromSlash(rel.CacheKey))); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return err
+			}
 		}
 		a.logf("%s: placing %s %s (%s)", id, name, v, rel.Origin)
 		for _, dep := range state.SortedKeys(rel.Dependencies) {

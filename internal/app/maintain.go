@@ -6,12 +6,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 
 	"github.com/kaikoga/vpmify/internal/alcom"
 	"github.com/kaikoga/vpmify/internal/convert"
-	"github.com/kaikoga/vpmify/internal/recipe"
-	"github.com/kaikoga/vpmify/internal/semver"
 	"github.com/kaikoga/vpmify/internal/state"
 )
 
@@ -23,7 +20,8 @@ import (
 //
 // Only folders in the store that no other record points to are deleted. A
 // record may point outside the store after the user moved Vpmify's data, and
-// two records may share a folder when two recipes provide one package.
+// two records may share a folder when two recipes provide one package (add
+// refuses that, but recipes written by hand may still do it).
 func (a *App) forget(st *state.State, dirs []string) error {
 	if _, err := alcom.Load(a.Layout.ALCOMSettings()); err != nil {
 		return err
@@ -52,6 +50,64 @@ func (a *App) forget(st *state.State, dirs []string) error {
 	return nil
 }
 
+// Clean deletes every placed version, the downloads and the work folders,
+// and unregisters the versions from ALCOM. The recipes stay, so sync places
+// the versions they select again; a version added by name has to be named
+// again, and a project that locks a version not placed again cannot resolve
+// it. Clean returns the versions it deletes, or would delete when apply is
+// false.
+func (a *App) Clean(apply bool) ([]Entry, error) {
+	var out []Entry
+	err := a.withLock(func() error {
+		st, err := state.Load(a.Layout.State())
+		if err != nil {
+			return err
+		}
+		for _, id := range state.SortedKeys(st.Recipes) {
+			rs := st.Recipes[id]
+			for _, name := range state.SortedKeys(rs.Packages) {
+				ps := rs.Packages[name]
+				for _, v := range ps.SortedVersions() {
+					vs := ps.Versions[v]
+					out = append(out, Entry{Recipe: id, Package: name, Version: v, Unity: vs.Unity, Path: vs.Path})
+				}
+			}
+		}
+		if !apply {
+			return nil
+		}
+		// Unregister first, so that ALCOM never lists a folder that is gone.
+		// Without settings.json nothing is registered.
+		change, err := a.reconciler().Reconcile(nil)
+		switch {
+		case errors.Is(err, alcom.ErrNoSettings):
+			a.logf("%v; nothing to unregister", err)
+		case err != nil:
+			return err
+		}
+		for _, p := range change.Removed {
+			a.logf("unregistered %s", p)
+		}
+		for _, rs := range st.Recipes {
+			rs.Packages = map[string]*state.PackageState{}
+		}
+		if err := st.Save(a.Layout.State()); err != nil {
+			return err
+		}
+		for _, d := range []string{a.Layout.Packages(), a.Layout.Cache(), a.Layout.Tmp()} {
+			if !isDir(d) {
+				continue
+			}
+			a.logf("deleting %s", d)
+			if err := os.RemoveAll(d); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return out, err
+}
+
 // removeFromStore deletes a folder in the store, and the package folder
 // above it when that is left empty.
 func (a *App) removeFromStore(dir string) error {
@@ -65,120 +121,6 @@ func (a *App) removeFromStore(dir string) error {
 		_ = os.Remove(parent)
 	}
 	return nil
-}
-
-// Pruned is one placed version that the recipe no longer selects.
-type Pruned struct {
-	Recipe  string `json:"recipe"`
-	Package string `json:"package"`
-	Version string `json:"version"`
-	Reason  string `json:"reason"`
-}
-
-// Prune finds the placed versions of the named recipes (all recipes when ids
-// is empty) that the recipe's selection leaves out, and removes them when
-// apply is true. It looks only at the versions already placed, not upstream:
-// with "latest" it keeps the newest placed version for each "unity" value,
-// so a package is never left without a version before sync places a newer
-// one. Versions added by name (`sync <id>@<version>`) are pruned like any
-// other. When no recipe is named, a recipe that cannot be read is skipped;
-// doctor reports it.
-func (a *App) Prune(ids []string, apply bool) ([]Pruned, error) {
-	var out []Pruned
-	err := a.withLock(func() error {
-		st, err := state.Load(a.Layout.State())
-		if err != nil {
-			return err
-		}
-		named := len(ids) > 0
-		if named {
-			ids = uniq(ids)
-			for _, id := range ids {
-				if _, ok := st.Recipes[id]; !ok {
-					return fmt.Errorf("recipe %q has no placed versions", id)
-				}
-			}
-		} else {
-			ids = state.SortedKeys(st.Recipes)
-		}
-		var dirs []string
-		for _, id := range ids {
-			r, err := a.loadRecipe(id)
-			if err != nil {
-				if named {
-					return err
-				}
-				a.logf("%s: skipped: %v", id, err)
-				continue
-			}
-			rs := st.Recipes[id]
-			for _, name := range state.SortedKeys(rs.Packages) {
-				ps := rs.Packages[name]
-				for _, p := range prunable(r, name, ps) {
-					p.Recipe = id
-					out = append(out, p)
-					if apply {
-						dirs = append(dirs, ps.Versions[p.Version].Path)
-						delete(ps.Versions, p.Version)
-					}
-				}
-				if apply && len(ps.Versions) == 0 {
-					delete(rs.Packages, name)
-				}
-			}
-		}
-		if len(dirs) == 0 {
-			return nil
-		}
-		return a.forget(st, dirs)
-	})
-	return out, err
-}
-
-// prunable returns the versions of package name that recipe r does not
-// select, oldest first.
-func prunable(r *recipe.Recipe, name string, ps *state.PackageState) []Pruned {
-	var out []Pruned
-	add := func(v, reason string) {
-		out = append(out, Pruned{Package: name, Version: v, Reason: reason})
-	}
-	versions := ps.SortedVersions()
-	if name != r.Source.Name {
-		for _, v := range versions {
-			add(v, "the recipe now provides "+r.Source.Name)
-		}
-		return out
-	}
-	accepted := map[string]semver.Version{}
-	newest := map[string]semver.Version{}
-	for _, v := range versions {
-		parsed, err := semver.Parse(v)
-		if err != nil {
-			add(v, "not a version")
-			continue
-		}
-		if !r.Accepts(parsed) {
-			add(v, "outside the recipe's versions")
-			continue
-		}
-		accepted[v] = parsed
-		// versions is oldest first, so the last one per unity wins.
-		newest[ps.Versions[v].Unity] = parsed
-	}
-	if r.Select == recipe.SelectLatest {
-		for _, v := range versions {
-			parsed, ok := accepted[v]
-			if !ok {
-				continue
-			}
-			unity := ps.Versions[v].Unity
-			if n := newest[unity]; semver.Compare(parsed, n) != 0 {
-				add(v, fmt.Sprintf("older than %s for unity %q", n, unity))
-			}
-		}
-	}
-	sort.SliceStable(out, func(i, j int) bool { return state.VersionLess(out[i].Version, out[j].Version) })
-	return out
 }
 
 // Problem is one disagreement doctor found among the recipes, state.json,
@@ -337,18 +279,6 @@ func (a *App) checkVersion(id, name, v string, ps *state.PackageState) (p *Probl
 func samePath(x, y string) bool {
 	rel, err := filepath.Rel(x, y)
 	return err == nil && rel == "."
-}
-
-func uniq(list []string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, s := range list {
-		if !seen[s] {
-			seen[s] = true
-			out = append(out, s)
-		}
-	}
-	return out
 }
 
 // fix saves the state the problems' records were forgotten from, registers
