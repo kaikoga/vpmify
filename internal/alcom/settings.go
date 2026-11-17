@@ -1,0 +1,248 @@
+// Package alcom changes the user package folders in ALCOM's settings.json.
+//
+// ALCOM does not coordinate with other processes when it writes
+// settings.json. It caches the file for one second, and when it changes a
+// setting it reloads the file if the cache is older, changes it and writes
+// it back (vrc-get-gui/src/state/settings.rs, SettingsState::load_mut). A
+// change Vpmify makes inside that short window is lost when ALCOM saves.
+// Vpmify therefore keeps its read-change-write short, and reads the file
+// again after a delay to see that its change is still there.
+package alcom
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+
+	"github.com/kaikoga/vpmify/internal/fsutil"
+	"github.com/kaikoga/vpmify/internal/ojson"
+)
+
+const foldersKey = "userPackageFolders"
+
+// ErrNoSettings means settings.json does not exist yet. ALCOM (or VCC)
+// creates it on its first start.
+var ErrNoSettings = errors.New("ALCOM settings.json not found")
+
+// Settings is a loaded settings.json.
+type Settings struct {
+	path     string
+	obj      *ojson.Object
+	eol      string
+	trailing bool
+}
+
+// Load reads settings.json.
+func Load(path string) (*Settings, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("%w at %s; start ALCOM once to create it", ErrNoSettings, path)
+	}
+	if err != nil {
+		return nil, err
+	}
+	obj, err := ojson.Parse(data)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	eol := ojson.DetectEOL(data)
+	if !strings.Contains(string(data), "\n") {
+		eol = osEOL()
+	}
+	return &Settings{path: path, obj: obj, eol: eol, trailing: ojson.HasTrailingEOL(data)}, nil
+}
+
+func osEOL() string {
+	if runtime.GOOS == "windows" {
+		return "\r\n"
+	}
+	return "\n"
+}
+
+// UserPackageFolders returns the registered folders.
+func (s *Settings) UserPackageFolders() ([]string, error) {
+	var folders []string
+	if _, err := s.obj.GetInto(foldersKey, &folders); err != nil {
+		return nil, fmt.Errorf("%s: %s: %w", s.path, foldersKey, err)
+	}
+	return folders, nil
+}
+
+// SetUserPackageFolders replaces the registered folders.
+func (s *Settings) SetUserPackageFolders(folders []string) error {
+	if folders == nil {
+		folders = []string{}
+	}
+	raw, err := json.Marshal(folders)
+	if err != nil {
+		return err
+	}
+	s.obj.Set(foldersKey, raw)
+	return nil
+}
+
+// Save writes settings.json the way ALCOM does: two-space indent, the line
+// ending the file already had, through a temporary file and a rename.
+func (s *Settings) Save() error {
+	out, err := s.obj.Format("  ", s.eol, s.trailing)
+	if err != nil {
+		return err
+	}
+	perm := os.FileMode(0o644)
+	if info, err := os.Stat(s.path); err == nil {
+		perm = info.Mode().Perm()
+	}
+	return fsutil.WriteFileAtomic(s.path, out, perm)
+}
+
+// Reconciler brings the folders under Owned in settings.json in line with
+// Want, leaving every other folder alone.
+type Reconciler struct {
+	Path string
+	// Owned is the store root. Only folders under it are Vpmify's.
+	Owned string
+	// VerifyDelay is how long to wait before reading the file back. It
+	// should be longer than ALCOM's one-second cache.
+	VerifyDelay time.Duration
+	// Log receives progress messages. It may be nil.
+	Log func(format string, args ...any)
+
+	// afterSave lets tests stand in for ALCOM writing during the delay.
+	afterSave func()
+}
+
+// Change reports what Reconcile did.
+type Change struct {
+	Added, Removed []string
+}
+
+// Empty reports whether nothing changed.
+func (c Change) Empty() bool { return len(c.Added) == 0 && len(c.Removed) == 0 }
+
+// Reconcile registers every folder in want and unregisters every other
+// folder under Owned. When the change is lost to a concurrent write, it
+// tries once more.
+func (r *Reconciler) Reconcile(want []string) (Change, error) {
+	var total Change
+	for attempt := 0; attempt < 2; attempt++ {
+		change, err := r.apply(want)
+		if err != nil {
+			return total, err
+		}
+		total.Added = append(total.Added, change.Added...)
+		total.Removed = append(total.Removed, change.Removed...)
+		if change.Empty() {
+			return total, nil
+		}
+		if r.VerifyDelay > 0 {
+			time.Sleep(r.VerifyDelay)
+		}
+		if r.afterSave != nil {
+			r.afterSave()
+		}
+		ok, err := r.matches(want)
+		if err != nil {
+			return total, err
+		}
+		if ok {
+			return total, nil
+		}
+		r.logf("settings.json changed while Vpmify was writing it; trying again")
+	}
+	return total, fmt.Errorf("%s: another program kept overwriting the user package folders; close ALCOM and run again", r.Path)
+}
+
+func (r *Reconciler) logf(format string, args ...any) {
+	if r.Log != nil {
+		r.Log(format, args...)
+	}
+}
+
+func (r *Reconciler) apply(want []string) (Change, error) {
+	var change Change
+	s, err := Load(r.Path)
+	if err != nil {
+		return change, err
+	}
+	current, err := s.UserPackageFolders()
+	if err != nil {
+		return change, err
+	}
+	wantSet := map[string]bool{}
+	for _, w := range want {
+		wantSet[filepath.Clean(w)] = true
+	}
+	present := map[string]bool{}
+	var next []string
+	for _, f := range current {
+		clean := filepath.Clean(f)
+		if r.owns(clean) && !wantSet[clean] {
+			change.Removed = append(change.Removed, f)
+			continue
+		}
+		if present[clean] {
+			continue
+		}
+		present[clean] = true
+		next = append(next, f)
+	}
+	for _, w := range want {
+		clean := filepath.Clean(w)
+		if present[clean] {
+			continue
+		}
+		present[clean] = true
+		next = append(next, clean)
+		change.Added = append(change.Added, clean)
+	}
+	if change.Empty() {
+		return change, nil
+	}
+	if err := s.SetUserPackageFolders(next); err != nil {
+		return change, err
+	}
+	return change, s.Save()
+}
+
+func (r *Reconciler) matches(want []string) (bool, error) {
+	s, err := Load(r.Path)
+	if err != nil {
+		return false, err
+	}
+	current, err := s.UserPackageFolders()
+	if err != nil {
+		return false, err
+	}
+	wantSet := map[string]bool{}
+	for _, w := range want {
+		wantSet[filepath.Clean(w)] = true
+	}
+	seen := map[string]bool{}
+	for _, f := range current {
+		clean := filepath.Clean(f)
+		if r.owns(clean) && !wantSet[clean] {
+			return false, nil
+		}
+		seen[clean] = true
+	}
+	for w := range wantSet {
+		if !seen[w] {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func (r *Reconciler) owns(folder string) bool {
+	rel, err := filepath.Rel(filepath.Clean(r.Owned), folder)
+	if err != nil {
+		return false
+	}
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}

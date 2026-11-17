@@ -1,0 +1,145 @@
+package convert
+
+import (
+	"archive/tar"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/kaikoga/vpmify/internal/testutil"
+)
+
+func writeArchive(t *testing.T, data []byte) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "a.tgz")
+	if err := os.WriteFile(p, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func listFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			rel, _ := filepath.Rel(dir, p)
+			out = append(out, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestExtractStripsTopFolder(t *testing.T) {
+	archive := writeArchive(t, testutil.TarGz(map[string]string{
+		"package/package.json":      `{"name":"a","version":"1.0.0"}`,
+		"package/Runtime/A.cs":      "class A {}",
+		"package/Runtime/A.cs.meta": "guid",
+		"package/Editor/Sub/B.cs":   "class B {}",
+		"package/package.json.meta": "guid",
+		"package":                   "", // a stray top-level file is dropped
+	}))
+	dest := filepath.Join(t.TempDir(), "out")
+	if _, err := ExtractTarGz(archive, dest, ""); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"Editor/Sub/B.cs", "Runtime/A.cs", "Runtime/A.cs.meta", "package.json", "package.json.meta"}
+	if got := listFiles(t, dest); !reflect.DeepEqual(got, want) {
+		t.Errorf("files = %v, want %v", got, want)
+	}
+}
+
+func TestExtractSubpath(t *testing.T) {
+	archive := writeArchive(t, testutil.TarGz(map[string]string{
+		"repo-abc/README.md":                     "root",
+		"repo-abc/Packages/VRM/package.json":     `{}`,
+		"repo-abc/Packages/VRM/Runtime/V.cs":     "",
+		"repo-abc/Packages/VRM10/package.json":   `{}`,
+		"repo-abc/Packages/UniGLTF/package.json": `{}`,
+	}))
+	dest := filepath.Join(t.TempDir(), "out")
+	if _, err := ExtractTarGz(archive, dest, "/Packages/VRM/"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"Runtime/V.cs", "package.json"}
+	if got := listFiles(t, dest); !reflect.DeepEqual(got, want) {
+		t.Errorf("files = %v, want %v", got, want)
+	}
+}
+
+func TestExtractRejectsEscape(t *testing.T) {
+	archive := writeArchive(t, testutil.TarGz(map[string]string{
+		"package/../../evil": "x",
+	}))
+	if _, err := ExtractTarGz(archive, filepath.Join(t.TempDir(), "out"), ""); err == nil {
+		t.Error("no error for an entry outside the package")
+	}
+}
+
+func TestExtractSkipsLinks(t *testing.T) {
+	archive := writeArchive(t, testutil.TarGzEntries([]testutil.Entry{
+		{Name: "package/package.json", Body: "{}"},
+		{Name: "package/link", Typeflag: tar.TypeSymlink, Linkname: "/etc/passwd"},
+		{Name: "package/tool.sh", Body: "#!/bin/sh", Mode: 0o755},
+	}))
+	dest := filepath.Join(t.TempDir(), "out")
+	res, err := ExtractTarGz(archive, dest, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(res.Skipped, []string{"link"}) {
+		t.Errorf("skipped = %v", res.Skipped)
+	}
+	if _, err := os.Lstat(filepath.Join(dest, "link")); !os.IsNotExist(err) {
+		t.Errorf("link was extracted: %v", err)
+	}
+	info, err := os.Stat(filepath.Join(dest, "tool.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o100 == 0 {
+		t.Errorf("tool.sh lost its executable bit: %v", info.Mode())
+	}
+}
+
+func TestOverridesAndManifest(t *testing.T) {
+	dir := t.TempDir()
+	orig := "{\n  \"name\": \"a\",\n  \"version\": \"3.4.0\",\n  \"unity\": \"2021.3\",\n  \"unityRelease\": null,\n  \"description\": \"d\"\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(orig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckManifest(dir, "a", "3.4.0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckManifest(dir, "a", "3.3.0"); err == nil {
+		t.Error("version mismatch not detected")
+	}
+	if err := CheckManifest(dir, "b", "3.4.0"); err == nil {
+		t.Error("name mismatch not detected")
+	}
+	sets := []map[string]json.RawMessage{
+		{"unity": json.RawMessage(`"6000.2"`), "unityRelease": json.RawMessage(`"6f2"`)},
+		{"description": json.RawMessage(`null`), "vpmDependencies": json.RawMessage(`{"b":"1.0.0"}`)},
+	}
+	if err := ApplyOverrides(dir, sets); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "package.json"))
+	want := "{\n  \"name\": \"a\",\n  \"version\": \"3.4.0\",\n  \"unity\": \"6000.2\",\n  \"unityRelease\": \"6f2\",\n  \"vpmDependencies\": {\n    \"b\": \"1.0.0\"\n  }\n}\n"
+	if string(got) != want {
+		t.Errorf("package.json =\n%s\nwant\n%s", got, want)
+	}
+	if !strings.HasSuffix(string(got), "}\n") {
+		t.Error("trailing newline lost")
+	}
+}
