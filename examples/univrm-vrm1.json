@@ -1,0 +1,12 @@
+{
+  "id": "univrm-vrm1",
+  "source": {
+    "type": "git",
+    "url": "https://github.com/vrm-c/UniVRM.git",
+    "name": "com.vrmc.vrm",
+    "tagPattern": "v*",
+    "tags": ">=0.120.0"
+  },
+  "paths": ["Packages/VRM10", "Assets/VRM10"],
+  "select": "latest"
+}

@@ -1,0 +1,12 @@
+{
+  "id": "univrm-gltf",
+  "source": {
+    "type": "git",
+    "url": "https://github.com/vrm-c/UniVRM.git",
+    "name": "com.vrmc.gltf",
+    "tagPattern": "v*",
+    "tags": ">=0.120.0"
+  },
+  "paths": ["Packages/UniGLTF", "Assets/UniGLTF"],
+  "select": "latest"
+}
