@@ -7,6 +7,8 @@
     "tagPattern": "v*",
     "tags": ">=0.120.0"
   },
-  "paths": ["Packages/VRM", "Assets/VRM"],
-  "select": "latest"
+  "paths": [
+    { "tags": ">=0.131.0", "path": "Packages/VRM" },
+    { "tags": "<0.131.0", "path": "Assets/VRM" }
+  ]
 }

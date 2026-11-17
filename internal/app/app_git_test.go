@@ -44,7 +44,7 @@ func (f *fixture) writeGitRecipe(id, name, dir string) string {
 	content := fmt.Sprintf(`{
   "id": %q,
   "source": {"type": "git", "url": "https://github.com/owner/mono.git", "name": %q, "tagPattern": "v*"},
-  "paths": [%q]
+  "path": %q
 }`, id, name, dir)
 	p := filepath.Join(f.t.TempDir(), id+".json")
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
@@ -59,7 +59,7 @@ func TestGitRecipesShareArchivesAndPromoteDependencies(t *testing.T) {
 	f.app.Client.HTTP.Transport = gh
 	ctx := context.Background()
 
-	if err := f.app.Add(ctx, f.writeGitRecipe("pkg", "com.example.pkg", "Packages/Pkg")); err != nil {
+	if err := f.addAndPull(PullOptions{}, f.writeGitRecipe("pkg", "com.example.pkg", "Packages/Pkg")); err != nil {
 		t.Fatal(err, f.log)
 	}
 	pkgDir := f.app.Layout.PackageDir("com.example.pkg", "1.1.0")
@@ -75,6 +75,13 @@ func TestGitRecipesShareArchivesAndPromoteDependencies(t *testing.T) {
 	}
 
 	if err := f.app.Add(ctx, f.writeGitRecipe("base", "com.example.base", "Packages/Base")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if m = readManifest(t, pkgDir); m["vpmDependencies"] != nil {
+		t.Errorf("add rebuilt pkg: %v", m["vpmDependencies"])
+	}
+	// Pulling only base builds pkg again too.
+	if err := f.app.Pull(ctx, []string{"base"}, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
 	m = readManifest(t, pkgDir)
@@ -96,7 +103,7 @@ func TestGitRecipesShareArchivesAndPromoteDependencies(t *testing.T) {
 	}
 
 	// Refetching downloads the shared archive once more, not once per recipe.
-	if err := f.app.Refetch(ctx, nil); err != nil {
+	if err := f.app.Pull(ctx, nil, PullOptions{Refetch: true}); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if n := gh.Requests["codeload"]; n != 2 {

@@ -5,7 +5,6 @@
     "registry": "https://registry.npmjs.com",
     "name": "mu.cluster.cluster-creator-kit"
   },
-  "select": "latest",
   "versions": ">=2.0.0",
   "overrides": [
     {

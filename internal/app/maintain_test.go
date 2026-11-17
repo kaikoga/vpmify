@@ -21,10 +21,10 @@ func problemMessages(problems []Problem) []string {
 	return out
 }
 
-func TestDoctorFindsNothingAfterSync(t *testing.T) {
+func TestDoctorFindsNothingAfterPull(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
-	if err := f.app.Add(context.Background(), f.writeRecipe("")); err != nil {
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
 	problems, err := f.app.Doctor(false)
@@ -39,7 +39,7 @@ func TestDoctorFixes(t *testing.T) {
 		f.reg.add(v, "2021.3")
 	}
 	ctx := context.Background()
-	if err := f.app.Add(ctx, f.writeRecipe(`, "select": "all"`)); err != nil {
+	if err := f.addAndPull(PullOptions{All: true}, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
 	layout := f.app.Layout
@@ -128,19 +128,19 @@ func TestDoctorFixes(t *testing.T) {
 		t.Errorf("after fix: problems = %v, err = %v", problemMessages(problems), err)
 	}
 
-	// sync places the forgotten versions again.
-	if err := f.app.Sync(ctx, nil); err != nil {
+	// pull --all places the forgotten versions again.
+	if err := f.app.Pull(ctx, nil, PullOptions{All: true}); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if got, want := f.placed(), []string{"1.0.0@2021.3", "1.1.0@2021.3", "2.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("placed after sync = %v, want %v", got, want)
+		t.Errorf("placed after pull = %v, want %v", got, want)
 	}
 }
 
 func TestDoctorReportsWhatItCannotFix(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
-	if err := f.app.Add(context.Background(), f.writeRecipe("")); err != nil {
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if err := os.Remove(f.app.recipePath("kit")); err != nil {
@@ -213,7 +213,7 @@ func (f *fixture) moveRecord(v string) string {
 func TestRemoveLeavesFoldersOutsideTheStore(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
-	if err := f.app.Add(context.Background(), f.writeRecipe("")); err != nil {
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
 	outside := f.moveRecord("1.0.0")
@@ -232,7 +232,7 @@ func TestRemoveLeavesFoldersOutsideTheStore(t *testing.T) {
 func TestRemoveLeavesAFolderAnotherRecipeUses(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
-	if err := f.app.Add(context.Background(), f.writeRecipe("")); err != nil {
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
 	// A second recipe for the same package, made by hand: add refuses it.
@@ -263,7 +263,7 @@ func TestRemoveLeavesAFolderAnotherRecipeUses(t *testing.T) {
 func TestRemoveDeletesTheEmptyPackageFolder(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
-	if err := f.app.Add(context.Background(), f.writeRecipe("")); err != nil {
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if err := f.app.Remove(context.Background(), "kit", "1.0.0"); err != nil {
@@ -280,7 +280,7 @@ func TestRemoveDeletesTheEmptyPackageFolder(t *testing.T) {
 func TestRemoveWithoutSettingsChangesNothing(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
-	if err := f.app.Add(context.Background(), f.writeRecipe("")); err != nil {
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if err := os.Remove(f.settings); err != nil {
@@ -306,10 +306,10 @@ func TestCleanDeletesPlacedVersionsAndKeepsRecipes(t *testing.T) {
 	f.reg.add("1.0.0", "2021.3")
 	f.reg.add("1.1.0", "2021.3")
 	ctx := context.Background()
-	if err := f.app.Add(ctx, f.writeRecipe("")); err != nil {
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if err := f.app.Sync(ctx, []string{"kit@1.0.0"}); err != nil {
+	if err := f.app.Pull(ctx, []string{"kit@1.0.0"}, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
 
@@ -342,12 +342,16 @@ func TestCleanDeletesPlacedVersionsAndKeepsRecipes(t *testing.T) {
 		t.Error("the recipe was deleted")
 	}
 
-	// sync places the selected version again, from a new download.
-	if err := f.app.Sync(ctx, nil); err != nil {
+	if !exists(f.app.Layout.Index("kit")) {
+		t.Error("the version list was deleted")
+	}
+
+	// pull places the newest version again, from a new download.
+	if err := f.app.Pull(ctx, nil, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if got, want := f.placed(), []string{"1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("placed after sync = %v, want %v", got, want)
+		t.Errorf("placed after pull = %v, want %v", got, want)
 	}
 	if f.reg.downloads["1.1.0"] != 2 {
 		t.Errorf("1.1.0 downloaded %d times", f.reg.downloads["1.1.0"])
@@ -357,7 +361,7 @@ func TestCleanDeletesPlacedVersionsAndKeepsRecipes(t *testing.T) {
 func TestCleanWithoutSettings(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
-	if err := f.app.Add(context.Background(), f.writeRecipe("")); err != nil {
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if err := os.Remove(f.settings); err != nil {
@@ -376,10 +380,10 @@ func TestRefetchBuildsEveryPlacedVersionAgain(t *testing.T) {
 	f.reg.add("1.0.0", "2021.3")
 	f.reg.add("1.1.0", "2021.3")
 	ctx := context.Background()
-	if err := f.app.Add(ctx, f.writeRecipe("")); err != nil {
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if err := f.app.Sync(ctx, []string{"kit@1.0.0"}); err != nil {
+	if err := f.app.Pull(ctx, []string{"kit@1.0.0"}, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
 	before := f.registered()
@@ -388,7 +392,7 @@ func TestRefetchBuildsEveryPlacedVersionAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := f.app.Refetch(ctx, nil); err != nil {
+	if err := f.app.Pull(ctx, nil, PullOptions{Refetch: true}); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if !exists(broken) {
@@ -412,24 +416,27 @@ func TestRefetchLeavesVersionsUpstreamNoLongerHas(t *testing.T) {
 	f.reg.add("1.0.0", "2021.3")
 	f.reg.add("1.1.0", "2021.3")
 	ctx := context.Background()
-	if err := f.app.Add(ctx, f.writeRecipe("")); err != nil {
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if err := f.app.Sync(ctx, []string{"kit@1.0.0"}); err != nil {
+	if err := f.app.Pull(ctx, []string{"kit@1.0.0"}, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
 	f.reg.mu.Lock()
 	delete(f.reg.versions, "1.0.0")
 	delete(f.reg.tarballs, "1.0.0")
 	f.reg.mu.Unlock()
+	if err := f.app.Update(ctx, nil); err != nil {
+		t.Fatal(err, f.log)
+	}
 
-	if err := f.app.Refetch(ctx, []string{"kit"}); err != nil {
+	if err := f.app.Pull(ctx, []string{"kit"}, PullOptions{Refetch: true}); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if got, want := f.placed(), []string{"1.0.0@2021.3", "1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed = %v, want %v", got, want)
 	}
-	if !strings.Contains(f.log.String(), "upstream no longer has "+pkgName+" 1.0.0") {
+	if !strings.Contains(f.log.String(), "the version list no longer has "+pkgName+" 1.0.0") {
 		t.Errorf("log = %s", f.log)
 	}
 }
@@ -437,7 +444,7 @@ func TestRefetchLeavesVersionsUpstreamNoLongerHas(t *testing.T) {
 func TestDoctorRecordsTheStoreCopyOfAMovedRecord(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
-	if err := f.app.Add(context.Background(), f.writeRecipe("")); err != nil {
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
 	dir := f.app.Layout.PackageDir(pkgName, "1.0.0")
@@ -464,7 +471,7 @@ func TestDoctorRecordsTheStoreCopyOfAMovedRecord(t *testing.T) {
 func TestDoctorFixWithoutSettingsChangesNothing(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
-	if err := f.app.Add(context.Background(), f.writeRecipe("")); err != nil {
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
 	dir := f.app.Layout.PackageDir(pkgName, "1.0.0")
@@ -498,7 +505,7 @@ func TestDoctorFixWithoutSettingsChangesNothing(t *testing.T) {
 func TestDoctorIgnoresFileBrowserClutter(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
-	if err := f.app.Add(context.Background(), f.writeRecipe("")); err != nil {
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
 	for _, p := range []string{
@@ -518,7 +525,7 @@ func TestAddRefusesASecondRecipeForOnePackage(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
 	ctx := context.Background()
-	if err := f.app.Add(ctx, f.writeRecipe("")); err != nil {
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
 	other := filepath.Join(t.TempDir(), "kit2.json")
@@ -532,7 +539,7 @@ func TestAddRefusesASecondRecipeForOnePackage(t *testing.T) {
 		t.Error("kit2 was saved")
 	}
 	// Replacing the recipe that provides the package is fine.
-	if err := f.app.Add(ctx, f.writeRecipe(`, "select": "all"`)); err != nil {
+	if err := f.app.Add(ctx, f.writeRecipe(`, "versions": ">=1.0.0"`)); err != nil {
 		t.Error(err)
 	}
 }

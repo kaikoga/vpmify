@@ -145,6 +145,16 @@ func (f *fixture) writeRecipe(extra string) string {
 	return p
 }
 
+// addAndPull adds recipes and pulls, the way a user starts.
+func (f *fixture) addAndPull(opt PullOptions, refs ...string) error {
+	f.t.Helper()
+	ctx := context.Background()
+	if err := f.app.Add(ctx, refs...); err != nil {
+		return err
+	}
+	return f.app.Pull(ctx, nil, opt)
+}
+
 func (f *fixture) placed() []string {
 	f.t.Helper()
 	entries, settingsErr, err := f.app.List()
@@ -192,7 +202,7 @@ func (f *fixture) manifest(version string) map[string]any {
 const overrideNewUnity = `,
   "overrides": [{"versions": ">=2.0.0", "set": {"unity": "6000.2", "unityRelease": "6f2"}}]`
 
-func TestAddPlacesLatestPerUnityAndRegisters(t *testing.T) {
+func TestPullPlacesLatestPerUnityAndRegisters(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
 	f.reg.add("1.1.0", "2021.3")
@@ -200,7 +210,18 @@ func TestAddPlacesLatestPerUnityAndRegisters(t *testing.T) {
 	f.reg.add("2.1.0-beta.1", "2021.3")
 	ctx := context.Background()
 
+	// add reads the version list and places nothing.
 	if err := f.app.Add(ctx, f.writeRecipe(overrideNewUnity)); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if got := f.placed(); len(got) != 0 {
+		t.Errorf("placed after add = %v", got)
+	}
+	if len(f.reg.downloads) != 0 {
+		t.Errorf("add downloaded %v", f.reg.downloads)
+	}
+
+	if err := f.app.Pull(ctx, nil, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if got, want := f.placed(), []string{"1.1.0@2021.3", "2.0.0@6000.2"}; !reflect.DeepEqual(got, want) {
@@ -230,32 +251,46 @@ func TestAddPlacesLatestPerUnityAndRegisters(t *testing.T) {
 	}
 }
 
-func TestSyncKeepsOlderVersionsAndAddsNamedOnes(t *testing.T) {
+func TestPullKeepsOlderVersionsAndAddsNamedOnes(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
 	f.reg.add("1.1.0", "2021.3")
 	ctx := context.Background()
-	if err := f.app.Add(ctx, f.writeRecipe("")); err != nil {
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
 
+	// A new version upstream is not pulled until the version list is read
+	// again.
 	f.reg.add("1.2.0", "2021.3")
-	if err := f.app.Sync(ctx, nil); err != nil {
+	if err := f.app.Pull(ctx, nil, PullOptions{}); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if got, want := f.placed(), []string{"1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("placed before update = %v, want %v", got, want)
+	}
+	if err := f.app.Update(ctx, nil); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if !strings.Contains(f.log.String(), "new: 1.2.0") {
+		t.Errorf("update did not name the new version:\n%s", f.log)
+	}
+	if err := f.app.Pull(ctx, nil, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if got, want := f.placed(), []string{"1.1.0@2021.3", "1.2.0@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed = %v, want %v", got, want)
 	}
 
-	if err := f.app.Sync(ctx, []string{"kit@1.0.0"}); err != nil {
+	if err := f.app.Pull(ctx, []string{"kit@1.0.0"}, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if got, want := f.placed(), []string{"1.0.0@2021.3", "1.1.0@2021.3", "1.2.0@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed = %v, want %v", got, want)
 	}
 
-	if err := f.app.Sync(ctx, []string{"kit@9.9.9"}); err == nil {
-		t.Error("no error for a version upstream does not have")
+	if err := f.app.Pull(ctx, []string{"kit@9.9.9"}, PullOptions{}); err == nil {
+		t.Error("no error for a version the version list does not have")
 	}
 
 	// Nothing is downloaded twice.
@@ -266,12 +301,12 @@ func TestSyncKeepsOlderVersionsAndAddsNamedOnes(t *testing.T) {
 	}
 }
 
-func TestSelectAll(t *testing.T) {
+func TestPullAll(t *testing.T) {
 	f := newFixture(t)
 	for _, v := range []string{"0.9.0", "1.0.0", "1.1.0", "2.0.0"} {
 		f.reg.add(v, "2021.3")
 	}
-	if err := f.app.Add(context.Background(), f.writeRecipe(`, "select": "all", "versions": ">=1.0.0"`)); err != nil {
+	if err := f.addAndPull(PullOptions{All: true}, f.writeRecipe(`, "versions": ">=1.0.0"`)); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if got, want := f.placed(), []string{"1.0.0@2021.3", "1.1.0@2021.3", "2.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
@@ -279,18 +314,78 @@ func TestSelectAll(t *testing.T) {
 	}
 }
 
-func TestChangedOverridesRebuildInPlace(t *testing.T) {
+func TestVersions(t *testing.T) {
+	f := newFixture(t)
+	for _, v := range []string{"0.9.0", "1.0.0", "1.1.0", "2.0.0", "2.1.0-beta.1"} {
+		f.reg.add(v, "2021.3")
+	}
+	ctx := context.Background()
+	if err := f.app.Add(ctx, f.writeRecipe(`, "versions": ">=1.0.0"`+overrideNewUnity)); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if err := f.app.Pull(ctx, []string{"kit@1.0.0"}, PullOptions{}); err != nil {
+		t.Fatal(err, f.log)
+	}
+	f.reg.down = true // versions reads only the version list
+
+	list, err := f.app.Versions("kit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, v := range list.Versions {
+		got = append(got, fmt.Sprintf("%s %s newest=%v placed=%v", v.Version, v.Unity, v.Newest, v.Placed))
+	}
+	want := []string{
+		"2.0.0 6000.2 newest=true placed=true",
+		"1.1.0 2021.3 newest=true placed=true",
+		"1.0.0 2021.3 newest=false placed=true",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("versions =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	if list.Package != pkgName || list.Updated.IsZero() {
+		t.Errorf("list = %+v", list)
+	}
+}
+
+func TestPullRefusesAVersionListOfAnotherRecipe(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
 	ctx := context.Background()
 	if err := f.app.Add(ctx, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
+	// The user edits the recipe to read another registry.
+	edited := `{"id": "kit", "source": {"type": "npm", "registry": "http://mirror.test", "name": "` + pkgName + `"}}`
+	if err := os.WriteFile(filepath.Join(f.app.Layout.Recipes(), "kit.json"), []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.app.Pull(ctx, nil, PullOptions{}); err == nil || !strings.Contains(err.Error(), "vpmify update kit") {
+		t.Errorf("err = %v", err)
+	}
+	if _, err := f.app.Versions("kit"); err == nil {
+		t.Error("versions read a stale version list")
+	}
+	if err := f.app.Update(ctx, nil); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if err := f.app.Pull(ctx, nil, PullOptions{}); err != nil {
+		t.Fatal(err, f.log)
+	}
+}
+
+func TestChangedOverridesRebuildInPlace(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
+		t.Fatal(err, f.log)
+	}
 	before := f.registered()
 
 	recipe := f.writeRecipe(`,
   "overrides": [{"set": {"unity": "2022.3"}}]`)
-	if err := f.app.Add(ctx, recipe); err != nil {
+	if err := f.addAndPull(PullOptions{}, recipe); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if m := f.manifest("1.0.0"); m["unity"] != "2022.3" {
@@ -309,7 +404,7 @@ func TestRemove(t *testing.T) {
 	f.reg.add("1.0.0", "2021.3")
 	f.reg.add("2.0.0", "2021.3")
 	ctx := context.Background()
-	if err := f.app.Add(ctx, f.writeRecipe(overrideNewUnity)); err != nil {
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe(overrideNewUnity)); err != nil {
 		t.Fatal(err, f.log)
 	}
 
@@ -332,8 +427,10 @@ func TestRemove(t *testing.T) {
 	if got := f.registered(); !reflect.DeepEqual(got, []string{f.foreign}) {
 		t.Errorf("registered = %v", got)
 	}
-	if _, err := os.Stat(filepath.Join(f.app.Layout.Recipes(), "kit.json")); !os.IsNotExist(err) {
-		t.Errorf("recipe still there: %v", err)
+	for _, p := range []string{filepath.Join(f.app.Layout.Recipes(), "kit.json"), f.app.Layout.Index("kit")} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s still there: %v", p, err)
+		}
 	}
 }
 
@@ -341,7 +438,7 @@ func TestRegistersEvenWhenARecipeFails(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
 	ctx := context.Background()
-	if err := f.app.Add(ctx, f.writeRecipe("")); err != nil {
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
 	// Someone (or ALCOM's own "remove") drops the registration.
@@ -356,9 +453,16 @@ func TestRegistersEvenWhenARecipeFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.reg.down = true
-
-	if err := f.app.Sync(ctx, nil); err == nil {
+	if err := f.app.Update(ctx, nil); err == nil {
 		t.Error("no error while the registry is down")
+	}
+	// Another recipe that cannot be read.
+	if err := os.WriteFile(filepath.Join(f.app.Layout.Recipes(), "broken.json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := f.app.Pull(ctx, nil, PullOptions{}); err == nil || !strings.Contains(err.Error(), "broken") {
+		t.Errorf("err = %v", err)
 	}
 	if got, want := f.placed(), []string{"1.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed = %v, want %v (registration not restored)", got, want)
@@ -376,7 +480,7 @@ func TestBrokenDownloadIsRejected(t *testing.T) {
 		}
 		f.reg.serve(w, req)
 	}
-	if err := f.app.Add(context.Background(), f.writeRecipe("")); err == nil || !strings.Contains(err.Error(), "integrity") {
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err == nil || !strings.Contains(err.Error(), "integrity") {
 		t.Errorf("err = %v", err)
 	}
 	if got := f.placed(); len(got) != 0 {

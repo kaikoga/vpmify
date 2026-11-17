@@ -7,6 +7,8 @@
     "tagPattern": "v*",
     "tags": ">=0.120.0"
   },
-  "paths": ["Packages/UniGLTF", "Assets/UniGLTF"],
-  "select": "latest"
+  "paths": [
+    { "tags": ">=0.131.0", "path": "Packages/UniGLTF" },
+    { "tags": "<0.131.0", "path": "Assets/UniGLTF" }
+  ]
 }

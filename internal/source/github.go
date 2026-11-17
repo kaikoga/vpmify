@@ -32,8 +32,9 @@ type GitHub struct {
 	Owner, Repo string
 	// Package is the name package.json must have.
 	Package string
-	// Paths are the folders to look in, in order. Empty means the root.
-	Paths      []string
+	// PathFor returns the folder of the package in a tag, from the version
+	// in the tag's name; false means the tag is not read.
+	PathFor    func(semver.Version) (string, bool)
 	TagPattern string
 	AcceptTag  func(semver.Version) bool
 	Client     *fetch.Client
@@ -51,10 +52,6 @@ func NewGitHub(r *recipe.Recipe, client *fetch.Client, cacheDir string) (*GitHub
 	if err != nil {
 		return nil, err
 	}
-	paths := r.Paths
-	if len(paths) == 0 {
-		paths = []string{""}
-	}
 	pattern := r.Source.TagPattern
 	if pattern == "" {
 		pattern = "*"
@@ -62,7 +59,7 @@ func NewGitHub(r *recipe.Recipe, client *fetch.Client, cacheDir string) (*GitHub
 	return &GitHub{
 		Owner: owner, Repo: repo,
 		Package:      r.Source.Name,
-		Paths:        paths,
+		PathFor:      r.PathFor,
 		TagPattern:   pattern,
 		AcceptTag:    r.AcceptsTag,
 		Client:       client,
@@ -218,43 +215,47 @@ func parseRefAdvertisement(data []byte) (map[string]string, error) {
 	return refs, nil
 }
 
-// release returns the package's release in tag t, or nil when no folder
-// of the tag has the package.
+// release returns the package's release in tag t, or nil when the tag's
+// folder for the package does not have it.
 func (g *GitHub) release(ctx context.Context, t tag) (*Release, error) {
-	for _, dir := range g.Paths {
-		data, ok, err := g.manifest(ctx, t.commit, dir)
-		if err != nil {
-			return nil, fmt.Errorf("tag %s: %w", t.name, err)
+	dir := ""
+	if g.PathFor != nil {
+		var ok bool
+		if dir, ok = g.PathFor(t.version); !ok {
+			return nil, nil
 		}
-		if !ok {
-			continue
-		}
-		var m struct {
-			Name         string            `json:"name"`
-			Version      string            `json:"version"`
-			Unity        any               `json:"unity"`
-			Dependencies map[string]string `json:"dependencies"`
-		}
-		if err := json.Unmarshal(data, &m); err != nil || m.Name != g.Package {
-			continue
-		}
-		v, err := semver.Parse(m.Version)
-		if err != nil {
-			continue
-		}
-		unity, _ := m.Unity.(string)
-		return &Release{
-			Version:      v,
-			Unity:        unity,
-			Dependencies: m.Dependencies,
-			Dir:          dir,
-			ArchiveURL:   fmt.Sprintf("%s/%s/%s/tar.gz/%s", g.CodeloadBase, g.Owner, g.Repo, t.commit),
-			Pinned:       true,
-			CacheKey:     path.Join("git", "github.com", g.Owner, g.Repo, t.commit+".tar.gz"),
-			Origin:       "tag " + t.name,
-		}, nil
 	}
-	return nil, nil
+	data, ok, err := g.manifest(ctx, t.commit, dir)
+	if err != nil {
+		return nil, fmt.Errorf("tag %s: %w", t.name, err)
+	}
+	if !ok {
+		return nil, nil
+	}
+	var m struct {
+		Name         string            `json:"name"`
+		Version      string            `json:"version"`
+		Unity        any               `json:"unity"`
+		Dependencies map[string]string `json:"dependencies"`
+	}
+	if err := json.Unmarshal(data, &m); err != nil || m.Name != g.Package {
+		return nil, nil
+	}
+	v, err := semver.Parse(m.Version)
+	if err != nil {
+		return nil, nil
+	}
+	unity, _ := m.Unity.(string)
+	return &Release{
+		Version:      v,
+		Unity:        unity,
+		Dependencies: m.Dependencies,
+		Dir:          dir,
+		ArchiveURL:   fmt.Sprintf("%s/%s/%s/tar.gz/%s", g.CodeloadBase, g.Owner, g.Repo, t.commit),
+		Pinned:       true,
+		CacheKey:     path.Join("git", "github.com", g.Owner, g.Repo, t.commit+".tar.gz"),
+		Origin:       "tag " + t.name,
+	}, nil
 }
 
 // manifest returns package.json in folder dir of commit, from the cache

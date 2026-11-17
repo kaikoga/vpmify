@@ -16,38 +16,47 @@ import (
 	"github.com/kaikoga/vpmify/internal/semver"
 )
 
-// Select modes.
-const (
-	// SelectLatest adds the newest version for each value of the "unity"
-	// field on every sync. Versions placed before are kept.
-	SelectLatest = "latest"
-	// SelectAll adds every version in range.
-	SelectAll = "all"
-)
-
 // Source types.
 const (
 	SourceNPM = "npm"
 	SourceGit = "git"
 )
 
-// Recipe describes one package and where it comes from.
+// Recipe describes one package, where it comes from and how to convert it.
+// Which versions to place is not part of it: the user chooses that with
+// each command (kaikoga 2026-11-18).
 type Recipe struct {
 	ID     string `json:"id"`
 	Source Source `json:"source"`
-	// Paths are the folders, inside a Git repository, where the package's
-	// package.json may be. Each tag uses the first folder whose package.json
-	// has Source.Name, so a package that moved (UniVRM moved Assets/VRM to
-	// Packages/VRM) is still one recipe. Empty means the repository root.
-	Paths      []string   `json:"paths,omitempty"`
-	Select     string     `json:"select,omitempty"`
+	// Path is the folder of the package inside a Git repository, for every
+	// tag. Empty means the repository root.
+	Path string `json:"path,omitempty"`
+	// Paths give the folder by tag instead, for a package that moved (UniVRM
+	// moved Assets/VRM to Packages/VRM in v0.131.0). The ranges are on the
+	// tag's version, not the package's: the package's version is in the
+	// package.json that the folder holds. A tag that no range takes is not
+	// read.
+	Paths []PathRule `json:"paths,omitempty"`
+	// Versions and Prerelease say which versions the recipe can convert.
 	Versions   string     `json:"versions,omitempty"`
 	Prerelease bool       `json:"prerelease,omitempty"`
 	Overrides  []Override `json:"overrides,omitempty"`
 
 	versions  semver.Range
 	tags      semver.Range
+	paths     []parsedPathRule
 	overrides []parsedOverride
+}
+
+// PathRule is the folder of the package for the tags in range.
+type PathRule struct {
+	Tags string `json:"tags,omitempty"`
+	Path string `json:"path"`
+}
+
+type parsedPathRule struct {
+	tags semver.Range
+	path string
 }
 
 // Source says where the package comes from.
@@ -104,6 +113,13 @@ func Parse(data []byte) (*Recipe, error) {
 	dec.DisallowUnknownFields()
 	var r Recipe
 	if err := dec.Decode(&r); err != nil {
+		// Hints for recipes written before 2026-11-18.
+		switch msg := err.Error(); {
+		case strings.Contains(msg, `unknown field "select"`):
+			return nil, fmt.Errorf("%w (a recipe no longer chooses versions; `vpmify pull --all` places every version)", err)
+		case strings.Contains(msg, "Recipe.paths"):
+			return nil, fmt.Errorf(`%w (write "path": "<folder>", or "paths": [{"tags": "<range>", "path": "<folder>"}, ...])`, err)
+		}
 		return nil, err
 	}
 	if err := r.check(); err != nil {
@@ -128,8 +144,8 @@ func (r *Recipe) check() error {
 		if r.Source.Registry == "" {
 			return fmt.Errorf("npm source needs registry")
 		}
-		if len(r.Paths) > 0 || r.Source.URL != "" || r.Source.TagPattern != "" || r.Source.Tags != "" {
-			return fmt.Errorf("npm source takes no paths, url, tagPattern or tags")
+		if r.Path != "" || len(r.Paths) > 0 || r.Source.URL != "" || r.Source.TagPattern != "" || r.Source.Tags != "" {
+			return fmt.Errorf("npm source takes no path, paths, url, tagPattern or tags")
 		}
 	case SourceGit:
 		if r.Source.URL == "" {
@@ -146,21 +162,11 @@ func (r *Recipe) check() error {
 			return fmt.Errorf("tags: %w", err)
 		}
 		r.tags = tags
-		for _, p := range r.Paths {
-			clean := path.Clean("/" + p)
-			if strings.Contains(p, "\\") || clean != "/"+strings.Trim(p, "/") {
-				return fmt.Errorf("paths: bad folder %q", p)
-			}
+		if err := r.checkPaths(); err != nil {
+			return err
 		}
 	default:
 		return fmt.Errorf("unknown source type %q", r.Source.Type)
-	}
-	switch r.Select {
-	case "":
-		r.Select = SelectLatest
-	case SelectLatest, SelectAll:
-	default:
-		return fmt.Errorf("unknown select %q (want %q or %q)", r.Select, SelectLatest, SelectAll)
 	}
 	rng, err := semver.ParseRange(r.Versions)
 	if err != nil {
@@ -185,10 +191,72 @@ func (r *Recipe) check() error {
 	return nil
 }
 
+func checkFolder(p string) error {
+	clean := path.Clean("/" + p)
+	if strings.Contains(p, "\\") || clean != "/"+strings.Trim(p, "/") {
+		return fmt.Errorf("bad folder %q", p)
+	}
+	return nil
+}
+
+func (r *Recipe) checkPaths() error {
+	if r.Path != "" && len(r.Paths) > 0 {
+		return fmt.Errorf("write either path or paths, not both")
+	}
+	if err := checkFolder(r.Path); err != nil {
+		return fmt.Errorf("path: %w", err)
+	}
+	for i, p := range r.Paths {
+		if err := checkFolder(p.Path); err != nil {
+			return fmt.Errorf("paths[%d]: %w", i, err)
+		}
+		tags, err := semver.ParseRange(p.Tags)
+		if err != nil {
+			return fmt.Errorf("paths[%d].tags: %w", i, err)
+		}
+		// Each tag has one folder, so the ranges must not overlap.
+		for j, prev := range r.paths {
+			if semver.Overlaps(prev.tags, tags) {
+				return fmt.Errorf("paths[%d].tags %q overlaps paths[%d].tags %q", i, p.Tags, j, prev.tags)
+			}
+		}
+		r.paths = append(r.paths, parsedPathRule{tags: tags, path: p.Path})
+	}
+	return nil
+}
+
 // AcceptsTag reports whether the recipe reads a tag whose name holds
 // version v (Git sources).
 func (r *Recipe) AcceptsTag(v semver.Version) bool {
 	return r.tags.Contains(v)
+}
+
+// PathFor returns the folder of the package in the tag whose name holds
+// version v, and false when no folder is given for the tag (Git sources).
+func (r *Recipe) PathFor(v semver.Version) (string, bool) {
+	if len(r.paths) == 0 {
+		return r.Path, true
+	}
+	for _, p := range r.paths {
+		if p.tags.Contains(v) {
+			return p.path, true
+		}
+	}
+	return "", false
+}
+
+// ListingKey identifies what decides the versions upstream lists for the
+// recipe: the source and the folders. A version list kept from an update
+// whose key differs is stale. Versions, Prerelease and Overrides are not in
+// it, because they are applied to the list when it is read.
+func (r *Recipe) ListingKey() string {
+	data, _ := json.Marshal(struct {
+		Source Source     `json:"source"`
+		Path   string     `json:"path"`
+		Paths  []PathRule `json:"paths"`
+	}{r.Source, r.Path, r.Paths})
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])[:16]
 }
 
 // Accepts reports whether the recipe takes version v at all.

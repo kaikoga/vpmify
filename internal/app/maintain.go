@@ -51,10 +51,10 @@ func (a *App) forget(st *state.State, dirs []string) error {
 }
 
 // Clean deletes every placed version, the downloads and the work folders,
-// and unregisters the versions from ALCOM. The recipes stay, so sync places
-// the versions they select again; a version added by name has to be named
-// again, and a project that locks a version not placed again cannot resolve
-// it. Clean returns the versions it deletes, or would delete when apply is
+// and unregisters the versions from ALCOM. The recipes and their version
+// lists stay, so pull places the newest versions again; another version has
+// to be named again, and a project that locks a version not placed again
+// cannot resolve it. Clean returns the versions it deletes, or would delete when apply is
 // false.
 func (a *App) Clean(apply bool) ([]Entry, error) {
 	var out []Entry
@@ -142,7 +142,7 @@ type Problem struct {
 
 // Doctor reports the disagreements among the recipes, state.json, the store
 // and settings.json, and fixes what it can when fix is true. It does not go
-// to the network; placing versions again is sync's work.
+// to the network; placing versions again is pull's work.
 func (a *App) Doctor(fix bool) ([]Problem, error) {
 	var problems []*Problem
 	err := a.withLock(func() error {
@@ -250,7 +250,7 @@ func (a *App) Doctor(fix bool) ([]Problem, error) {
 func (a *App) checkVersion(id, name, v string, ps *state.PackageState) (p *Problem, inStore bool) {
 	vs := ps.Versions[v]
 	want := a.Layout.PackageDir(name, v)
-	resync := fmt.Sprintf("; `vpmify sync %s@%s` places it again", id, v)
+	resync := fmt.Sprintf("; `vpmify pull %s@%s` places it again", id, v)
 	forget := func() { delete(ps.Versions, v) }
 	if !samePath(vs.Path, want) {
 		// The user may have moved Vpmify's data. The recorded folder is

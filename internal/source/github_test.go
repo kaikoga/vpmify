@@ -47,7 +47,7 @@ func TestGitHubReleases(t *testing.T) {
 	src := newSource(t, gh, `{
   "id": "pkg",
   "source": {"type": "git", "url": "https://github.com/owner/repo.git", "name": "com.example.pkg", "tagPattern": "v*", "tags": ">=0.9.0"},
-  "paths": ["Packages/Pkg", "Assets/Pkg"]
+  "paths": [{"tags": ">=1.1.0", "path": "Packages/Pkg"}, {"tags": "<1.1.0", "path": "Assets/Pkg"}]
 }`)
 	got, err := src.Releases(context.Background())
 	if err != nil {
@@ -63,6 +63,10 @@ func TestGitHubReleases(t *testing.T) {
 	}
 	if !reflect.DeepEqual(summary, want) {
 		t.Errorf("releases = %q, want %q", summary, want)
+	}
+	// Each tag reads one folder: the five tags v0.9.0 to v1.3.0.
+	if n := gh.Requests["raw"]; n != 5 {
+		t.Errorf("raw requests = %d, want 5", n)
 	}
 	r := got[1]
 	if r.ArchiveURL != "https://codeload.github.com/owner/repo/tar.gz/"+v110 || !r.Pinned {

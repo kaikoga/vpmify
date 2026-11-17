@@ -26,9 +26,15 @@ var version = "dev"
 const usage = `usage: vpmify <command> [arguments]
 
 commands:
-  add <recipe.json|URL>...     add recipes and sync
-  sync [--refetch] [<id>[@<version>]...]
-                               place selected versions and register them with ALCOM;
+  add <recipe.json|URL>...     add recipes and read their version lists
+  update [<id>...]             read the version lists from upstream again;
+                               places nothing
+  versions [--json] <id>       show the versions a recipe can place, from its
+                               version list
+  pull [--all] [--refetch] [<id>[@<version>]...]
+                               place versions from the version lists and register
+                               them with ALCOM: the newest for each Unity, every
+                               version with --all, and each <id>@<version> named;
                                --refetch also downloads and builds every placed
                                version again
   list [--json]                show placed versions
@@ -84,16 +90,26 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return usageError(stderr, "add takes recipe files or URLs")
 		}
 		err = a.Add(ctx, rest...)
-	case "sync":
-		targets, refetch, perr := splitFlag(rest, "--refetch")
+	case "update":
+		ids, _, perr := splitFlags(rest)
 		if perr != nil {
 			return usageError(stderr, perr.Error())
 		}
-		if refetch {
-			err = a.Refetch(ctx, targets)
-		} else {
-			err = a.Sync(ctx, targets)
+		err = a.Update(ctx, ids)
+	case "pull":
+		targets, flags, perr := splitFlags(rest, "--all", "--refetch")
+		if perr != nil {
+			return usageError(stderr, perr.Error())
 		}
+		err = a.Pull(ctx, targets, app.PullOptions{All: flags["--all"], Refetch: flags["--refetch"]})
+	case "versions":
+		ids, flags, perr := splitFlags(rest, "--json")
+		if perr != nil || len(ids) != 1 {
+			return usageError(stderr, "versions takes one recipe id and an optional --json")
+		}
+		err = versions(a, stdout, ids[0], flags["--json"])
+	case "sync":
+		return usageError(stderr, "sync is now `update` (read the version lists) and `pull` (place versions)")
 	case "list":
 		fs := flag.NewFlagSet("list", flag.ContinueOnError)
 		fs.SetOutput(stderr)
@@ -112,18 +128,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		err = a.Remove(ctx, rest[0], v)
 	case "clean":
-		args, yes, perr := splitFlag(rest, "--yes", "-y")
+		args, flags, perr := splitFlags(rest, "--yes", "-y")
 		if perr != nil || len(args) > 0 {
 			return usageError(stderr, "clean takes only --yes")
 		}
-		err = clean(a, stdout, yes)
+		err = clean(a, stdout, flags["--yes"] || flags["-y"])
 	case "doctor":
-		args, fix, perr := splitFlag(rest, "--fix")
+		args, flags, perr := splitFlags(rest, "--fix")
 		if perr != nil || len(args) > 0 {
 			return usageError(stderr, "doctor takes only --fix")
 		}
 		var ok bool
-		ok, err = doctor(a, stdout, fix)
+		ok, err = doctor(a, stdout, flags["--fix"])
 		if err == nil && !ok {
 			return 1
 		}
@@ -143,20 +159,56 @@ func usageError(stderr io.Writer, msg string) int {
 	return 2
 }
 
-// splitFlag takes a boolean flag out of args, wherever it is, so that
-// `sync kit --refetch` works as well as `sync --refetch kit`.
-func splitFlag(args []string, names ...string) (rest []string, set bool, err error) {
+// splitFlags takes the boolean flags names out of args, wherever they are,
+// so that `pull kit --refetch` works as well as `pull --refetch kit`.
+func splitFlags(args []string, names ...string) (rest []string, set map[string]bool, err error) {
+	set = map[string]bool{}
 	for _, arg := range args {
 		if slices.Contains(names, arg) {
-			set = true
+			set[arg] = true
 			continue
 		}
 		if strings.HasPrefix(arg, "-") {
-			return nil, false, fmt.Errorf("unknown flag %q", arg)
+			return nil, nil, fmt.Errorf("unknown flag %q", arg)
 		}
 		rest = append(rest, arg)
 	}
 	return rest, set, nil
+}
+
+// versions prints the versions recipe id can place, newest first.
+func versions(a *app.App, stdout io.Writer, id string, asJSON bool) error {
+	list, err := a.Versions(id)
+	if err != nil {
+		return err
+	}
+	if asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(list)
+	}
+	fmt.Fprintf(stdout, "%s (%s), version list of %s\n", list.Recipe, list.Package, list.Updated.Local().Format("2006-01-02 15:04"))
+	if len(list.Versions) == 0 {
+		fmt.Fprintln(stdout, "no version matches the recipe")
+		return nil
+	}
+	tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "VERSION\tUNITY\tFROM\tNEWEST\tPLACED")
+	for _, v := range list.Versions {
+		newest, placed := "", ""
+		if v.Newest {
+			newest = "yes"
+		}
+		if v.Placed {
+			placed = "yes"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", v.Version, v.Unity, v.Origin, newest, placed)
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "`vpmify pull` places the NEWEST ones; `vpmify pull %s@<version>` places another.\n", list.Recipe)
+	return nil
 }
 
 // clean prints the versions clean deletes, so the user can name the ones to
@@ -183,8 +235,8 @@ func clean(a *app.App, stdout io.Writer, yes bool) error {
 		return nil
 	}
 	fmt.Fprintf(stdout, "deleted %d versions and the downloads.\n", len(entries))
-	fmt.Fprintln(stdout, "run `vpmify sync` to place the selected versions again, and")
-	fmt.Fprintln(stdout, "`vpmify sync <id>@<version>` for each other version a project needs.")
+	fmt.Fprintln(stdout, "run `vpmify pull` to place the newest versions again, and")
+	fmt.Fprintln(stdout, "`vpmify pull <id>@<version>` for each other version a project needs.")
 	return nil
 }
 

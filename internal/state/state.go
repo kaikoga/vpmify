@@ -105,6 +105,34 @@ func (r *RecipeState) Package(name string) *PackageState {
 	return p
 }
 
+// PlacedVersions returns the versions of package name placed for recipe
+// id, without creating records.
+func (s *State) PlacedVersions(id, name string) map[string]*VersionState {
+	r, ok := s.Recipes[id]
+	if !ok {
+		return nil
+	}
+	p, ok := r.Packages[name]
+	if !ok {
+		return nil
+	}
+	return p.Versions
+}
+
+// HasPlaced reports whether recipe id has any placed version.
+func (s *State) HasPlaced(id string) bool {
+	r, ok := s.Recipes[id]
+	if !ok {
+		return false
+	}
+	for _, p := range r.Packages {
+		if len(p.Versions) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // AllPaths returns the folder of every placed version, sorted.
 func (s *State) AllPaths() []string {
 	var out []string

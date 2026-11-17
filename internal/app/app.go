@@ -18,6 +18,7 @@ import (
 	"github.com/kaikoga/vpmify/internal/convert"
 	"github.com/kaikoga/vpmify/internal/fetch"
 	"github.com/kaikoga/vpmify/internal/fsutil"
+	"github.com/kaikoga/vpmify/internal/index"
 	"github.com/kaikoga/vpmify/internal/lock"
 	"github.com/kaikoga/vpmify/internal/paths"
 	"github.com/kaikoga/vpmify/internal/recipe"
@@ -118,8 +119,9 @@ func (a *App) readRecipeRef(ctx context.Context, ref string) (addedRecipe, error
 }
 
 // Add reads recipes from file paths or http(s) URLs, saves them among the
-// user's recipes, and syncs all recipes. Nothing is saved unless every
-// recipe reads well.
+// user's recipes, and reads their version lists. It places nothing; Pull
+// does (kaikoga 2026-11-18). Nothing is saved unless every recipe reads
+// well.
 func (a *App) Add(ctx context.Context, refs ...string) error {
 	var added []addedRecipe
 	ids := map[string]string{}
@@ -162,20 +164,112 @@ func (a *App) Add(ctx context.Context, refs ...string) error {
 				return fmt.Errorf("%s: recipe %q already provides %s", ref, id, r.Source.Name)
 			}
 		}
+		var addedIDs []string
 		for _, ar := range added {
 			if err := fsutil.WriteFileAtomic(a.recipePath(ar.recipe.ID), ar.data, 0o644); err != nil {
 				return err
 			}
 			st.Recipe(ar.recipe.ID).Origin = ar.origin
 			a.logf("%s: added recipe", ar.recipe.ID)
+			addedIDs = append(addedIDs, ar.recipe.ID)
 		}
 		if err := st.Save(a.Layout.State()); err != nil {
 			return err
 		}
-		// Sync every recipe: a new package may be a dependency of packages
-		// placed before, which then get it in vpmDependencies.
-		return a.sync(ctx, nil, false)
+		if err := a.update(ctx, addedIDs); err != nil {
+			return err
+		}
+		a.logf("`vpmify versions <id>` lists the versions; `vpmify pull` places the newest ones")
+		return nil
 	})
+}
+
+// Update reads the version lists of the named recipes (all recipes when
+// ids is empty) from upstream and keeps them for Pull and Versions. It
+// downloads no archive and changes nothing placed.
+func (a *App) Update(ctx context.Context, ids []string) error {
+	return a.withLock(func() error { return a.update(ctx, ids) })
+}
+
+func (a *App) update(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		all, err := a.recipeIDs()
+		if err != nil {
+			return err
+		}
+		if len(all) == 0 {
+			a.logf("no recipes; add one with `vpmify add <recipe.json>`")
+		}
+		ids = all
+	}
+	var errs []error
+	for _, id := range ids {
+		if err := a.updateRecipe(ctx, id); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", id, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (a *App) updateRecipe(ctx context.Context, id string) error {
+	r, err := a.loadRecipe(id)
+	if err != nil {
+		return err
+	}
+	src, err := source.New(r, a.Client, a.Layout.Cache())
+	if err != nil {
+		return err
+	}
+	releases, err := src.Releases(ctx)
+	if err != nil {
+		return err
+	}
+	// Name the versions the last list did not have, so the user sees what
+	// a pull would add.
+	known := map[string]bool{}
+	prev, err := index.Load(a.Layout.Index(id))
+	hadPrev := err == nil && prev.Key == r.ListingKey()
+	if hadPrev {
+		for _, e := range prev.Releases {
+			known[e.Version] = true
+		}
+	}
+	if err := index.New(r.ListingKey(), releases, time.Now()).Save(a.Layout.Index(id)); err != nil {
+		return err
+	}
+	taken := 0
+	var fresh []string
+	for _, rel := range releases {
+		if !r.Accepts(rel.Version) {
+			continue
+		}
+		taken++
+		if hadPrev && !known[rel.Version.String()] {
+			fresh = append(fresh, rel.Version.String())
+		}
+	}
+	msg := fmt.Sprintf("%s: %d versions the recipe takes (%d upstream)", id, taken, len(releases))
+	if len(fresh) > 0 {
+		msg += "; new: " + strings.Join(fresh, ", ")
+	}
+	a.logf("%s", msg)
+	return nil
+}
+
+// loadIndex returns the version list of recipe r, refusing one read for
+// what the recipe was before: it may list other folders or another source.
+func (a *App) loadIndex(r *recipe.Recipe) (*index.Index, error) {
+	idx, err := index.Load(a.Layout.Index(r.ID))
+	if errors.Is(err, index.ErrNoIndex) {
+		return nil, fmt.Errorf("no version list yet; run `vpmify update %s`", r.ID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if idx.Key != r.ListingKey() {
+		return nil, fmt.Errorf("the recipe changed since its version list was read; run `vpmify update %s`", r.ID)
+	}
+	return idx, nil
 }
 
 type target struct {
@@ -200,39 +294,43 @@ func parseTargets(args []string) ([]target, error) {
 	return out, nil
 }
 
-// Sync places the selected versions of the named recipes (all recipes when
-// args is empty) and registers every placed version with ALCOM. An argument
-// "<id>@<version>" adds that version as well. Sync never removes a version.
-func (a *App) Sync(ctx context.Context, args []string) error {
+// PullOptions say what Pull does besides adding the newest versions.
+type PullOptions struct {
+	// All adds every version the recipe takes.
+	All bool
+	// Refetch downloads every placed version of the named recipes again and
+	// builds it again, so a broken store or cache is mended without
+	// changing which versions are placed. A version the version list no
+	// longer has is left as it is.
+	Refetch bool
+}
+
+// Pull places versions of the named recipes (all recipes when args is
+// empty) from their version lists, and registers every placed version with
+// ALCOM. It adds the newest version for each value of the "unity" field,
+// every version with opt.All, and "<id>@<version>" names one more. It also
+// builds again the placed versions of every recipe that the recipes now
+// build differently, such as a package whose dependency got a recipe and
+// so goes into vpmDependencies. Pull never removes a version, and reads no
+// version list from upstream; Update does.
+func (a *App) Pull(ctx context.Context, args []string, opt PullOptions) error {
 	targets, err := parseTargets(args)
 	if err != nil {
 		return err
 	}
-	return a.withLock(func() error { return a.sync(ctx, targets, false) })
+	return a.withLock(func() error { return a.pull(ctx, targets, opt) })
 }
 
-// Refetch is Sync that also downloads every placed version of the named
-// recipes (all recipes when args is empty) again and builds it again, so a
-// broken store or cache is mended without changing which versions are
-// placed. A version upstream no longer has is left as it is.
-func (a *App) Refetch(ctx context.Context, args []string) error {
-	targets, err := parseTargets(args)
+func (a *App) pull(ctx context.Context, targets []target, opt PullOptions) error {
+	all, err := a.recipeIDs()
 	if err != nil {
 		return err
 	}
-	return a.withLock(func() error { return a.sync(ctx, targets, true) })
-}
-
-func (a *App) sync(ctx context.Context, targets []target, refetch bool) error {
 	if len(targets) == 0 {
-		ids, err := a.recipeIDs()
-		if err != nil {
-			return err
-		}
-		if len(ids) == 0 {
+		if len(all) == 0 {
 			a.logf("no recipes; add one with `vpmify add <recipe.json>`")
 		}
-		for _, id := range ids {
+		for _, id := range all {
 			targets = append(targets, target{id: id})
 		}
 	}
@@ -259,13 +357,24 @@ func (a *App) sync(ctx context.Context, targets []target, refetch bool) error {
 	// fresh holds the archives downloaded again in this run; recipes that
 	// share an archive (UniVRM's packages share a tag) download it once.
 	var fresh map[string]bool
-	if refetch {
+	if opt.Refetch {
 		fresh = map[string]bool{}
 	}
 	var errs []error
 	for _, id := range order {
-		if err := a.syncRecipe(ctx, st, id, extra[id], managed, fresh); err != nil {
+		req := pullRequest{choose: true, all: opt.All, extra: extra[id]}
+		if err := a.pullRecipe(ctx, st, id, req, managed, fresh); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", id, err))
+		}
+	}
+	// The other recipes' placed versions are built again too, so that
+	// pulling a new dependency fixes its dependents without naming them.
+	for _, id := range all {
+		if _, named := extra[id]; named || !st.HasPlaced(id) {
+			continue
+		}
+		if err := a.pullRecipe(ctx, st, id, pullRequest{}, managed, nil); err != nil {
+			a.logf("note: %s: placed versions not checked: %v", id, err)
 		}
 	}
 	// Register whatever is in the store, even when a recipe failed, so that
@@ -277,7 +386,7 @@ func (a *App) sync(ctx context.Context, targets []target, refetch bool) error {
 }
 
 // managedNames returns the package names of every recipe the user has.
-// A recipe file that cannot be read is left out here; syncing it reports
+// A recipe file that cannot be read is left out here; pulling it reports
 // the error.
 func (a *App) managedNames() (map[string]bool, error) {
 	ids, err := a.recipeIDs()
@@ -307,18 +416,30 @@ func promoted(r *recipe.Recipe, rel source.Release, managed map[string]bool) []s
 	return out
 }
 
-// syncRecipe places the versions recipe id selects. With fresh non-nil it
-// also builds every placed version again from a new download.
-func (a *App) syncRecipe(ctx context.Context, st *state.State, id string, extra []string, managed map[string]bool, fresh map[string]bool) error {
+// pullRequest says which versions pullRecipe adds. The zero value adds
+// none, and only builds placed versions again when they need it.
+type pullRequest struct {
+	// choose adds the newest version for each value of "unity", or every
+	// version with all.
+	choose, all bool
+	// extra names more versions.
+	extra []string
+}
+
+// pullRecipe places the versions req asks for from recipe id's version
+// list, and builds placed versions again when the recipe now builds them
+// differently. With fresh non-nil it builds every placed version again
+// from a new download.
+func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pullRequest, managed map[string]bool, fresh map[string]bool) error {
 	r, err := a.loadRecipe(id)
 	if err != nil {
 		return err
 	}
-	src, err := source.New(r, a.Client, a.Layout.Cache())
+	idx, err := a.loadIndex(r)
 	if err != nil {
 		return err
 	}
-	releases, err := src.Releases(ctx)
+	releases, err := idx.SourceReleases()
 	if err != nil {
 		return err
 	}
@@ -326,14 +447,21 @@ func (a *App) syncRecipe(ctx context.Context, st *state.State, id string, extra 
 	for _, rel := range releases {
 		byVersion[rel.Version.String()] = rel
 	}
-	selected, err := selectReleases(r, releases)
-	if err != nil {
-		return err
+	var selected []source.Release
+	if req.choose {
+		accepted := acceptedReleases(r, releases)
+		if len(accepted) == 0 {
+			return fmt.Errorf("no version in the version list matches the recipe")
+		}
+		selected = accepted
+		if !req.all {
+			selected = newestPerUnity(r, accepted)
+		}
 	}
-	for _, v := range extra {
+	for _, v := range req.extra {
 		rel, ok := byVersion[v]
 		if !ok {
-			return fmt.Errorf("upstream has no version %s", v)
+			return fmt.Errorf("the version list has no %s (`vpmify update %s` reads it again)", v, id)
 		}
 		selected = appendRelease(selected, rel)
 	}
@@ -351,7 +479,7 @@ func (a *App) syncRecipe(ctx context.Context, st *state.State, id string, extra 
 		rel, ok := byVersion[v]
 		if !ok {
 			if refetch {
-				a.logf("%s: upstream no longer has %s %s; left as it is", id, name, v)
+				a.logf("%s: the version list no longer has %s %s; left as it is", id, name, v)
 			}
 			continue
 		}
@@ -389,8 +517,8 @@ func (a *App) syncRecipe(ctx context.Context, st *state.State, id string, extra 
 		}
 		placed++
 	}
-	if placed == 0 {
-		a.logf("%s: up to date (%d versions placed)", id, len(ps.Versions))
+	if placed == 0 && req.choose {
+		a.logf("%s: up to date (%d versions placed; version list of %s)", id, len(ps.Versions), idx.Updated.Local().Format("2006-01-02 15:04"))
 	}
 	return nil
 }
@@ -404,22 +532,22 @@ func appendRelease(list []source.Release, rel source.Release) []source.Release {
 	return append(list, rel)
 }
 
-// selectReleases picks the versions the recipe asks for. With "latest" it
-// picks the newest version for each value of the "unity" field after
-// overrides, so a project on an older Unity still finds a version it can use.
-func selectReleases(r *recipe.Recipe, releases []source.Release) ([]source.Release, error) {
-	var accepted []source.Release
+// acceptedReleases returns the releases the recipe takes, in order.
+func acceptedReleases(r *recipe.Recipe, releases []source.Release) []source.Release {
+	var out []source.Release
 	for _, rel := range releases {
 		if r.Accepts(rel.Version) {
-			accepted = append(accepted, rel)
+			out = append(out, rel)
 		}
 	}
-	if len(accepted) == 0 {
-		return nil, fmt.Errorf("no upstream version matches the recipe")
-	}
-	if r.Select == recipe.SelectAll {
-		return accepted, nil
-	}
+	return out
+}
+
+// newestPerUnity picks the newest release for each value of the "unity"
+// field after overrides. vrc-get reads "unity" as the oldest Unity a
+// version supports (vrc-get-vpm/src/lib.rs, unity_compatible), so the
+// newest version a project on any Unity can use is among these.
+func newestPerUnity(r *recipe.Recipe, accepted []source.Release) []source.Release {
 	newest := map[string]source.Release{}
 	var groups []string
 	for _, rel := range accepted {
@@ -436,7 +564,7 @@ func selectReleases(r *recipe.Recipe, releases []source.Release) ([]source.Relea
 	for _, g := range groups {
 		out = append(out, newest[g])
 	}
-	return out, nil
+	return out
 }
 
 // place builds one version in a work folder and renames it into the store.
@@ -564,8 +692,10 @@ func (a *App) Remove(ctx context.Context, id, version string) error {
 			return err
 		}
 		if version == "" {
-			if err := os.Remove(a.recipePath(id)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return err
+			for _, p := range []string{a.recipePath(id), a.Layout.Index(id)} {
+				if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+					return err
+				}
 			}
 			a.logf("%s: removed recipe", id)
 		}
@@ -620,4 +750,69 @@ func (a *App) List() (entries []Entry, settingsErr error, err error) {
 		}
 	}
 	return out, settingsErr, nil
+}
+
+// VersionInfo is one version a recipe can place, as `vpmify versions`
+// shows it.
+type VersionInfo struct {
+	Version string `json:"version"`
+	// Unity is the "unity" field after the recipe's overrides.
+	Unity      string `json:"unity,omitempty"`
+	Origin     string `json:"origin"`
+	Prerelease bool   `json:"prerelease,omitempty"`
+	// Newest means `vpmify pull` places it without being told: it is the
+	// newest version for its value of "unity".
+	Newest bool `json:"newest"`
+	Placed bool `json:"placed"`
+}
+
+// VersionList is what `vpmify versions` shows for one recipe.
+type VersionList struct {
+	Recipe  string `json:"recipe"`
+	Package string `json:"package"`
+	// Updated is when the version list was read from upstream.
+	Updated  time.Time     `json:"updated"`
+	Versions []VersionInfo `json:"versions"`
+}
+
+// Versions lists the versions recipe id takes, newest first, from its
+// version list. It does not go to the network.
+func (a *App) Versions(id string) (*VersionList, error) {
+	r, err := a.loadRecipe(id)
+	if err != nil {
+		return nil, err
+	}
+	idx, err := a.loadIndex(r)
+	if err != nil {
+		return nil, err
+	}
+	releases, err := idx.SourceReleases()
+	if err != nil {
+		return nil, err
+	}
+	st, err := state.Load(a.Layout.State())
+	if err != nil {
+		return nil, err
+	}
+	placed := st.PlacedVersions(id, r.Source.Name)
+	accepted := acceptedReleases(r, releases)
+	newest := map[string]bool{}
+	for _, rel := range newestPerUnity(r, accepted) {
+		newest[rel.Version.String()] = true
+	}
+	out := &VersionList{Recipe: id, Package: r.Source.Name, Updated: idx.Updated, Versions: []VersionInfo{}}
+	for i := len(accepted) - 1; i >= 0; i-- {
+		rel := accepted[i]
+		v := rel.Version.String()
+		_, isPlaced := placed[v]
+		out.Versions = append(out.Versions, VersionInfo{
+			Version:    v,
+			Unity:      r.Unity(rel.Version, rel.Unity),
+			Origin:     rel.Origin,
+			Prerelease: rel.Version.IsPrerelease(),
+			Newest:     newest[v],
+			Placed:     isPlaced,
+		})
+	}
+	return out, nil
 }
