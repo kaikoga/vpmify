@@ -1,5 +1,7 @@
-// Package app ties the parts together: it reads recipes, places converted
-// versions in the store, and registers them with ALCOM.
+// Package app ties the parts together: it reads recipes, converts versions
+// into the store, and registers them with ALCOM, which makes them
+// available. Vpmify does not say "place" for this, so as not to mix the
+// store with a project the package is installed in (kaikoga 2026-11-18).
 package app
 
 import (
@@ -12,7 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -121,7 +123,7 @@ func (a *App) readRecipeRef(ctx context.Context, ref string) (addedRecipe, error
 }
 
 // Add reads recipes from file paths or http(s) URLs, saves them among the
-// user's recipes, and reads their version lists. It places nothing; Pull
+// user's recipes, and reads their version lists. It converts nothing; Pull
 // does (kaikoga 2026-11-18). Nothing is saved unless every recipe reads
 // well.
 func (a *App) Add(ctx context.Context, refs ...string) error {
@@ -148,7 +150,7 @@ func (a *App) Add(ctx context.Context, refs ...string) error {
 		if err != nil {
 			return err
 		}
-		// Two recipes for one package would place it in the same folders,
+		// Two recipes for one package would convert it into the same folders,
 		// and removing one would delete the other's.
 		existing, err := a.recipeIDs()
 		if err != nil {
@@ -181,14 +183,14 @@ func (a *App) Add(ctx context.Context, refs ...string) error {
 		if err := a.update(ctx, addedIDs); err != nil {
 			return err
 		}
-		a.logf("`vpmify versions <id>` lists the versions; `vpmify pull` places the newest ones")
+		a.logf("`vpmify versions <id>` lists the versions; `vpmify pull` makes the newest ones available")
 		return nil
 	})
 }
 
 // Update reads the version lists of the named recipes (all recipes when
 // ids is empty) from upstream and keeps them for Pull and Versions. It
-// downloads no archive and changes nothing placed.
+// downloads no archive and changes no available version.
 func (a *App) Update(ctx context.Context, ids []string) error {
 	return a.withLock(func() error { return a.update(ctx, ids) })
 }
@@ -222,9 +224,17 @@ func (a *App) updateRecipe(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	releases, err := src.Releases(ctx)
+	upstream, err := src.Releases(ctx)
 	if err != nil {
 		return err
+	}
+	// The recipe's range is the rule for what Vpmify takes from the source,
+	// so the list keeps only the versions in it (kaikoga 2026-11-18).
+	var releases []source.Release
+	for _, rel := range upstream {
+		if r.InRange(rel.Version) {
+			releases = append(releases, rel)
+		}
 	}
 	// Name the versions the last list did not have, so the user sees what
 	// a pull would add.
@@ -239,18 +249,13 @@ func (a *App) updateRecipe(ctx context.Context, id string) error {
 	if err := index.New(r.ListingKey(), releases, time.Now()).Save(a.Layout.Index(id)); err != nil {
 		return err
 	}
-	taken := 0
 	var fresh []string
 	for _, rel := range releases {
-		if !r.Accepts(rel.Version) {
-			continue
-		}
-		taken++
 		if hadPrev && !known[rel.Version.String()] {
 			fresh = append(fresh, rel.Version.String())
 		}
 	}
-	msg := fmt.Sprintf("%s: %d versions the recipe takes (%d upstream)", id, taken, len(releases))
+	msg := fmt.Sprintf("%s: %d versions in the recipe's range (%d upstream)", id, len(releases), len(upstream))
 	if len(fresh) > 0 {
 		msg += "; new: " + strings.Join(fresh, ", ")
 	}
@@ -301,21 +306,22 @@ func parseTargets(args []string) ([]target, error) {
 type PullOptions struct {
 	// All adds every version the recipe takes.
 	All bool
-	// Refetch downloads every placed version of the named recipes again and
-	// builds it again, so a broken store or cache is mended without
-	// changing which versions are placed. A version the version list no
+	// Refetch downloads every available version of the named recipes again
+	// and builds it again, so a broken store or cache is mended without
+	// changing which versions are available. A version the version list no
 	// longer has is left as it is.
 	Refetch bool
 }
 
-// Pull places versions of the named recipes (all recipes when args is
-// empty) from their version lists, and registers every placed version with
-// ALCOM. It adds the newest version for each value of the "unity" field,
-// every version with opt.All, and "<id>@<version>" names one more. It also
-// builds again the placed versions of every recipe that the recipes now
-// build differently, such as a package whose dependency got a recipe and
-// so goes into vpmDependencies. Pull never removes a version, and reads no
-// version list from upstream; Update does.
+// Pull converts versions of the named recipes (all recipes when args is
+// empty) from their version lists into the store, and registers every
+// available version with ALCOM, which makes them available. It adds the
+// newest version for each value of the "unity" field, every version with
+// opt.All, and "<id>@<version>" names one more. The named recipes' available
+// versions that the recipe now builds differently are built again; other
+// recipes' are not, because a recipe's output depends only on the recipe
+// (kaikoga 2026-11-18). Pull never removes a version, and reads no version
+// list from upstream; Update does.
 func (a *App) Pull(ctx context.Context, args []string, opt PullOptions) error {
 	targets, err := parseTargets(args)
 	if err != nil {
@@ -366,32 +372,15 @@ func (a *App) pull(ctx context.Context, targets []target, opt PullOptions) error
 	var errs []error
 	for _, id := range order {
 		req := pullRequest{choose: true, all: opt.All, extra: extra[id]}
-		if err := a.pullRecipe(ctx, st, id, req, managed, fresh); err != nil {
+		if err := a.pullRecipe(ctx, st, id, req, fresh); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", id, err))
 		}
 	}
-	// The other recipes' placed versions are built again too, so that
-	// pulling a new dependency fixes its dependents without naming them.
-	// A recipe or version list that cannot be used is the business of a
-	// pull that names it; a build that fails is this pull's failure.
-	for _, id := range all {
-		if _, named := extra[id]; named || !st.HasPlaced(id) {
-			continue
-		}
-		err := a.pullRecipe(ctx, st, id, pullRequest{}, managed, nil)
-		var unusable unusableError
-		switch {
-		case errors.As(err, &unusable):
-			a.logf("note: %s: cannot check whether placed versions need building again: %v", id, err)
-		case err != nil:
-			errs = append(errs, fmt.Errorf("%s: %w", id, err))
-		}
-	}
-	if err := a.placeDependencies(ctx, st, managed); err != nil {
+	if err := a.addDependencies(ctx, st, managed); err != nil {
 		errs = append(errs, err)
 	}
 	// Register whatever is in the store, even when a recipe failed, so that
-	// versions placed before stay usable.
+	// versions made available before stay usable.
 	if err := a.register(st); err != nil {
 		errs = append(errs, err)
 	}
@@ -418,29 +407,8 @@ func (a *App) managedNames() (providers, error) {
 	return names, nil
 }
 
-// promoted returns the UPM dependencies of rel that a recipe provides,
-// sorted. They are copied into vpmDependencies, so that ALCOM installs them
-// along with the package.
-func promoted(r *recipe.Recipe, rel source.Release, managed providers) []string {
-	var out []string
-	for name := range rel.Dependencies {
-		if _, ok := managed[name]; ok && name != r.Source.Name {
-			out = append(out, name)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// unusableError is a recipe or version list that cannot be used as it is,
-// as opposed to a failure while placing a version.
-type unusableError struct{ err error }
-
-func (e unusableError) Error() string { return e.err.Error() }
-func (e unusableError) Unwrap() error { return e.err }
-
 // pullRequest says which versions pullRecipe adds. The zero value adds
-// none, and only builds placed versions again when they need it.
+// none, and only builds available versions again when they need it.
 type pullRequest struct {
 	// choose adds the newest version for each value of "unity", or every
 	// version with all.
@@ -449,30 +417,31 @@ type pullRequest struct {
 	extra []string
 }
 
-// pullRecipe places the versions req asks for from recipe id's version
-// list, and builds placed versions again when the recipe now builds them
-// differently. With fresh non-nil it builds every placed version again
-// from a new download.
-func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pullRequest, managed providers, fresh map[string]bool) error {
+// pullRecipe makes the versions req asks for from recipe id's version list
+// available, and builds available versions again when the recipe now
+// builds them differently. With fresh non-nil it builds every available
+// version again from a new download.
+func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pullRequest, fresh map[string]bool) error {
 	r, err := a.loadRecipe(id)
 	if err != nil {
-		return unusableError{err}
+		return err
 	}
 	idx, err := a.loadIndex(r)
 	if err != nil {
-		return unusableError{err}
+		return err
 	}
 	releases, err := idx.SourceReleases()
 	if err != nil {
-		return unusableError{err}
+		return err
 	}
 	byVersion := map[string]source.Release{}
 	for _, rel := range releases {
 		byVersion[rel.Version.String()] = rel
 	}
 	var selected []source.Release
-	// chooseErr is returned after the named and placed versions are done:
-	// a recipe whose range is empty still takes a version named outright.
+	// chooseErr is returned after the named and available versions are
+	// done: a recipe whose range has only prereleases still takes one named
+	// outright.
 	var chooseErr error
 	if req.choose {
 		accepted := acceptedReleases(r, releases)
@@ -488,7 +457,7 @@ func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pu
 	for _, v := range req.extra {
 		rel, ok := byVersion[v]
 		if !ok {
-			return fmt.Errorf("the version list has no %s (`vpmify update %s` reads it again)", v, id)
+			return fmt.Errorf("the version list has no %s: it is outside the recipe's versions, or `vpmify update %s` has not read it yet", v, id)
 		}
 		selected = appendRelease(selected, rel)
 	}
@@ -497,10 +466,10 @@ func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pu
 	rs := st.Recipe(id)
 	ps := rs.Package(name)
 	fingerprint := func(rel source.Release) string {
-		return r.Fingerprint(rel.Version, rel.Dir, promoted(r, rel, managed))
+		return r.Fingerprint(rel.Version, rel.Dir)
 	}
-	// Versions placed before are built again when the recipe now builds
-	// them differently.
+	// Versions made available before are built again when the recipe now
+	// builds them differently.
 	refetch := fresh != nil
 	for _, v := range ps.SortedVersions() {
 		rel, ok := byVersion[v]
@@ -515,7 +484,7 @@ func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pu
 		}
 	}
 
-	placed := 0
+	built := 0
 	for _, rel := range selected {
 		v := rel.Version.String()
 		fp := fingerprint(rel)
@@ -529,37 +498,50 @@ func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pu
 				return err
 			}
 		}
-		a.logf("%s: placing %s %s (%s)", id, name, v, rel.Origin)
-		for _, dep := range state.SortedKeys(rel.Dependencies) {
-			if _, ok := managed[dep]; !ok && !strings.HasPrefix(dep, "com.unity.") {
-				a.logf("  note: %s depends on %s, which no recipe provides", name, dep)
-			}
-		}
-		if err := a.place(ctx, r, rel, promoted(r, rel, managed), dir); err != nil {
+		a.logf("%s: converting %s %s (%s)", id, name, v, rel.Origin)
+		if err := a.build(ctx, r, rel, dir); err != nil {
 			return fmt.Errorf("%s %s: %w", name, v, err)
 		}
+		a.noteUnwrittenDependencies(name, rel, dir)
 		ps.Versions[v] = &state.VersionState{Path: dir, Fingerprint: fp, Unity: r.Unity(rel.Version, rel.Unity)}
 		if err := st.Save(a.Layout.State()); err != nil {
 			return err
 		}
-		placed++
+		built++
 	}
-	if placed == 0 && req.choose && chooseErr == nil {
-		a.logf("%s: up to date (%d versions placed; version list of %s)", id, len(ps.Versions), idx.Updated.Local().Format("2006-01-02 15:04"))
+	if built == 0 && req.choose && chooseErr == nil {
+		a.logf("%s: up to date (%d versions available; version list of %s)", id, len(ps.Versions), idx.Updated.Local().Format("2006-01-02 15:04"))
 	}
 	return chooseErr
 }
 
-// placeDependencies places, for each placed version whose vpmDependencies
-// name a package a recipe provides, a version of that package that
-// satisfies it when none is placed, so that ALCOM can install the dependent
-// (kaikoga 2026-11-18). A pull that names only the dependent, or another
-// recipe, would otherwise leave it pointing at nothing.
-func (a *App) placeDependencies(ctx context.Context, st *state.State, managed providers) error {
+// noteUnwrittenDependencies tells the user about the upstream UPM
+// dependencies the built package does not have in vpmDependencies: ALCOM
+// does not install them along with it. Unity's own packages are left out,
+// because Unity resolves them from its registry.
+func (a *App) noteUnwrittenDependencies(name string, rel source.Release, dir string) {
+	written, err := readVPMDependencies(dir)
+	if err != nil {
+		return
+	}
+	for _, dep := range state.SortedKeys(rel.Dependencies) {
+		if _, ok := written[dep]; ok || strings.HasPrefix(dep, "com.unity.") {
+			continue
+		}
+		a.logf("  note: upstream %s depends on %s, which the recipe does not write in vpmDependencies", name, dep)
+	}
+}
+
+// addDependencies makes available, for each available version whose
+// vpmDependencies name a package a recipe provides, a version of that
+// package that satisfies it when none is available, so that ALCOM can
+// install the dependent (kaikoga 2026-11-18). A pull that names only the
+// dependent would otherwise leave it pointing at nothing.
+func (a *App) addDependencies(ctx context.Context, st *state.State, managed providers) error {
 	failed := map[string]error{}
 	tried := map[string]bool{}
-	// A placed dependency may need its own dependencies, so this goes on
-	// until nothing new is needed.
+	// A dependency made available may need its own dependencies, so this
+	// goes on until nothing new is needed.
 	for {
 		needs := map[string][]string{}
 		var order []string
@@ -585,8 +567,8 @@ func (a *App) placeDependencies(ctx context.Context, st *state.State, managed pr
 			break
 		}
 		for _, id := range order {
-			a.logf("%s: placing %s, which placed versions depend on", id, strings.Join(needs[id], ", "))
-			if err := a.pullRecipe(ctx, st, id, pullRequest{extra: needs[id]}, managed, nil); err != nil {
+			a.logf("%s: adding %s, which available versions depend on", id, strings.Join(needs[id], ", "))
+			if err := a.pullRecipe(ctx, st, id, pullRequest{extra: needs[id]}, nil); err != nil {
 				failed["pull "+id] = fmt.Errorf("%s: %w", id, err)
 			}
 		}
@@ -598,17 +580,17 @@ func (a *App) placeDependencies(ctx context.Context, st *state.State, managed pr
 	return errors.Join(errs...)
 }
 
-// unmet is one vpmDependencies entry no placed version satisfies.
+// unmet is one vpmDependencies entry no available version satisfies.
 type unmet struct {
-	dependent string // "<name> <version>" of the placed version
+	dependent string // "<name> <version>" of the available version
 	dep       string
 	id        string // the recipe that provides dep
 	rng       semver.Range
 }
 
-// unmetDependencies reads the vpmDependencies of every placed version, as
-// ALCOM will, and returns the entries on packages a recipe provides that no
-// placed version satisfies.
+// unmetDependencies reads the vpmDependencies of every available version,
+// as ALCOM will, and returns the entries on packages a recipe provides that
+// no available version satisfies.
 func (a *App) unmetDependencies(st *state.State, managed providers) []unmet {
 	var out []unmet
 	for _, id := range state.SortedKeys(st.Recipes) {
@@ -638,7 +620,7 @@ func (a *App) unmetDependencies(st *state.State, managed providers) []unmet {
 }
 
 func satisfied(st *state.State, id, name string, rng semver.Range) bool {
-	for v := range st.PlacedVersions(id, name) {
+	for v := range st.AvailableVersions(id, name) {
 		if pv, err := semver.Parse(v); err == nil && rng.Contains(pv) {
 			return true
 		}
@@ -646,7 +628,7 @@ func satisfied(st *state.State, id, name string, rng semver.Range) bool {
 	return false
 }
 
-// dependencyVersion picks the version of recipe id to place for rng: the
+// dependencyVersion picks the version of recipe id to add for rng: the
 // version its lower bound names when the version list has it, which keeps
 // packages released in lockstep (UniVRM's) together, or else the newest
 // version that satisfies it.
@@ -737,10 +719,15 @@ func newestPerUnity(r *recipe.Recipe, accepted []source.Release) []source.Releas
 	return out
 }
 
-// place builds one version in a work folder and renames it into the store.
-// A version already in the store is swapped out only after the new one is
-// complete, so ALCOM never sees a half-built folder at the registered path.
-func (a *App) place(ctx context.Context, r *recipe.Recipe, rel source.Release, promote []string, dir string) error {
+// build converts one version in a work folder and renames it into the
+// store. A version already in the store is swapped out only after the new
+// one is complete, so ALCOM never sees a half-built folder at the
+// registered path.
+func (a *App) build(ctx context.Context, r *recipe.Recipe, rel source.Release, dir string) error {
+	overrides, err := r.ExpandedOverridesFor(rel.Version, rel.Dependencies)
+	if err != nil {
+		return err
+	}
 	archive := filepath.Join(a.Layout.Cache(), filepath.FromSlash(rel.CacheKey))
 	if fsutil.Exists(archive) {
 		if err := rel.Digests.CheckFile(archive); err != nil {
@@ -778,10 +765,7 @@ func (a *App) place(ctx context.Context, r *recipe.Recipe, rel source.Release, p
 	if err := convert.CheckManifest(pkg, r.Source.Name, rel.Version.String()); err != nil {
 		return err
 	}
-	if err := convert.PromoteDependencies(pkg, promote); err != nil {
-		return err
-	}
-	if err := convert.ApplyOverrides(pkg, r.OverridesFor(rel.Version)); err != nil {
+	if err := convert.ApplyOverrides(pkg, overrides); err != nil {
 		return err
 	}
 
@@ -853,7 +837,7 @@ func (a *App) Remove(ctx context.Context, id, version string) error {
 			}
 		}
 		if version != "" && len(dirs) == 0 {
-			return fmt.Errorf("%s: version %s is not placed", id, version)
+			return fmt.Errorf("%s: version %s is not available", id, version)
 		}
 		if version == "" {
 			delete(st.Recipes, id)
@@ -873,7 +857,7 @@ func (a *App) Remove(ctx context.Context, id, version string) error {
 	})
 }
 
-// Entry is one placed version, as `vpmify list` shows it.
+// Entry is one available version, as `vpmify list` shows it.
 type Entry struct {
 	Recipe     string `json:"recipe"`
 	Package    string `json:"package"`
@@ -883,7 +867,8 @@ type Entry struct {
 	Registered bool   `json:"registered"`
 }
 
-// List returns every placed version and whether ALCOM has it registered.
+// List returns every available version and whether ALCOM has it
+// registered.
 // When settings.json cannot be read, every Registered is false and
 // settingsErr says why; err is for failures that leave no list.
 func (a *App) List() (entries []Entry, settingsErr error, err error) {
@@ -922,18 +907,19 @@ func (a *App) List() (entries []Entry, settingsErr error, err error) {
 	return out, settingsErr, nil
 }
 
-// VersionInfo is one version a recipe can place, as `vpmify versions`
-// shows it.
+// VersionInfo is one version in a recipe's version list, as `vpmify
+// versions` shows it.
 type VersionInfo struct {
 	Version string `json:"version"`
 	// Unity is the "unity" field after the recipe's overrides.
 	Unity      string `json:"unity,omitempty"`
 	Origin     string `json:"origin"`
 	Prerelease bool   `json:"prerelease,omitempty"`
-	// Newest means `vpmify pull` places it without being told: it is the
-	// newest version for its value of "unity".
+	// Newest means `vpmify pull` makes it available without being told: it
+	// is the newest version for its value of "unity".
 	Newest bool `json:"newest"`
-	Placed bool `json:"placed"`
+	// Available means Vpmify has converted it and registered it with ALCOM.
+	Available bool `json:"available"`
 }
 
 // VersionList is what `vpmify versions` shows for one recipe.
@@ -945,9 +931,30 @@ type VersionList struct {
 	Versions []VersionInfo `json:"versions"`
 }
 
-// Versions lists the versions recipe id takes, newest first, from its
-// version list. It does not go to the network.
-func (a *App) Versions(id string) (*VersionList, error) {
+// VersionsOptions narrow what Versions lists. With none set it lists every
+// stable version in the version list (kaikoga 2026-11-18).
+type VersionsOptions struct {
+	// All lists prereleases too.
+	All bool
+	// Available lists only the versions Vpmify has made available.
+	Available bool
+	// Unity lists only the versions a project on this Unity can use, read
+	// the way vrc-get reads "unity": as the oldest Unity the version
+	// supports (vrc-get-vpm/src/lib.rs, unity_compatible). It is a Unity
+	// version such as "2022.3" or "2022.3.22f1".
+	Unity string
+}
+
+// Versions lists the versions in recipe id's version list, newest first.
+// It does not go to the network.
+func (a *App) Versions(id string, opt VersionsOptions) (*VersionList, error) {
+	var project unityVersion
+	if opt.Unity != "" {
+		var ok bool
+		if project, ok = parseUnity(opt.Unity); !ok {
+			return nil, fmt.Errorf("bad Unity version %q (want such as 2022.3)", opt.Unity)
+		}
+	}
 	r, err := a.loadRecipe(id)
 	if err != nil {
 		return nil, err
@@ -964,25 +971,62 @@ func (a *App) Versions(id string) (*VersionList, error) {
 	if err != nil {
 		return nil, err
 	}
-	placed := st.PlacedVersions(id, r.Source.Name)
-	accepted := acceptedReleases(r, releases)
+	available := st.AvailableVersions(id, r.Source.Name)
 	newest := map[string]bool{}
-	for _, rel := range newestPerUnity(r, accepted) {
+	for _, rel := range newestPerUnity(r, acceptedReleases(r, releases)) {
 		newest[rel.Version.String()] = true
 	}
 	out := &VersionList{Recipe: id, Package: r.Source.Name, Updated: idx.Updated, Versions: []VersionInfo{}}
-	for i := len(accepted) - 1; i >= 0; i-- {
-		rel := accepted[i]
+	for i := len(releases) - 1; i >= 0; i-- {
+		rel := releases[i]
 		v := rel.Version.String()
-		_, isPlaced := placed[v]
+		_, isAvailable := available[v]
+		unity := r.Unity(rel.Version, rel.Unity)
+		switch {
+		case rel.Version.IsPrerelease() && !opt.All:
+			continue
+		case opt.Available && !isAvailable:
+			continue
+		case opt.Unity != "" && !project.canUse(unity):
+			continue
+		}
 		out.Versions = append(out.Versions, VersionInfo{
 			Version:    v,
-			Unity:      r.Unity(rel.Version, rel.Unity),
+			Unity:      unity,
 			Origin:     rel.Origin,
 			Prerelease: rel.Version.IsPrerelease(),
 			Newest:     newest[v],
-			Placed:     isPlaced,
+			Available:  isAvailable,
 		})
 	}
 	return out, nil
+}
+
+// unityVersion is the major and minor version of a Unity release.
+type unityVersion struct{ major, minor int }
+
+// parseUnity reads the major and minor version of "2022.3" or
+// "2022.3.22f1".
+func parseUnity(s string) (unityVersion, bool) {
+	parts := strings.SplitN(s, ".", 3)
+	if len(parts) < 2 {
+		return unityVersion{}, false
+	}
+	major, err1 := strconv.Atoi(parts[0])
+	minor, err2 := strconv.Atoi(parts[1])
+	if err1 != nil || err2 != nil {
+		return unityVersion{}, false
+	}
+	return unityVersion{major, minor}, true
+}
+
+// canUse reports whether a project on Unity p can use a version whose
+// "unity" field is unity. A version without a readable "unity" suits every
+// Unity, as in vrc-get.
+func (p unityVersion) canUse(unity string) bool {
+	min, ok := parseUnity(unity)
+	if !ok {
+		return true
+	}
+	return p.major > min.major || (p.major == min.major && p.minor >= min.minor)
 }

@@ -1,4 +1,5 @@
-// Package state keeps the record of what Vpmify has placed in the store.
+// Package state keeps the record of the versions Vpmify has made available:
+// converted into the store and registered with ALCOM.
 // It lives in Vpmify's own folder, not in ALCOM's settings.json, because the
 // official VCC may not keep fields it does not know.
 package state
@@ -24,19 +25,19 @@ type State struct {
 	Recipes map[string]*RecipeState `json:"recipes"`
 }
 
-// RecipeState is what Vpmify placed for one recipe.
+// RecipeState is what Vpmify made available for one recipe.
 type RecipeState struct {
 	// Origin is where the recipe was added from (a file path or URL).
 	Origin   string                   `json:"origin,omitempty"`
 	Packages map[string]*PackageState `json:"packages"`
 }
 
-// PackageState is the versions placed for one package name.
+// PackageState is the versions available for one package name.
 type PackageState struct {
 	Versions map[string]*VersionState `json:"versions"`
 }
 
-// VersionState is one placed version.
+// VersionState is one available version.
 type VersionState struct {
 	Path        string `json:"path"`
 	Fingerprint string `json:"fingerprint"`
@@ -105,9 +106,9 @@ func (r *RecipeState) Package(name string) *PackageState {
 	return p
 }
 
-// PlacedVersions returns the versions of package name placed for recipe
-// id, without creating records.
-func (s *State) PlacedVersions(id, name string) map[string]*VersionState {
+// AvailableVersions returns the versions of package name that recipe id
+// made available, without creating records.
+func (s *State) AvailableVersions(id, name string) map[string]*VersionState {
 	r, ok := s.Recipes[id]
 	if !ok {
 		return nil
@@ -119,21 +120,7 @@ func (s *State) PlacedVersions(id, name string) map[string]*VersionState {
 	return p.Versions
 }
 
-// HasPlaced reports whether recipe id has any placed version.
-func (s *State) HasPlaced(id string) bool {
-	r, ok := s.Recipes[id]
-	if !ok {
-		return false
-	}
-	for _, p := range r.Packages {
-		if len(p.Versions) > 0 {
-			return true
-		}
-	}
-	return false
-}
-
-// AllPaths returns the folder of every placed version, sorted.
+// AllPaths returns the folder of every available version, sorted.
 func (s *State) AllPaths() []string {
 	var out []string
 	for _, r := range s.Recipes {

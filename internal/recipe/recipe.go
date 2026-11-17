@@ -23,7 +23,7 @@ const (
 )
 
 // Recipe describes one package, where it comes from and how to convert it.
-// Which versions to place is not part of it: the user chooses that with
+// Which versions to make available is not part of it: the user chooses that with
 // each command (kaikoga 2026-11-18).
 type Recipe struct {
 	ID     string `json:"id"`
@@ -118,7 +118,7 @@ func Parse(data []byte) (*Recipe, error) {
 		// Hints for recipes written before 2026-11-18.
 		switch msg := err.Error(); {
 		case strings.Contains(msg, `unknown field "select"`):
-			return nil, fmt.Errorf("%w (a recipe no longer chooses versions; `vpmify pull --all` places every version)", err)
+			return nil, fmt.Errorf("%w (a recipe no longer chooses versions; `vpmify pull --all` makes every version available)", err)
 		case strings.Contains(msg, "Recipe.paths"):
 			return nil, fmt.Errorf(`%w (write "path": "<folder>", or "paths": [{"tags": "<range>", "path": "<folder>"}, ...])`, err)
 		}
@@ -182,6 +182,9 @@ func (r *Recipe) check() error {
 		}
 		if len(o.Set) == 0 {
 			return fmt.Errorf("overrides[%d].set is empty", i)
+		}
+		if err := checkVPMDependencies(o.Set["vpmDependencies"]); err != nil {
+			return fmt.Errorf("overrides[%d].set.vpmDependencies: %w", i, err)
 		}
 		for k := range o.Set {
 			if protectedFields[k] {
@@ -250,21 +253,31 @@ func (r *Recipe) PathFor(v semver.Version) (string, bool) {
 	return "", false
 }
 
-// ListingKey identifies what decides the versions upstream lists for the
-// recipe: the source and the folders. A version list kept from an update
-// whose key differs is stale. Versions, Prerelease and Overrides are not in
-// it, because they are applied to the list when it is read.
+// ListingKey identifies what decides the versions the recipe's version list
+// holds: the source, the folders and the range (Versions), which `update`
+// applies when it reads upstream (kaikoga 2026-11-18). A version list kept
+// from an update whose key differs is stale. Prerelease and Overrides are
+// not in it, because they are applied to the list when it is read.
 func (r *Recipe) ListingKey() string {
 	data, _ := json.Marshal(struct {
-		Source Source     `json:"source"`
-		Path   string     `json:"path"`
-		Paths  []PathRule `json:"paths"`
-	}{r.Source, r.Path, r.Paths})
+		Source   Source     `json:"source"`
+		Path     string     `json:"path"`
+		Paths    []PathRule `json:"paths"`
+		Versions string     `json:"versions"`
+	}{r.Source, r.Path, r.Paths, r.Versions})
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])[:16]
 }
 
-// Accepts reports whether the recipe takes version v at all.
+// InRange reports whether version v is in the recipe's range, which is the
+// rule for what Vpmify takes from the source. Prereleases in range are
+// taken too, for a user who names one.
+func (r *Recipe) InRange(v semver.Version) bool {
+	return r.versions.Contains(v)
+}
+
+// Accepts reports whether pull chooses version v without its being named:
+// in range, and stable unless the recipe takes prereleases.
 func (r *Recipe) Accepts(v semver.Version) bool {
 	if v.IsPrerelease() && !r.Prerelease {
 		return false
@@ -272,7 +285,8 @@ func (r *Recipe) Accepts(v semver.Version) bool {
 	return r.versions.Contains(v)
 }
 
-// OverridesFor returns the field sets that apply to v, in recipe order.
+// OverridesFor returns the field sets that apply to v, in recipe order, as
+// the recipe writes them.
 func (r *Recipe) OverridesFor(v semver.Version) []map[string]json.RawMessage {
 	var out []map[string]json.RawMessage
 	for _, o := range r.overrides {
@@ -283,23 +297,100 @@ func (r *Recipe) OverridesFor(v semver.Version) []map[string]json.RawMessage {
 	return out
 }
 
+// Placeholders in the values of vpmDependencies in overrides. Vpmify writes
+// only the dependencies a recipe names, and takes no UPM dependency on its
+// own (kaikoga 2026-11-18): which UPM dependency a VPM package needs, and in
+// which version, is the recipe's call.
+var (
+	placeholderPattern = regexp.MustCompile(`\{[^{}]*\}`)
+	placeholders       = map[string]bool{
+		// The package's own version, for packages released in lockstep.
+		"{version}": true,
+		// The version the upstream package.json's UPM "dependencies" gives
+		// the same package, for a dependency whose numbers differ.
+		"{dependencies}": true,
+	}
+)
+
+func checkVPMDependencies(raw json.RawMessage) error {
+	if raw == nil || string(raw) == "null" {
+		return nil
+	}
+	var deps map[string]string
+	if err := json.Unmarshal(raw, &deps); err != nil {
+		return fmt.Errorf("want an object of version strings: %w", err)
+	}
+	for name, value := range deps {
+		for _, p := range placeholderPattern.FindAllString(value, -1) {
+			if !placeholders[p] {
+				return fmt.Errorf("%s: unknown placeholder %s (want {version} or {dependencies})", name, p)
+			}
+		}
+	}
+	return nil
+}
+
+// ExpandedOverridesFor returns OverridesFor(v) with the placeholders in
+// vpmDependencies filled in from v and upstream, the UPM "dependencies" of
+// version v.
+func (r *Recipe) ExpandedOverridesFor(v semver.Version, upstream map[string]string) ([]map[string]json.RawMessage, error) {
+	var out []map[string]json.RawMessage
+	for _, set := range r.OverridesFor(v) {
+		raw, ok := set["vpmDependencies"]
+		if !ok || string(raw) == "null" {
+			out = append(out, set)
+			continue
+		}
+		var deps map[string]string
+		if err := json.Unmarshal(raw, &deps); err != nil {
+			return nil, err
+		}
+		for name, value := range deps {
+			if strings.Contains(value, "{dependencies}") {
+				dep, ok := upstream[name]
+				if !ok {
+					return nil, fmt.Errorf("vpmDependencies %s uses {dependencies}, but the upstream package.json has no UPM dependency on %s", name, name)
+				}
+				value = strings.ReplaceAll(value, "{dependencies}", dep)
+			}
+			deps[name] = strings.ReplaceAll(value, "{version}", v.String())
+		}
+		// Without HTML escaping, ">=" stays as people write it in
+		// package.json instead of becoming ">=".
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(deps); err != nil {
+			return nil, err
+		}
+		expanded := json.RawMessage(bytes.TrimRight(buf.Bytes(), "\n"))
+		copied := make(map[string]json.RawMessage, len(set))
+		for k, val := range set {
+			copied[k] = val
+		}
+		copied["vpmDependencies"] = expanded
+		out = append(out, copied)
+	}
+	return out, nil
+}
+
 // convertRevision changes when Vpmify starts to convert differently, so that
-// versions placed by an older Vpmify are built again.
-const convertRevision = 2
+// versions made available by an older Vpmify are built again. 3: UPM
+// dependencies are no longer copied into vpmDependencies on their own.
+const convertRevision = 3
 
 // Fingerprint identifies how version v is built from upstream: from the
-// folder dir of the archive, with the dependencies in promoted copied into
-// vpmDependencies. A placed version whose fingerprint differs is built again.
-func (r *Recipe) Fingerprint(v semver.Version, dir string, promoted []string) string {
+// folder dir of the archive, by this recipe. An available version whose
+// fingerprint differs is built again when its recipe is pulled.
+func (r *Recipe) Fingerprint(v semver.Version, dir string) string {
 	h := sha256.New()
 	// encoding/json writes map keys sorted, so this is stable.
 	data, _ := json.Marshal(struct {
 		Revision  int                          `json:"revision"`
 		Source    Source                       `json:"source"`
 		Dir       string                       `json:"dir"`
-		Promoted  []string                     `json:"promoted"`
 		Overrides []map[string]json.RawMessage `json:"overrides"`
-	}{convertRevision, r.Source, dir, promoted, r.OverridesFor(v)})
+	}{convertRevision, r.Source, dir, r.OverridesFor(v)})
 	h.Write(data)
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }

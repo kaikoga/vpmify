@@ -155,7 +155,7 @@ func (f *fixture) addAndPull(opt PullOptions, refs ...string) error {
 	return f.app.Pull(ctx, nil, opt)
 }
 
-func (f *fixture) placed() []string {
+func (f *fixture) available() []string {
 	f.t.Helper()
 	entries, settingsErr, err := f.app.List()
 	if err != nil || settingsErr != nil {
@@ -214,7 +214,7 @@ func TestPullPlacesLatestPerUnityAndRegisters(t *testing.T) {
 	if err := f.app.Add(ctx, f.writeRecipe(overrideNewUnity)); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if got := f.placed(); len(got) != 0 {
+	if got := f.available(); len(got) != 0 {
 		t.Errorf("placed after add = %v", got)
 	}
 	if len(f.reg.downloads) != 0 {
@@ -224,7 +224,7 @@ func TestPullPlacesLatestPerUnityAndRegisters(t *testing.T) {
 	if err := f.app.Pull(ctx, nil, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if got, want := f.placed(), []string{"1.1.0@2021.3", "2.0.0@6000.2"}; !reflect.DeepEqual(got, want) {
+	if got, want := f.available(), []string{"1.1.0@2021.3", "2.0.0@6000.2"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed = %v, want %v", got, want)
 	}
 	wantFolders := []string{
@@ -266,7 +266,7 @@ func TestPullKeepsOlderVersionsAndAddsNamedOnes(t *testing.T) {
 	if err := f.app.Pull(ctx, nil, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if got, want := f.placed(), []string{"1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
+	if got, want := f.available(), []string{"1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed before update = %v, want %v", got, want)
 	}
 	if err := f.app.Update(ctx, nil); err != nil {
@@ -278,14 +278,14 @@ func TestPullKeepsOlderVersionsAndAddsNamedOnes(t *testing.T) {
 	if err := f.app.Pull(ctx, nil, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if got, want := f.placed(), []string{"1.1.0@2021.3", "1.2.0@2021.3"}; !reflect.DeepEqual(got, want) {
+	if got, want := f.available(), []string{"1.1.0@2021.3", "1.2.0@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed = %v, want %v", got, want)
 	}
 
 	if err := f.app.Pull(ctx, []string{"kit@1.0.0"}, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if got, want := f.placed(), []string{"1.0.0@2021.3", "1.1.0@2021.3", "1.2.0@2021.3"}; !reflect.DeepEqual(got, want) {
+	if got, want := f.available(), []string{"1.0.0@2021.3", "1.1.0@2021.3", "1.2.0@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed = %v, want %v", got, want)
 	}
 
@@ -309,7 +309,7 @@ func TestPullAll(t *testing.T) {
 	if err := f.addAndPull(PullOptions{All: true}, f.writeRecipe(`, "versions": ">=1.0.0"`)); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if got, want := f.placed(), []string{"1.0.0@2021.3", "1.1.0@2021.3", "2.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
+	if got, want := f.available(), []string{"1.0.0@2021.3", "1.1.0@2021.3", "2.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed = %v, want %v", got, want)
 	}
 }
@@ -326,23 +326,64 @@ func TestVersions(t *testing.T) {
 	if err := f.app.Pull(ctx, []string{"kit@1.0.0"}, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
+	if err := f.app.Remove(ctx, "kit", "1.1.0"); err != nil {
+		t.Fatal(err, f.log)
+	}
+	// The version list keeps only the recipe's range, so 0.9.0 is not taken.
+	if err := f.app.Pull(ctx, []string{"kit@0.9.0"}, PullOptions{}); err == nil || !strings.Contains(err.Error(), "outside the recipe's versions") {
+		t.Errorf("pull kit@0.9.0: err = %v", err)
+	}
 	f.reg.down = true // versions reads only the version list
 
-	list, err := f.app.Versions("kit")
+	show := func(opt VersionsOptions) []string {
+		t.Helper()
+		list, err := f.app.Versions("kit", opt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, v := range list.Versions {
+			out = append(out, fmt.Sprintf("%s %s newest=%v available=%v", v.Version, v.Unity, v.Newest, v.Available))
+		}
+		return out
+	}
+	cases := []struct {
+		name string
+		opt  VersionsOptions
+		want []string
+	}{
+		{"stable", VersionsOptions{}, []string{
+			"2.0.0 6000.2 newest=true available=true",
+			"1.1.0 2021.3 newest=true available=false",
+			"1.0.0 2021.3 newest=false available=true",
+		}},
+		{"all", VersionsOptions{All: true}, []string{
+			"2.1.0-beta.1 6000.2 newest=false available=false",
+			"2.0.0 6000.2 newest=true available=true",
+			"1.1.0 2021.3 newest=true available=false",
+			"1.0.0 2021.3 newest=false available=true",
+		}},
+		{"available", VersionsOptions{Available: true}, []string{
+			"2.0.0 6000.2 newest=true available=true",
+			"1.0.0 2021.3 newest=false available=true",
+		}},
+		// unity is the oldest Unity a version supports.
+		{"unity 2022.3", VersionsOptions{Unity: "2022.3.22f1"}, []string{
+			"1.1.0 2021.3 newest=true available=false",
+			"1.0.0 2021.3 newest=false available=true",
+		}},
+	}
+	for _, c := range cases {
+		if got := show(c.opt); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: versions =\n%s\nwant\n%s", c.name, strings.Join(got, "\n"), strings.Join(c.want, "\n"))
+		}
+	}
+	if _, err := f.app.Versions("kit", VersionsOptions{Unity: "six"}); err == nil {
+		t.Error("a bad Unity version was taken")
+	}
+	list, err := f.app.Versions("kit", VersionsOptions{})
 	if err != nil {
 		t.Fatal(err)
-	}
-	var got []string
-	for _, v := range list.Versions {
-		got = append(got, fmt.Sprintf("%s %s newest=%v placed=%v", v.Version, v.Unity, v.Newest, v.Placed))
-	}
-	want := []string{
-		"2.0.0 6000.2 newest=true placed=true",
-		"1.1.0 2021.3 newest=true placed=true",
-		"1.0.0 2021.3 newest=false placed=true",
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("versions =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 	if list.Package != pkgName || list.Updated.IsZero() {
 		t.Errorf("list = %+v", list)
@@ -364,7 +405,7 @@ func TestPullRefusesAVersionListOfAnotherRecipe(t *testing.T) {
 	if err := f.app.Pull(ctx, nil, PullOptions{}); err == nil || !strings.Contains(err.Error(), "vpmify update kit") {
 		t.Errorf("err = %v", err)
 	}
-	if _, err := f.app.Versions("kit"); err == nil {
+	if _, err := f.app.Versions("kit", VersionsOptions{}); err == nil {
 		t.Error("versions read a stale version list")
 	}
 	if err := f.app.Update(ctx, nil); err != nil {
@@ -390,7 +431,7 @@ func TestPullNamedVersionWithAnEmptyRange(t *testing.T) {
 	if err := f.app.Pull(ctx, []string{"kit@1.0.0-beta.1"}, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if got, want := f.placed(), []string{"1.0.0-beta.1@2021.3"}; !reflect.DeepEqual(got, want) {
+	if got, want := f.available(), []string{"1.0.0-beta.1@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed = %v, want %v", got, want)
 	}
 }
@@ -457,7 +498,7 @@ func TestRemove(t *testing.T) {
 	if err := f.app.Remove(ctx, "kit", "1.0.0"); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if got, want := f.placed(), []string{"2.0.0@6000.2"}; !reflect.DeepEqual(got, want) {
+	if got, want := f.available(), []string{"2.0.0@6000.2"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed = %v, want %v", got, want)
 	}
 	if _, err := os.Stat(f.app.Layout.PackageDir(pkgName, "1.0.0")); !os.IsNotExist(err) {
@@ -467,7 +508,7 @@ func TestRemove(t *testing.T) {
 	if err := f.app.Remove(ctx, "kit", ""); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if got := f.placed(); len(got) != 0 {
+	if got := f.available(); len(got) != 0 {
 		t.Errorf("placed = %v", got)
 	}
 	if got := f.registered(); !reflect.DeepEqual(got, []string{f.foreign}) {
@@ -510,7 +551,7 @@ func TestRegistersEvenWhenARecipeFails(t *testing.T) {
 	if err := f.app.Pull(ctx, nil, PullOptions{}); err == nil || !strings.Contains(err.Error(), "broken") {
 		t.Errorf("err = %v", err)
 	}
-	if got, want := f.placed(), []string{"1.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
+	if got, want := f.available(), []string{"1.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed = %v, want %v (registration not restored)", got, want)
 	}
 }
@@ -529,7 +570,7 @@ func TestBrokenDownloadIsRejected(t *testing.T) {
 	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err == nil || !strings.Contains(err.Error(), "integrity") {
 		t.Errorf("err = %v", err)
 	}
-	if got := f.placed(); len(got) != 0 {
+	if got := f.available(); len(got) != 0 {
 		t.Errorf("placed = %v", got)
 	}
 }

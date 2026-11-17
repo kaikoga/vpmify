@@ -5,7 +5,7 @@
     "url": "https://github.com/vrm-c/UniVRM.git",
     "name": "com.vrmc.gltf",
     "tagPattern": "v*",
-    "tags": ">=0.120.0"
+    "tags": ">=0.125.0"
   },
   "paths": [
     { "tags": ">=0.131.0", "path": "Packages/UniGLTF" },

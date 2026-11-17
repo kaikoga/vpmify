@@ -94,7 +94,7 @@ type tag struct {
 // Releases reads package.json of the package in every tag the recipe
 // accepts, and lists one release per package version. When a version
 // appears in several tags, the oldest tag wins: that is where the version
-// was first published, and what Vpmify places never changes when newer
+// was first published, and what Vpmify converts never changes when newer
 // tags keep the same version (kaikoga 2026-11-18).
 func (g *GitHub) Releases(ctx context.Context) ([]Release, error) {
 	tags, err := g.tags(ctx)

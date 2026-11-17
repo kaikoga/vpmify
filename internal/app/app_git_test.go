@@ -41,13 +41,18 @@ func monorepo(versions ...string) *testutil.FakeGitHub {
 	return gh
 }
 
-func (f *fixture) writeGitRecipe(id, name, dir string) string {
+// pkgNeedsBase makes pkg depend on base in vpmDependencies, as a recipe
+// has to say for itself.
+const pkgNeedsBase = `,
+  "overrides": [{"set": {"vpmDependencies": {"com.example.base": ">={dependencies}"}}}]`
+
+func (f *fixture) writeGitRecipe(id, name, dir, extra string) string {
 	f.t.Helper()
 	content := fmt.Sprintf(`{
   "id": %q,
   "source": {"type": "git", "url": "https://github.com/owner/mono.git", "name": %q, "tagPattern": "v*"},
-  "path": %q
-}`, id, name, dir)
+  "path": %q%s
+}`, id, name, dir, extra)
 	p := filepath.Join(f.t.TempDir(), id+".json")
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 		f.t.Fatal(err)
@@ -55,40 +60,28 @@ func (f *fixture) writeGitRecipe(id, name, dir string) string {
 	return p
 }
 
-func TestGitRecipesShareArchivesAndPromoteDependencies(t *testing.T) {
+func TestGitRecipesShareArchivesAndWriteTheDependenciesTheyName(t *testing.T) {
 	f := newFixture(t)
 	gh := monorepo("1.0.0", "1.1.0")
 	f.app.Client.HTTP.Transport = gh
 	ctx := context.Background()
 
-	if err := f.addAndPull(PullOptions{}, f.writeGitRecipe("pkg", "com.example.pkg", "Packages/Pkg")); err != nil {
+	if err := f.addAndPull(PullOptions{},
+		f.writeGitRecipe("pkg", "com.example.pkg", "Packages/Pkg", pkgNeedsBase),
+		f.writeGitRecipe("base", "com.example.base", "Packages/Base", "")); err != nil {
 		t.Fatal(err, f.log)
 	}
 	pkgDir := f.app.Layout.PackageDir("com.example.pkg", "1.1.0")
 	m := readManifest(t, pkgDir)
-	if _, ok := m["vpmDependencies"]; ok {
-		t.Errorf("vpmDependencies before base has a recipe: %v", m["vpmDependencies"])
-	}
-	log := f.log.String()
-	if !strings.Contains(log, "depends on com.example.base, which no recipe provides") ||
-		!strings.Contains(log, "depends on org.other.lib, which no recipe provides") ||
-		strings.Contains(log, "com.unity.ugui, which") {
-		t.Errorf("notes in log:\n%s", log)
-	}
-
-	if err := f.app.Add(ctx, f.writeGitRecipe("base", "com.example.base", "Packages/Base")); err != nil {
-		t.Fatal(err, f.log)
-	}
-	if m = readManifest(t, pkgDir); m["vpmDependencies"] != nil {
-		t.Errorf("add rebuilt pkg: %v", m["vpmDependencies"])
-	}
-	// Pulling only base builds pkg again too.
-	if err := f.app.Pull(ctx, []string{"base"}, PullOptions{}); err != nil {
-		t.Fatal(err, f.log)
-	}
-	m = readManifest(t, pkgDir)
 	if got, want := m["vpmDependencies"], map[string]any{"com.example.base": ">=1.1.0"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("vpmDependencies = %v, want %v", got, want)
+	}
+	// The UPM dependencies the recipe does not name stay out, with a note;
+	// Unity's own packages without one.
+	log := f.log.String()
+	if !strings.Contains(log, "upstream com.example.pkg depends on org.other.lib, which the recipe does not write") ||
+		strings.Contains(log, "on com.example.base, which") || strings.Contains(log, "com.unity.ugui, which") {
+		t.Errorf("notes in log:\n%s", log)
 	}
 	if _, err := os.Stat(filepath.Join(pkgDir, "Pkg.cs")); err != nil {
 		t.Error(err)
@@ -96,10 +89,10 @@ func TestGitRecipesShareArchivesAndPromoteDependencies(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(pkgDir, "Base.cs")); !os.IsNotExist(err) {
 		t.Errorf("Base.cs in pkg: %v", err)
 	}
-	if got, want := f.placed(), []string{"1.1.0@2021.3", "1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("placed = %v, want %v", got, want)
+	if got, want := f.available(), []string{"1.1.0@2021.3", "1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("available = %v, want %v", got, want)
 	}
-	// One archive for the v1.1.0 commit serves both recipes and the rebuild.
+	// One archive for the v1.1.0 commit serves both recipes.
 	if n := gh.Requests["codeload"]; n != 1 {
 		t.Errorf("codeload requests = %d, want 1", n)
 	}
@@ -113,24 +106,41 @@ func TestGitRecipesShareArchivesAndPromoteDependencies(t *testing.T) {
 	}
 }
 
-// Pulling only the dependent after adding its dependency's recipe places
-// the dependency too: its vpmDependencies would point at nothing otherwise.
-func TestPullPlacesTheDependencyItWrites(t *testing.T) {
+// What a recipe builds depends on the recipe alone: no UPM dependency is
+// written for it, and other recipes coming and going rebuild nothing.
+func TestARecipeBuildsTheSameWhateverOtherRecipesThereAre(t *testing.T) {
+	f := newFixture(t)
+	gh := monorepo("1.0.0", "1.1.0")
+	f.app.Client.HTTP.Transport = gh
+	if err := f.addAndPull(PullOptions{}, f.writeGitRecipe("pkg", "com.example.pkg", "Packages/Pkg", "")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	// base's recipe comes later, and the pull makes base available.
+	if err := f.addAndPull(PullOptions{}, f.writeGitRecipe("base", "com.example.base", "Packages/Base", "")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if m := readManifest(t, f.app.Layout.PackageDir("com.example.pkg", "1.1.0")); m["vpmDependencies"] != nil {
+		t.Errorf("vpmDependencies = %v", m["vpmDependencies"])
+	}
+	if n := strings.Count(f.log.String(), "converting com.example.pkg"); n != 1 {
+		t.Errorf("pkg converted %d times:\n%s", n, f.log)
+	}
+}
+
+// Pulling only the dependent makes the versions of the dependency it names
+// available too: its vpmDependencies would point at nothing otherwise.
+func TestPullAddsTheDependencyItWrites(t *testing.T) {
 	f := newFixture(t)
 	gh := monorepo("1.0.0", "1.1.0")
 	f.app.Client.HTTP.Transport = gh
 	ctx := context.Background()
-	if err := f.addAndPull(PullOptions{}, f.writeGitRecipe("pkg", "com.example.pkg", "Packages/Pkg")); err != nil {
+	if err := f.app.Add(ctx,
+		f.writeGitRecipe("pkg", "com.example.pkg", "Packages/Pkg", pkgNeedsBase),
+		f.writeGitRecipe("base", "com.example.base", "Packages/Base", "")); err != nil {
 		t.Fatal(err, f.log)
 	}
 	// An older pkg too, so its dependency is not the newest base.
-	if err := f.app.Pull(ctx, []string{"pkg@1.0.0"}, PullOptions{}); err != nil {
-		t.Fatal(err, f.log)
-	}
-	if err := f.app.Add(ctx, f.writeGitRecipe("base", "com.example.base", "Packages/Base")); err != nil {
-		t.Fatal(err, f.log)
-	}
-	if err := f.app.Pull(ctx, []string{"pkg"}, PullOptions{}); err != nil {
+	if err := f.app.Pull(ctx, []string{"pkg", "pkg@1.0.0"}, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
 	m := readManifest(t, f.app.Layout.PackageDir("com.example.pkg", "1.0.0"))
@@ -138,19 +148,16 @@ func TestPullPlacesTheDependencyItWrites(t *testing.T) {
 		t.Errorf("vpmDependencies = %v, want %v", got, want)
 	}
 	// The versions the dependents name, not only the newest.
-	if got, want := f.placed(), []string{"1.0.0@2021.3", "1.1.0@2021.3", "1.0.0@2021.3", "1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("placed = %v, want %v", got, want)
+	if got, want := f.available(), []string{"1.0.0@2021.3", "1.1.0@2021.3", "1.0.0@2021.3", "1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("available = %v, want %v", got, want)
 	}
 }
 
-func TestPullFailsWhenTheDependencyCannotBePlaced(t *testing.T) {
+func TestPullFailsWhenTheDependencyCannotBeAdded(t *testing.T) {
 	f := newFixture(t)
 	gh := monorepo("1.0.0", "1.1.0")
 	f.app.Client.HTTP.Transport = gh
 	ctx := context.Background()
-	if err := f.addAndPull(PullOptions{}, f.writeGitRecipe("pkg", "com.example.pkg", "Packages/Pkg")); err != nil {
-		t.Fatal(err, f.log)
-	}
 	// base's recipe reads only tags before pkg's version.
 	content := `{"id": "base", "source": {"type": "git", "url": "https://github.com/owner/mono.git", "name": "com.example.base", "tagPattern": "v*", "tags": "<1.1.0"},
   "path": "Packages/Base"}`
@@ -158,7 +165,7 @@ func TestPullFailsWhenTheDependencyCannotBePlaced(t *testing.T) {
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.app.Add(ctx, p); err != nil {
+	if err := f.app.Add(ctx, f.writeGitRecipe("pkg", "com.example.pkg", "Packages/Pkg", pkgNeedsBase), p); err != nil {
 		t.Fatal(err, f.log)
 	}
 	err := f.app.Pull(ctx, []string{"pkg"}, PullOptions{})
@@ -176,15 +183,16 @@ func (f failCodeload) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f.next.RoundTrip(req)
 }
 
-// A rebuild of a recipe the pull does not name fails the pull.
-func TestPullFailsWhenAnUnnamedRebuildFails(t *testing.T) {
+// A recipe changed since its versions were built builds them again when it
+// is pulled, and only then; a failure to build fails the pull.
+func TestPullBuildsAgainOnlyTheRecipesItPulls(t *testing.T) {
 	f := newFixture(t)
 	gh := monorepo("1.0.0", "1.1.0")
 	f.app.Client.HTTP.Transport = gh
 	ctx := context.Background()
 	if err := f.addAndPull(PullOptions{},
-		f.writeGitRecipe("pkg", "com.example.pkg", "Packages/Pkg"),
-		f.writeGitRecipe("base", "com.example.base", "Packages/Base")); err != nil {
+		f.writeGitRecipe("pkg", "com.example.pkg", "Packages/Pkg", ""),
+		f.writeGitRecipe("base", "com.example.base", "Packages/Base", "")); err != nil {
 		t.Fatal(err, f.log)
 	}
 	// New overrides keep the version list but change how pkg is built.
@@ -193,13 +201,28 @@ func TestPullFailsWhenAnUnnamedRebuildFails(t *testing.T) {
 	if err := os.WriteFile(f.app.recipePath("pkg"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	pkgDir := f.app.Layout.PackageDir("com.example.pkg", "1.1.0")
+	if err := f.app.Pull(ctx, []string{"base"}, PullOptions{}); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if m := readManifest(t, pkgDir); m["displayName"] != nil {
+		t.Errorf("pulling base built pkg again: %v", m)
+	}
+
 	if err := os.RemoveAll(f.app.Layout.Cache()); err != nil {
 		t.Fatal(err)
 	}
 	f.app.Client.HTTP.Transport = failCodeload{gh}
-	err := f.app.Pull(ctx, []string{"base"}, PullOptions{})
-	if err == nil || !strings.Contains(err.Error(), "pkg: com.example.pkg 1.1.0") {
+	if err := f.app.Pull(ctx, []string{"pkg"}, PullOptions{}); err == nil || !strings.Contains(err.Error(), "pkg: com.example.pkg 1.1.0") {
 		t.Errorf("err = %v", err)
+	}
+
+	f.app.Client.HTTP.Transport = gh
+	if err := f.app.Pull(ctx, []string{"pkg"}, PullOptions{}); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if m := readManifest(t, pkgDir); m["displayName"] != "X" {
+		t.Errorf("pkg not built again: %v", m)
 	}
 }
 

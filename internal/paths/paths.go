@@ -70,7 +70,7 @@ func (l Layout) Recipes() string { return filepath.Join(l.Home(), "recipes") }
 // finished folder can be renamed into place.
 func (l Layout) Tmp() string { return filepath.Join(l.Home(), "tmp") }
 
-// State is the record of what Vpmify has placed and registered.
+// State is the record of the versions Vpmify has made available.
 func (l Layout) State() string { return filepath.Join(l.Home(), "state.json") }
 
 // Lock is the machine-wide lock file.

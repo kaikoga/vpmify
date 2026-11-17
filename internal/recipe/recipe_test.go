@@ -100,13 +100,52 @@ func TestExamplesParse(t *testing.T) {
 func TestListingKey(t *testing.T) {
 	base := mustParse(t, `{"id": "pkg", `+gitSource+`, "path": "A"}`)
 	// What is applied to the list when it is read does not change the key.
-	same := mustParse(t, `{"id": "pkg", `+gitSource+`, "path": "A", "versions": ">=1.0.0", "prerelease": true,
+	same := mustParse(t, `{"id": "pkg", `+gitSource+`, "path": "A", "prerelease": true,
   "overrides": [{"set": {"unity": "2022.3"}}]}`)
 	if base.ListingKey() != same.ListingKey() {
-		t.Error("versions, prerelease or overrides changed the key")
+		t.Error("prerelease or overrides changed the key")
 	}
+	// What update applies when it reads upstream does.
 	moved := mustParse(t, `{"id": "pkg", `+gitSource+`, "path": "B"}`)
 	if base.ListingKey() == moved.ListingKey() {
 		t.Error("another folder kept the key")
+	}
+	narrowed := mustParse(t, `{"id": "pkg", `+gitSource+`, "path": "A", "versions": ">=1.0.0"}`)
+	if base.ListingKey() == narrowed.ListingKey() {
+		t.Error("another range kept the key")
+	}
+}
+
+func TestExpandedOverrides(t *testing.T) {
+	r := mustParse(t, `{"id": "pkg", `+gitSource+`, "overrides": [
+  {"set": {"displayName": "{version} stays", "vpmDependencies": {"a": ">={version}", "b": "={dependencies}"}}},
+  {"versions": ">=2.0.0", "set": {"vpmDependencies": null}}
+]}`)
+	sets, err := r.ExpandedOverridesFor(version(t, "1.2.0"), map[string]string{"b": "0.3.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sets) != 1 || string(sets[0]["vpmDependencies"]) != `{"a":">=1.2.0","b":"=0.3.0"}` ||
+		string(sets[0]["displayName"]) != `"{version} stays"` {
+		t.Errorf("sets = %s", sets)
+	}
+	// The recipe's own sets are left as written.
+	if raw := r.OverridesFor(version(t, "1.2.0"))[0]["vpmDependencies"]; !strings.Contains(string(raw), "{version}") {
+		t.Errorf("OverridesFor changed: %s", raw)
+	}
+	if _, err := r.ExpandedOverridesFor(version(t, "1.2.0"), nil); err == nil || !strings.Contains(err.Error(), "no UPM dependency on b") {
+		t.Errorf("err = %v", err)
+	}
+	if sets, err := r.ExpandedOverridesFor(version(t, "2.0.0"), nil); err == nil {
+		t.Errorf("2.0.0: the first set still applies, so {dependencies} has nothing to read: %s", sets)
+	}
+
+	for _, bad := range []string{
+		`{"vpmDependencies": {"a": ">={self}"}}`,
+		`{"vpmDependencies": ["a"]}`,
+	} {
+		if _, err := Parse([]byte(`{"id": "pkg", ` + gitSource + `, "overrides": [{"set": ` + bad + `}]}`)); err == nil {
+			t.Errorf("%s accepted", bad)
+		}
 	}
 }

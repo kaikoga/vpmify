@@ -50,10 +50,11 @@ func (a *App) forget(st *state.State, dirs []string) error {
 	return nil
 }
 
-// Clean deletes every placed version, the downloads and the work folders,
+// Clean deletes every available version, the downloads and the work folders,
 // and unregisters the versions from ALCOM. The recipes and their version
-// lists stay, so pull places the newest versions again; another version has
-// to be named again, and a project that locks a version not placed again
+// lists stay, so pull makes the newest versions available again; another
+// version has to be named again, and a project that locks a version not made
+// available again
 // cannot resolve it. Clean returns the versions it deletes, or would delete when apply is
 // false.
 func (a *App) Clean(apply bool) ([]Entry, error) {
@@ -142,7 +143,7 @@ type Problem struct {
 
 // Doctor reports the disagreements among the recipes, state.json, the store
 // and settings.json, and fixes what it can when fix is true. It does not go
-// to the network; placing versions again is pull's work.
+// to the network; converting versions again is pull's work.
 func (a *App) Doctor(fix bool) ([]Problem, error) {
 	var problems []*Problem
 	err := a.withLock(func() error {
@@ -182,7 +183,7 @@ func (a *App) Doctor(fix bool) ([]Problem, error) {
 		for _, id := range state.SortedKeys(st.Recipes) {
 			rs := st.Recipes[id]
 			if !hasRecipe[id] {
-				add(&Problem{Message: fmt.Sprintf("%s: versions are placed but the recipe is gone; `vpmify remove %s` deletes them", id, id)})
+				add(&Problem{Message: fmt.Sprintf("%s: versions are available but the recipe is gone; `vpmify remove %s` deletes them", id, id)})
 			}
 			for _, name := range state.SortedKeys(rs.Packages) {
 				ps := rs.Packages[name]
@@ -249,13 +250,13 @@ func (a *App) Doctor(fix bool) ([]Problem, error) {
 	return out, err
 }
 
-// checkVersion returns the problem with one placed version, or nil when its
+// checkVersion returns the problem with one available version, or nil when its
 // folder holds the package state.json says it does. inStore reports whether
 // the version's folder in the store is accounted for by this record.
 func (a *App) checkVersion(id, name, v string, ps *state.PackageState) (p *Problem, inStore bool) {
 	vs := ps.Versions[v]
 	want := a.Layout.PackageDir(name, v)
-	resync := fmt.Sprintf("; `vpmify pull %s@%s` places it again", id, v)
+	resync := fmt.Sprintf("; `vpmify pull %s@%s` makes it available again", id, v)
 	forget := func() { delete(ps.Versions, v) }
 	if !samePath(vs.Path, want) {
 		// The user may have moved Vpmify's data. The recorded folder is
@@ -322,7 +323,7 @@ func (a *App) fix(st *state.State, problems []*Problem) error {
 	return errors.Join(errs...)
 }
 
-// checkRegistration returns a problem for each placed version ALCOM does not
+// checkRegistration returns a problem for each available version ALCOM does not
 // list, and for each folder in the store that ALCOM lists but state.json
 // does not have. Folders in forgotten are left out: the problem with their
 // version already says --fix unregisters them.
@@ -345,7 +346,7 @@ func (a *App) checkRegistration(st *state.State, forgotten map[string]bool) ([]*
 		clean := filepath.Clean(p)
 		want[clean] = true
 		if !registered[clean] {
-			out = append(out, &Problem{Message: p + " is placed but not registered with ALCOM", Fix: "register it", register: true})
+			out = append(out, &Problem{Message: p + " is in the store but not registered with ALCOM", Fix: "register it", register: true})
 		}
 	}
 	owner := a.reconciler()

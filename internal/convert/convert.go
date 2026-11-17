@@ -196,69 +196,6 @@ func ApplyOverrides(dir string, sets []map[string]json.RawMessage) error {
 	return fsutil.WriteFileAtomic(p, out, info.Mode().Perm())
 }
 
-// PromoteDependencies copies the UPM "dependencies" of package.json at the
-// root of dir whose names are in promote into "vpmDependencies", because
-// vrc-get resolves vpmDependencies only. A UPM version means "this or
-// newer", while a bare version in vpmDependencies means exactly that version
-// to vrc-get (vrc-get-vpm/src/version/range.rs), so the copy is written as
-// ">=<version>" (kaikoga 2026-11-18). Entries vpmDependencies already has
-// are kept.
-func PromoteDependencies(dir string, promote []string) error {
-	if len(promote) == 0 {
-		return nil
-	}
-	p := filepath.Join(dir, "package.json")
-	data, err := os.ReadFile(p)
-	if err != nil {
-		return err
-	}
-	obj, err := ojson.Parse(data)
-	if err != nil {
-		return fmt.Errorf("package.json: %w", err)
-	}
-	var deps map[string]string
-	if _, err := obj.GetInto("dependencies", &deps); err != nil {
-		return fmt.Errorf("package.json dependencies: %w", err)
-	}
-	vpm := ojson.New()
-	if raw, ok := obj.Get("vpmDependencies"); ok && string(raw) != "null" {
-		if vpm, err = ojson.Parse(raw); err != nil {
-			return fmt.Errorf("package.json vpmDependencies: %w", err)
-		}
-	}
-	changed := false
-	for _, name := range promote {
-		version, ok := deps[name]
-		if !ok {
-			continue
-		}
-		if _, exists := vpm.Get(name); exists {
-			continue
-		}
-		if err := vpm.SetValue(name, ">="+version); err != nil {
-			return err
-		}
-		changed = true
-	}
-	if !changed {
-		return nil
-	}
-	raw, err := vpm.MarshalJSON()
-	if err != nil {
-		return err
-	}
-	obj.Set("vpmDependencies", raw)
-	out, err := obj.Format("  ", ojson.DetectEOL(data), ojson.HasTrailingEOL(data))
-	if err != nil {
-		return err
-	}
-	info, err := os.Stat(p)
-	if err != nil {
-		return err
-	}
-	return fsutil.WriteFileAtomic(p, out, info.Mode().Perm())
-}
-
 func sortedKeys(m map[string]json.RawMessage) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {

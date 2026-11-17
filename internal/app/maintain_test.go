@@ -80,7 +80,7 @@ func TestDoctorFixes(t *testing.T) {
 		"1.1.0: package.json version",
 		"com.example.stray is in the store",
 		"build-123 is left",
-		"2.0.0 is placed but not registered",
+		"2.0.0 is in the store but not registered",
 		"ALCOM lists " + stray,
 	}
 	msgs := problemMessages(problems)
@@ -111,7 +111,7 @@ func TestDoctorFixes(t *testing.T) {
 			t.Errorf("not fixed: %+v", p)
 		}
 	}
-	if got, want := f.placed(), []string{"2.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
+	if got, want := f.available(), []string{"2.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed = %v, want %v", got, want)
 	}
 	wantFolders := []string{f.foreign, layout.PackageDir(pkgName, "2.0.0")}
@@ -132,7 +132,7 @@ func TestDoctorFixes(t *testing.T) {
 	if err := f.app.Pull(ctx, nil, PullOptions{All: true}); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if got, want := f.placed(), []string{"1.0.0@2021.3", "1.1.0@2021.3", "2.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
+	if got, want := f.available(), []string{"1.0.0@2021.3", "1.1.0@2021.3", "2.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed after pull = %v, want %v", got, want)
 	}
 }
@@ -163,7 +163,7 @@ func TestDoctorReportsWhatItCannotFix(t *testing.T) {
 		}
 	}
 	// The placed version stays.
-	if got, want := f.placed(), []string{"1.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
+	if got, want := f.available(), []string{"1.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed = %v, want %v", got, want)
 	}
 }
@@ -221,7 +221,7 @@ func TestRemoveLeavesFoldersOutsideTheStore(t *testing.T) {
 	if err := f.app.Remove(context.Background(), "kit", "1.0.0"); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if got := f.placed(); len(got) != 0 {
+	if got := f.available(); len(got) != 0 {
 		t.Errorf("placed = %v", got)
 	}
 	if !exists(outside) {
@@ -258,7 +258,7 @@ func TestRemoveLeavesAFolderAnotherRecipeUses(t *testing.T) {
 	if !exists(dir) {
 		t.Errorf("%s was deleted while kit still records it", dir)
 	}
-	if got, want := f.placed(), []string{"1.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
+	if got, want := f.available(), []string{"1.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed = %v, want %v", got, want)
 	}
 }
@@ -323,14 +323,14 @@ func TestCleanDeletesPlacedVersionsAndKeepsRecipes(t *testing.T) {
 	if len(entries) != 2 || entries[0].Version != "1.0.0" || entries[1].Version != "1.1.0" {
 		t.Errorf("entries = %+v", entries)
 	}
-	if got := f.placed(); len(got) != 2 {
+	if got := f.available(); len(got) != 2 {
 		t.Errorf("placed without apply = %v", got)
 	}
 
 	if _, err := f.app.Clean(true); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if got := f.placed(); len(got) != 0 {
+	if got := f.available(); len(got) != 0 {
 		t.Errorf("placed = %v", got)
 	}
 	if got := f.registered(); !reflect.DeepEqual(got, []string{f.foreign}) {
@@ -353,7 +353,7 @@ func TestCleanDeletesPlacedVersionsAndKeepsRecipes(t *testing.T) {
 	if err := f.app.Pull(ctx, nil, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if got, want := f.placed(), []string{"1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
+	if got, want := f.available(), []string{"1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed after pull = %v, want %v", got, want)
 	}
 	if f.reg.downloads["1.1.0"] != 2 {
@@ -401,7 +401,7 @@ func TestRefetchBuildsEveryPlacedVersionAgain(t *testing.T) {
 	if !exists(broken) {
 		t.Errorf("%s was not built again", broken)
 	}
-	if got, want := f.placed(), []string{"1.0.0@2021.3", "1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
+	if got, want := f.available(), []string{"1.0.0@2021.3", "1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed = %v, want %v", got, want)
 	}
 	if got := f.registered(); !reflect.DeepEqual(got, before) {
@@ -436,7 +436,7 @@ func TestRefetchLeavesVersionsUpstreamNoLongerHas(t *testing.T) {
 	if err := f.app.Pull(ctx, []string{"kit"}, PullOptions{Refetch: true}); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if got, want := f.placed(), []string{"1.0.0@2021.3", "1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
+	if got, want := f.available(), []string{"1.0.0@2021.3", "1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed = %v, want %v", got, want)
 	}
 	if !strings.Contains(f.log.String(), "the version list no longer has "+pkgName+" 1.0.0") {
@@ -463,7 +463,7 @@ func TestDoctorRecordsTheStoreCopyOfAMovedRecord(t *testing.T) {
 	if !exists(dir) || !exists(outside) {
 		t.Errorf("a folder was deleted")
 	}
-	if got, want := f.placed(), []string{"1.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
+	if got, want := f.available(), []string{"1.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed = %v, want %v", got, want)
 	}
 	if problems, err := f.app.Doctor(false); err != nil || len(problems) != 0 {
