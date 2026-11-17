@@ -119,6 +119,10 @@ func (r *Recipe) check() error {
 	if r.Source.Name == "" {
 		return fmt.Errorf("source needs the package name")
 	}
+	// The name becomes a folder in the store; it must stay one folder there.
+	if strings.ContainsAny(r.Source.Name, `/\`) || r.Source.Name == "." || r.Source.Name == ".." {
+		return fmt.Errorf("package name %q must not be a path", r.Source.Name)
+	}
 	switch r.Source.Type {
 	case SourceNPM:
 		if r.Source.Registry == "" {

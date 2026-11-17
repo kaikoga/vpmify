@@ -123,6 +123,7 @@ func (a *App) readRecipeRef(ctx context.Context, ref string) (addedRecipe, error
 func (a *App) Add(ctx context.Context, refs ...string) error {
 	var added []addedRecipe
 	ids := map[string]string{}
+	names := map[string]string{}
 	for _, ref := range refs {
 		ar, err := a.readRecipeRef(ctx, ref)
 		if err != nil {
@@ -131,13 +132,35 @@ func (a *App) Add(ctx context.Context, refs ...string) error {
 		if prev, ok := ids[ar.recipe.ID]; ok {
 			return fmt.Errorf("%s and %s both have id %q", prev, ref, ar.recipe.ID)
 		}
+		if prev, ok := names[ar.recipe.Source.Name]; ok {
+			return fmt.Errorf("%s and %s both provide %s", prev, ref, ar.recipe.Source.Name)
+		}
 		ids[ar.recipe.ID] = ref
+		names[ar.recipe.Source.Name] = ref
 		added = append(added, ar)
 	}
 	return a.withLock(func() error {
 		st, err := state.Load(a.Layout.State())
 		if err != nil {
 			return err
+		}
+		// Two recipes for one package would place it in the same folders,
+		// and removing one would delete the other's.
+		existing, err := a.recipeIDs()
+		if err != nil {
+			return err
+		}
+		for _, id := range existing {
+			if _, replaced := ids[id]; replaced {
+				continue
+			}
+			r, err := a.loadRecipe(id)
+			if err != nil {
+				continue
+			}
+			if ref, ok := names[r.Source.Name]; ok {
+				return fmt.Errorf("%s: recipe %q already provides %s", ref, id, r.Source.Name)
+			}
 		}
 		for _, ar := range added {
 			if err := fsutil.WriteFileAtomic(a.recipePath(ar.recipe.ID), ar.data, 0o644); err != nil {

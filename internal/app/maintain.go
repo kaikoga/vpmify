@@ -16,20 +16,53 @@ import (
 )
 
 // forget saves st, which no longer has some versions, brings ALCOM's
-// registration in line with it, and then deletes dirs. The registration
-// goes first so that ALCOM never lists a folder that is being deleted.
+// registration in line with it, and then deletes the folders those versions
+// had. The registration goes first so that ALCOM never lists a folder that
+// is being deleted, and settings.json is read before st is saved so that a
+// missing settings.json leaves everything as it was.
+//
+// Only folders in the store that no other record points to are deleted. A
+// record may point outside the store after the user moved Vpmify's data, and
+// two records may share a folder when two recipes provide one package.
 func (a *App) forget(st *state.State, dirs []string) error {
+	if _, err := alcom.Load(a.Layout.ALCOMSettings()); err != nil {
+		return err
+	}
 	if err := st.Save(a.Layout.State()); err != nil {
 		return err
 	}
 	if err := a.register(st); err != nil {
 		return err
 	}
+	still := map[string]bool{}
+	for _, p := range st.AllPaths() {
+		still[filepath.Clean(p)] = true
+	}
+	owner := a.reconciler()
 	for _, d := range dirs {
-		a.logf("deleting %s", d)
-		if err := os.RemoveAll(d); err != nil {
+		clean := filepath.Clean(d)
+		if !owner.Owns(clean) || still[clean] {
+			a.logf("leaving %s alone: it is outside the store or another recipe uses it", d)
+			continue
+		}
+		if err := a.removeFromStore(d); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// removeFromStore deletes a folder in the store, and the package folder
+// above it when that is left empty.
+func (a *App) removeFromStore(dir string) error {
+	a.logf("deleting %s", dir)
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	parent := filepath.Dir(dir)
+	if a.reconciler().Owns(parent) {
+		// Fails, as wanted, when other versions are left.
+		_ = os.Remove(parent)
 	}
 	return nil
 }
@@ -48,7 +81,8 @@ type Pruned struct {
 // with "latest" it keeps the newest placed version for each "unity" value,
 // so a package is never left without a version before sync places a newer
 // one. Versions added by name (`sync <id>@<version>`) are pruned like any
-// other. A recipe that cannot be read is skipped; doctor reports it.
+// other. When no recipe is named, a recipe that cannot be read is skipped;
+// doctor reports it.
 func (a *App) Prune(ids []string, apply bool) ([]Pruned, error) {
 	var out []Pruned
 	err := a.withLock(func() error {
@@ -56,19 +90,24 @@ func (a *App) Prune(ids []string, apply bool) ([]Pruned, error) {
 		if err != nil {
 			return err
 		}
-		if len(ids) == 0 {
-			ids = state.SortedKeys(st.Recipes)
-		} else {
+		named := len(ids) > 0
+		if named {
+			ids = uniq(ids)
 			for _, id := range ids {
 				if _, ok := st.Recipes[id]; !ok {
 					return fmt.Errorf("recipe %q has no placed versions", id)
 				}
 			}
+		} else {
+			ids = state.SortedKeys(st.Recipes)
 		}
 		var dirs []string
 		for _, id := range ids {
 			r, err := a.loadRecipe(id)
 			if err != nil {
+				if named {
+					return err
+				}
 				a.logf("%s: skipped: %v", id, err)
 				continue
 			}
@@ -151,10 +190,12 @@ type Problem struct {
 	Fix   string `json:"fix,omitempty"`
 	Fixed bool   `json:"fixed,omitempty"`
 
-	forget   func()
-	record   string
-	dir      string
-	register bool
+	// change edits the state the way --fix will save it.
+	change func()
+	// forgotten is the folder of a record change drops.
+	forgotten string
+	dir       string
+	register  bool
 }
 
 // Doctor reports the disagreements among the recipes, state.json, the store
@@ -174,10 +215,19 @@ func (a *App) Doctor(fix bool) ([]Problem, error) {
 			return err
 		}
 		hasRecipe := map[string]bool{}
+		providers := map[string][]string{}
 		for _, id := range ids {
 			hasRecipe[id] = true
-			if _, err := a.loadRecipe(id); err != nil {
+			r, err := a.loadRecipe(id)
+			if err != nil {
 				add(&Problem{Message: fmt.Sprintf("%s: recipe cannot be read: %v", id, err)})
+				continue
+			}
+			providers[r.Source.Name] = append(providers[r.Source.Name], id)
+		}
+		for _, name := range state.SortedKeys(providers) {
+			if ids := providers[name]; len(ids) > 1 {
+				add(&Problem{Message: fmt.Sprintf("recipes %v all provide %s and share its folders; `vpmify remove` all but one", ids, name)})
 			}
 		}
 
@@ -190,12 +240,12 @@ func (a *App) Doctor(fix bool) ([]Problem, error) {
 			for _, name := range state.SortedKeys(rs.Packages) {
 				ps := rs.Packages[name]
 				for _, v := range ps.SortedVersions() {
-					p := a.checkVersion(id, name, v, ps)
+					p, inStore := a.checkVersion(id, name, v, ps)
 					if p != nil {
 						add(p)
 					}
-					// A broken folder is reported once, by its version.
-					if p == nil || p.dir != "" {
+					// A folder in the store is reported once, by its version.
+					if inStore {
 						keep[a.Layout.PackageDir(name, v)] = true
 					}
 				}
@@ -222,21 +272,28 @@ func (a *App) Doctor(fix bool) ([]Problem, error) {
 		// above are forgotten, since that is what --fix registers.
 		forgotten := map[string]bool{}
 		for _, p := range problems {
-			if p.forget != nil {
-				p.forget()
-				forgotten[filepath.Clean(p.record)] = true
+			if p.change != nil {
+				p.change()
+			}
+			if p.forgotten != "" {
+				forgotten[filepath.Clean(p.forgotten)] = true
 			}
 		}
-		regProblems, err := a.checkRegistration(st, forgotten)
-		if err != nil {
-			add(&Problem{Message: fmt.Sprintf("cannot check the registration: %v", err)})
+		regProblems, regErr := a.checkRegistration(st, forgotten)
+		if regErr != nil {
+			add(&Problem{Message: fmt.Sprintf("cannot check the registration: %v", regErr)})
 		}
 		problems = append(problems, regProblems...)
 
-		if fix {
-			return a.fix(st, problems)
+		if !fix {
+			return nil
 		}
-		return nil
+		if regErr != nil {
+			// Saving the state without registering it would leave ALCOM
+			// listing folders that --fix then deletes.
+			return fmt.Errorf("cannot fix without ALCOM's settings: %w", regErr)
+		}
+		return a.fix(st, problems)
 	})
 	out := make([]Problem, len(problems))
 	for i, p := range problems {
@@ -246,29 +303,52 @@ func (a *App) Doctor(fix bool) ([]Problem, error) {
 }
 
 // checkVersion returns the problem with one placed version, or nil when its
-// folder holds the package state.json says it does.
-func (a *App) checkVersion(id, name, v string, ps *state.PackageState) *Problem {
+// folder holds the package state.json says it does. inStore reports whether
+// the version's folder in the store is accounted for by this record.
+func (a *App) checkVersion(id, name, v string, ps *state.PackageState) (p *Problem, inStore bool) {
 	vs := ps.Versions[v]
+	want := a.Layout.PackageDir(name, v)
 	resync := fmt.Sprintf("; `vpmify sync %s@%s` places it again", id, v)
-	p := &Problem{forget: func() { delete(ps.Versions, v) }, record: vs.Path, register: true}
-	switch {
-	case filepath.Clean(vs.Path) != a.Layout.PackageDir(name, v):
-		// Left alone: the folder is not Vpmify's to delete.
-		p.Message = fmt.Sprintf("%s: %s %s is recorded at %s, outside the store %s", id, name, v, vs.Path, a.Layout.Packages())
-		p.Fix = "forget the record" + resync
-	case !isDir(vs.Path):
-		p.Message = fmt.Sprintf("%s: %s %s: folder %s is missing", id, name, v, vs.Path)
-		p.Fix = "forget the record" + resync
-	default:
-		err := convert.CheckManifest(vs.Path, name, v)
-		if err == nil {
-			return nil
+	forget := func() { delete(ps.Versions, v) }
+	if !samePath(vs.Path, want) {
+		// The user may have moved Vpmify's data. The recorded folder is
+		// left alone: it is not in the store, so it is not Vpmify's.
+		msg := fmt.Sprintf("%s: %s %s is recorded at %s, outside the store %s", id, name, v, vs.Path, a.Layout.Packages())
+		if isDir(want) && convert.CheckManifest(want, name, v) == nil {
+			return &Problem{Message: msg, Fix: "record " + want + " instead",
+				change: func() { vs.Path = want }, register: true}, true
 		}
-		p.Message = fmt.Sprintf("%s: %s %s: %v", id, name, v, err)
-		p.Fix = "delete the folder and forget the record" + resync
-		p.dir = vs.Path
+		return &Problem{Message: msg, Fix: "forget the record" + resync,
+			change: forget, forgotten: vs.Path, register: true}, false
 	}
-	return p
+	if !isDir(vs.Path) {
+		return &Problem{Message: fmt.Sprintf("%s: %s %s: folder %s is missing", id, name, v, vs.Path),
+			Fix: "forget the record" + resync, change: forget, forgotten: vs.Path, register: true}, true
+	}
+	if err := convert.CheckManifest(vs.Path, name, v); err != nil {
+		return &Problem{Message: fmt.Sprintf("%s: %s %s: %v", id, name, v, err),
+			Fix: "delete the folder and forget the record" + resync, change: forget, forgotten: vs.Path, dir: vs.Path, register: true}, true
+	}
+	return nil, true
+}
+
+// samePath reports whether x and y name the same folder, ignoring case where
+// the OS does (filepath.Rel compares case-insensitively on Windows).
+func samePath(x, y string) bool {
+	rel, err := filepath.Rel(x, y)
+	return err == nil && rel == "."
+}
+
+func uniq(list []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, s := range list {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // fix saves the state the problems' records were forgotten from, registers
@@ -297,8 +377,7 @@ func (a *App) fix(st *state.State, problems []*Problem) error {
 			continue
 		}
 		if p.dir != "" {
-			a.logf("deleting %s", p.dir)
-			if err := os.RemoveAll(p.dir); err != nil {
+			if err := a.removeFromStore(p.dir); err != nil {
 				errs = append(errs, err)
 				continue
 			}
@@ -343,9 +422,13 @@ func (a *App) checkRegistration(st *state.State, forgotten map[string]bool) ([]*
 	return out, nil
 }
 
+// osClutter are files the OS's file browser leaves in folders it shows.
+var osClutter = map[string]bool{".DS_Store": true, "desktop.ini": true, "Thumbs.db": true}
+
 // storeOrphans returns what the store holds, at the package and the version
 // level, besides the folders in keep. A package folder with nothing to keep
-// is returned whole.
+// is returned whole. Files the OS's file browser leaves are not counted, so
+// opening the store in a file browser does not make doctor fail.
 func (a *App) storeOrphans(keep map[string]bool) ([]string, error) {
 	var out []string
 	names, err := readDirNames(a.Layout.Packages())
@@ -353,6 +436,9 @@ func (a *App) storeOrphans(keep map[string]bool) ([]string, error) {
 		return nil, err
 	}
 	for _, name := range names {
+		if osClutter[name] {
+			continue
+		}
 		pkgDir := filepath.Join(a.Layout.Packages(), name)
 		if !isDir(pkgDir) {
 			out = append(out, pkgDir)
@@ -363,12 +449,17 @@ func (a *App) storeOrphans(keep map[string]bool) ([]string, error) {
 			return nil, err
 		}
 		var orphans []string
+		counted := 0
 		for _, v := range versions {
+			if osClutter[v] {
+				continue
+			}
+			counted++
 			if p := filepath.Join(pkgDir, v); !keep[p] {
 				orphans = append(orphans, p)
 			}
 		}
-		if len(orphans) == len(versions) {
+		if len(orphans) == counted {
 			out = append(out, pkgDir)
 		} else {
 			out = append(out, orphans...)

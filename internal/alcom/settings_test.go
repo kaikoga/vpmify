@@ -148,7 +148,7 @@ func TestOwns(t *testing.T) {
 	}
 	for p, want := range cases {
 		if got := r.Owns(filepath.FromSlash(p)); got != want {
-			t.Errorf("owns(%s) = %v, want %v", p, got, want)
+			t.Errorf("Owns(%s) = %v, want %v", p, got, want)
 		}
 	}
 }
