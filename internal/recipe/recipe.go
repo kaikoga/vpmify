@@ -19,7 +19,10 @@ import (
 // Source types.
 const (
 	SourceNPM = "npm"
-	SourceGit = "git"
+	// SourceGitHub is a repository on github.com. It is not a plain Git
+	// source: it reads files through GitHub's own endpoints. A plain Git
+	// source would be another type (kaikoga 2026-11-18).
+	SourceGitHub = "github"
 )
 
 // Recipe describes one package, where it comes from and how to convert it.
@@ -149,12 +152,12 @@ func (r *Recipe) check() error {
 		if r.Path != "" || len(r.Paths) > 0 || r.Source.URL != "" || r.Source.TagPattern != "" || r.Source.Tags != "" {
 			return fmt.Errorf("npm source takes no path, paths, url, tagPattern or tags")
 		}
-	case SourceGit:
+	case SourceGitHub:
 		if r.Source.URL == "" {
-			return fmt.Errorf("git source needs url")
+			return fmt.Errorf("github source needs url")
 		}
 		if r.Source.Registry != "" {
-			return fmt.Errorf("git source takes no registry")
+			return fmt.Errorf("github source takes no registry")
 		}
 		if _, err := path.Match(r.Source.TagPattern, ""); err != nil {
 			return fmt.Errorf("tagPattern: %w", err)
@@ -167,6 +170,8 @@ func (r *Recipe) check() error {
 		if err := r.checkPaths(); err != nil {
 			return err
 		}
+	case "git":
+		return fmt.Errorf(`source type "git" is now "github"; only repositories on github.com are read`)
 	default:
 		return fmt.Errorf("unknown source type %q", r.Source.Type)
 	}

@@ -151,7 +151,7 @@ func describeSource(s recipe.Source) string {
 			return "npm " + s.Registry
 		}
 		return "npm"
-	case recipe.SourceGit:
+	case recipe.SourceGitHub:
 		return s.URL
 	}
 	return s.Type

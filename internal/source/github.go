@@ -45,8 +45,7 @@ type GitHub struct {
 	GitBase, RawBase, CodeloadBase string
 }
 
-// NewGitHub returns the source for a git recipe. Only github.com is
-// supported for now.
+// NewGitHub returns the source for a github recipe.
 func NewGitHub(r *recipe.Recipe, client *fetch.Client, cacheDir string) (*GitHub, error) {
 	owner, repo, err := parseGitHubURL(r.Source.URL)
 	if err != nil {
@@ -76,11 +75,11 @@ func parseGitHubURL(raw string) (owner, repo string, err error) {
 		return "", "", err
 	}
 	if u.Scheme != "https" || !strings.EqualFold(u.Host, "github.com") {
-		return "", "", fmt.Errorf("git source supports https://github.com/<owner>/<repo> only, not %q", raw)
+		return "", "", fmt.Errorf("github source takes https://github.com/<owner>/<repo> only, not %q", raw)
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", fmt.Errorf("git url %q is not https://github.com/<owner>/<repo>", raw)
+		return "", "", fmt.Errorf("github url %q is not https://github.com/<owner>/<repo>", raw)
 	}
 	return parts[0], strings.TrimSuffix(parts[1], ".git"), nil
 }

@@ -50,7 +50,7 @@ func (f *fixture) writeGitRecipe(id, name, dir, extra string) string {
 	f.t.Helper()
 	content := fmt.Sprintf(`{
   "id": %q,
-  "source": {"type": "git", "url": "https://github.com/owner/mono.git", "name": %q, "tagPattern": "v*"},
+  "source": {"type": "github", "url": "https://github.com/owner/mono.git", "name": %q, "tagPattern": "v*"},
   "path": %q%s
 }`, id, name, dir, extra)
 	p := filepath.Join(f.t.TempDir(), id+".json")
@@ -159,7 +159,7 @@ func TestPullFailsWhenTheDependencyCannotBeAdded(t *testing.T) {
 	f.app.Client.HTTP.Transport = gh
 	ctx := context.Background()
 	// base's recipe reads only tags before pkg's version.
-	content := `{"id": "base", "source": {"type": "git", "url": "https://github.com/owner/mono.git", "name": "com.example.base", "tagPattern": "v*", "tags": "<1.1.0"},
+	content := `{"id": "base", "source": {"type": "github", "url": "https://github.com/owner/mono.git", "name": "com.example.base", "tagPattern": "v*", "tags": "<1.1.0"},
   "path": "Packages/Base"}`
 	p := filepath.Join(t.TempDir(), "base.json")
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
@@ -196,7 +196,7 @@ func TestPullBuildsAgainOnlyTheRecipesItPulls(t *testing.T) {
 		t.Fatal(err, f.log)
 	}
 	// New overrides keep the version list but change how pkg is built.
-	content := `{"id": "pkg", "source": {"type": "git", "url": "https://github.com/owner/mono.git", "name": "com.example.pkg", "tagPattern": "v*"},
+	content := `{"id": "pkg", "source": {"type": "github", "url": "https://github.com/owner/mono.git", "name": "com.example.pkg", "tagPattern": "v*"},
   "path": "Packages/Pkg", "overrides": [{"set": {"displayName": "X"}}]}`
 	if err := os.WriteFile(f.app.recipePath("pkg"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)

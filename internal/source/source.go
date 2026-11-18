@@ -46,7 +46,7 @@ func New(r *recipe.Recipe, client *fetch.Client, cacheDir string) (Source, error
 	switch r.Source.Type {
 	case recipe.SourceNPM:
 		return &NPM{Registry: r.Source.Registry, Package: r.Source.Name, Client: client}, nil
-	case recipe.SourceGit:
+	case recipe.SourceGitHub:
 		return NewGitHub(r, client, cacheDir)
 	default:
 		return nil, fmt.Errorf("source type %q is not supported", r.Source.Type)

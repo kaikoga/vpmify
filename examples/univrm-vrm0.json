@@ -1,7 +1,7 @@
 {
   "id": "univrm-vrm0",
   "source": {
-    "type": "git",
+    "type": "github",
     "url": "https://github.com/vrm-c/UniVRM.git",
     "name": "com.vrmc.univrm",
     "tagPattern": "v*",

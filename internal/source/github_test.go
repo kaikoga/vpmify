@@ -46,7 +46,7 @@ func TestGitHubReleases(t *testing.T) {
 
 	src := newSource(t, gh, `{
   "id": "pkg",
-  "source": {"type": "git", "url": "https://github.com/owner/repo.git", "name": "com.example.pkg", "tagPattern": "v*", "tags": ">=0.9.0"},
+  "source": {"type": "github", "url": "https://github.com/owner/repo.git", "name": "com.example.pkg", "tagPattern": "v*", "tags": ">=0.9.0"},
   "paths": [{"tags": ">=1.1.0", "path": "Packages/Pkg"}, {"tags": "<1.1.0", "path": "Assets/Pkg"}]
 }`)
 	got, err := src.Releases(context.Background())
@@ -93,7 +93,7 @@ func TestGitHubTagsRangeLimitsReads(t *testing.T) {
 	}
 	src := newSource(t, gh, `{
   "id": "pkg",
-  "source": {"type": "git", "url": "https://github.com/owner/repo", "name": "com.example.pkg", "tags": ">=1.1.0"}
+  "source": {"type": "github", "url": "https://github.com/owner/repo", "name": "com.example.pkg", "tags": ">=1.1.0"}
 }`)
 	got, err := src.Releases(context.Background())
 	if err != nil {
