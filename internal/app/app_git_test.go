@@ -519,3 +519,103 @@ func readManifest(t *testing.T, dir string) map[string]any {
 	}
 	return m
 }
+
+// staleNPMRecipe is a recipe whose npm source has no version list, because
+// the registry was down when it was added.
+func (f *fixture) staleNPMRecipe() {
+	f.t.Helper()
+	gh := monorepo("1.0.0")
+	f.app.Client.HTTP.Transport = routeByHost{"github.com": gh, "raw.githubusercontent.com": gh, "codeload.github.com": gh, "registry.test": f.reg}
+	f.reg.down = true
+	recipe := `{"id": "two", "sources": [
+  {"type": "github", "url": "` + monoURL + `", "packages": [
+    {"name": "com.example.base", "path": "Packages/Base"},
+    {"name": "com.example.pkg", "path": "Packages/Pkg", "overrides": [{"set": {"vpmDependencies": {"com.example.base": "={sameTag}"}}}]}]},
+  {"type": "npm", "registry": "` + registryURL + `", "packages": [{"name": "` + pkgName + `"}]}]}`
+	if _, err := f.app.Add(context.Background(), f.writeFile("two.json", recipe)); err == nil {
+		f.t.Fatal("add read the npm source while the registry was down")
+	}
+}
+
+// A source without a list fails only what the user chose from it.
+func TestAStaleSourceFailsOnlyWhatIsChosenFromIt(t *testing.T) {
+	f := newFixture(t)
+	f.staleNPMRecipe()
+	ctx := context.Background()
+	res, err := f.app.Pull(ctx, []string{"two/com.example.pkg"}, PullOptions{})
+	if err != nil {
+		t.Errorf("pull of a package whose source has a list: %v (%+v)", err, res.Errors)
+	}
+	if len(res.Built) != 2 {
+		t.Errorf("built = %+v, want pkg and the base it needs", res.Built)
+	}
+	if _, err := f.app.Pull(ctx, []string{"two"}, PullOptions{}); err == nil || !strings.Contains(err.Error(), "npm "+registryURL) {
+		t.Errorf("pull of the whole recipe: err = %v", err)
+	}
+	if _, err := f.app.Pull(ctx, []string{"two/" + pkgName + "@1.0.0"}, PullOptions{}); err == nil || !strings.Contains(err.Error(), "npm "+registryURL) {
+		t.Errorf("pull of a version of the stale package: err = %v", err)
+	}
+	// versions shows what it can, with the error.
+	list, err := f.app.Versions("two", VersionsOptions{})
+	if err == nil || list == nil || len(list.Packages) != 2 {
+		t.Errorf("versions = %+v, %v; want the two github packages and an error", list, err)
+	}
+}
+
+// remove of a package with no available version is an error, even when
+// pull left an empty record for it.
+func TestRemoveOfAPackageWithoutVersions(t *testing.T) {
+	f := newFixture(t)
+	f.app.Client.HTTP.Transport = monorepo("1.0.0")
+	ctx := context.Background()
+	recipe := gitRecipe("mono", "",
+		gitPackage("com.example.base", "Packages/Base", ""),
+		gitPackage("com.example.pkg", "Packages/Pkg", ""))
+	if _, err := f.app.Add(ctx, f.writeFile("mono.json", recipe)); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if _, err := f.app.Remove(ctx, "mono/com.example.base", ""); err == nil || !strings.Contains(err.Error(), "no version of com.example.base is available") {
+		t.Errorf("before pull: err = %v", err)
+	}
+	if _, err := f.app.Pull(ctx, []string{"mono/com.example.pkg"}, PullOptions{}); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if _, err := f.app.Remove(ctx, "mono/com.example.base", ""); err == nil || !strings.Contains(err.Error(), "no version of com.example.base is available") {
+		t.Errorf("after pull: err = %v", err)
+	}
+}
+
+// "<id>@<version>" passes over a package that has the version but cannot
+// convert it, and fails only when no package can.
+func TestPullOfAVersionSkipsPackagesThatCannotConvertIt(t *testing.T) {
+	f := newFixture(t)
+	gh := testutil.NewFakeGitHub("owner", "mono")
+	// base and pkg both have 1.2.0 in v1.2.0; pkg's {sameTag} base comes
+	// from v1.0.0, which base's paths do not read.
+	gh.Tag("v1.0.0", monoTag("1.0.0", "1.2.0"))
+	gh.Tag("v1.2.0", monoTag("1.2.0", "1.3.0"))
+	f.app.Client.HTTP.Transport = gh
+	ctx := context.Background()
+	recipe := gitRecipe("mono", "",
+		gitPackage("com.example.base", "", `, "paths": [{"tags": ">=1.2.0", "path": "Packages/Base"}]`),
+		gitPackage("com.example.pkg", "Packages/Pkg", `, "overrides": [{"set": {"vpmDependencies": {"com.example.base": "={sameTag}"}}}]`))
+	if _, err := f.app.Add(ctx, f.writeFile("mono.json", recipe)); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if _, err := f.app.Pull(ctx, []string{"mono/com.example.base@1.2.0"}, PullOptions{}); err != nil {
+		t.Fatal(err, f.log)
+	}
+	// 1.2.0 of pkg cannot be converted; base's is.
+	res, err := f.app.Pull(ctx, []string{"mono@1.2.0"}, PullOptions{})
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	for _, b := range res.Built {
+		if b.Package == "com.example.pkg" && b.Version == "1.2.0" {
+			t.Errorf("built pkg 1.2.0")
+		}
+	}
+	if _, err := f.app.Pull(ctx, []string{"mono/com.example.pkg@1.2.0"}, PullOptions{}); err == nil || !strings.Contains(err.Error(), "same tag has no version") {
+		t.Errorf("pkg@1.2.0 named: err = %v", err)
+	}
+}

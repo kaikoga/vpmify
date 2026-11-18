@@ -409,7 +409,7 @@ func (a *App) readSource(ctx context.Context, id string, s *recipe.Source, old *
 				}
 			}
 		}
-		msg := fmt.Sprintf("%s: %s: %d versions in the recipe's range (%d upstream)", id, p.Name, len(releases), len(upstream[p.Name]))
+		msg := fmt.Sprintf("%s: %s: %d versions in the package's range (%d upstream)", id, p.Name, len(releases), len(upstream[p.Name]))
 		if len(fresh) > 0 {
 			msg += "; new: " + strings.Join(fresh, ", ")
 		}
@@ -467,8 +467,10 @@ type PullOptions struct {
 // Pull converts versions of the named recipes (all recipes when args is
 // empty) from their version lists into the store, and registers every
 // available version with ALCOM, which makes them available. It adds the
-// newest version for each value of the "unity" field, every version with
-// opt.All, and "<id>@<version>" names one more. The named recipes' available
+// newest version for each value of the "unity" field of each package (of
+// the package "<id>/<name>" names), every version with opt.All, and
+// "<id>@<version>" names one more of every package that has it
+// ("<id>/<name>@<version>" of that package). The named recipes' available
 // versions that the recipe now builds differently are built again; other
 // recipes' are not, because a recipe's output depends only on the recipe
 // (kaikoga 2026-11-18). Pull never removes a version, and reads no version
@@ -656,18 +658,35 @@ func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pu
 	extra := map[string][]string{}
 	for _, e := range req.extra {
 		if e.name != "" {
+			if src, _ := r.Package(e.name); src == nil {
+				return fmt.Errorf("the recipe has no package %s", e.name)
+			}
+			if find(lists, e.name) == nil {
+				return listErr
+			}
 			extra[e.name] = append(extra[e.name], e.version)
 			continue
 		}
-		// "<id>@<version>" names the version of every package that has it.
+		// "<id>@<version>" names the version of every package that has it
+		// and can convert it.
 		matched := false
+		var unusable []error
 		for _, l := range lists {
-			if _, ok := l.byVersion[e.version]; ok {
-				extra[l.pkg.Name] = append(extra[l.pkg.Name], e.version)
-				matched = true
+			rel, ok := l.byVersion[e.version]
+			if !ok {
+				continue
 			}
+			if _, err := l.expand(rel); err != nil {
+				unusable = append(unusable, fmt.Errorf("%s: %s: %w", l.pkg.Name, e.version, err))
+				continue
+			}
+			extra[l.pkg.Name] = append(extra[l.pkg.Name], e.version)
+			matched = true
 		}
-		if !matched {
+		switch {
+		case !matched && len(unusable) > 0:
+			return errors.Join(unusable...)
+		case !matched:
 			return errors.Join(listErr, fmt.Errorf("no version list has %s: it is outside the packages' versions, or `vpmify update %s` has not read it yet", e.version, id))
 		}
 	}
@@ -683,8 +702,16 @@ func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pu
 		}
 	}
 	var errs []error
-	if listErr != nil {
-		errs = append(errs, listErr)
+	// A source without a list fails the pull when the user chose from its
+	// packages, not when a dependency or another package was asked for.
+	if listErr != nil && req.choose {
+		relevant := req.whole
+		for name := range req.only {
+			relevant = relevant || find(lists, name) == nil
+		}
+		if relevant {
+			errs = append(errs, listErr)
+		}
 	}
 	built := 0
 	for _, l := range lists {
@@ -1145,15 +1172,20 @@ func (a *App) Remove(ctx context.Context, ref, version string) (*RemoveResult, e
 			return err
 		}
 		rs, ok := st.Recipes[id]
-		// A recipe whose file is gone can still be removed by its record, and
-		// one whose record is gone by its file.
-		if !ok && (version != "" || only != "" || !fsutil.Exists(a.recipePath(id))) {
-			return fmt.Errorf("no recipe %q", id)
-		}
 		if only != "" {
-			if _, ok := rs.Packages[only]; !ok {
+			// A package is removed by its record, whether the recipe still
+			// provides it or not.
+			if !ok && !fsutil.Exists(a.recipePath(id)) {
+				return fmt.Errorf("no recipe %q", id)
+			}
+			if !ok || rs.Packages[only] == nil || len(rs.Packages[only].Versions) == 0 {
 				return fmt.Errorf("%s: no version of %s is available", id, only)
 			}
+		}
+		// A recipe whose file is gone can still be removed by its record, and
+		// one whose record is gone by its file.
+		if !ok && (version != "" || !fsutil.Exists(a.recipePath(id))) {
+			return fmt.Errorf("no recipe %q", id)
 		}
 		var dirs []string
 		removed := []Entry{}
@@ -1352,7 +1384,8 @@ type VersionsOptions struct {
 
 // Versions lists the versions in the version lists of ref, "<id>" or
 // "<id>/<name>", newest first, package by package. It does not go to the
-// network.
+// network. When some of the recipe's sources have no usable list, it lists
+// the others and returns the error too.
 func (a *App) Versions(ref string, opt VersionsOptions) (*VersionList, error) {
 	id, only, err := parseRef(ref)
 	if err != nil {
@@ -1378,9 +1411,13 @@ func (a *App) Versions(ref string, opt VersionsOptions) (*VersionList, error) {
 	if only != "" {
 		if l := find(lists, only); l != nil {
 			lists, listErr = []*pkgList{l}, nil
+		} else {
+			lists = nil
 		}
 	}
-	if listErr != nil {
+	// The packages whose source has a list are shown with the error about
+	// the others, as pull goes on with them.
+	if len(lists) == 0 && listErr != nil {
 		return nil, listErr
 	}
 	st, err := state.Load(a.Layout.State())
@@ -1424,7 +1461,7 @@ func (a *App) Versions(ref string, opt VersionsOptions) (*VersionList, error) {
 		}
 		out.Packages = append(out.Packages, pv)
 	}
-	return out, nil
+	return out, listErr
 }
 
 // unityVersion is the major and minor version of a Unity release.

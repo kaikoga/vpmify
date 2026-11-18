@@ -37,6 +37,17 @@ type packumentRecord struct {
 	} `json:"dist"`
 }
 
+// registryKey names a registry in the cache, so that recipes reading one
+// package from two registries (npmjs and OpenUPM) do not share archives,
+// which may differ. It is one folder name that every OS takes.
+func registryKey(registry string) string {
+	key := strings.TrimRight(registry, "/")
+	if u, err := url.Parse(key); err == nil && u.Host != "" {
+		key = u.Host + u.Path
+	}
+	return strings.NewReplacer(":", "_", "/", "_", `\`, "_").Replace(key)
+}
+
 // Releases lists the versions of each package in the registry, oldest
 // first. Versions whose number is not SemVer are left out.
 func (n *NPM) Releases(ctx context.Context) (map[string][]Release, error) {
@@ -76,7 +87,7 @@ func (n *NPM) releases(ctx context.Context, name string) ([]Release, error) {
 			Dependencies: rec.Dependencies,
 			ArchiveURL:   rec.Dist.Tarball,
 			Digests:      fetch.Digests{Integrity: rec.Dist.Integrity, Shasum: rec.Dist.Shasum},
-			CacheKey:     path.Join("npm", name, v.String()+".tgz"),
+			CacheKey:     path.Join("npm", registryKey(n.Registry), name, v.String()+".tgz"),
 			Origin:       "npm " + v.String(),
 		})
 	}

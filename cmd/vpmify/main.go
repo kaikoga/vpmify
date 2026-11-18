@@ -148,8 +148,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		opt := app.VersionsOptions{All: flags["--all"], Available: flags["--available"], Unity: unity}
 		list, err := a.Versions(ids[0], opt)
-		if err == nil && !asJSON {
-			err = printVersions(stdout, list)
+		if list != nil && !asJSON {
+			if perr := printVersions(stdout, list); perr != nil && err == nil {
+				err = perr
+			}
 		}
 		return out.result(list, err)
 	case "list":
