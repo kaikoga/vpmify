@@ -190,18 +190,38 @@ tasks:
     cmds:
       - wails3 generate bindings -f '{{.BUILD_FLAGS}}' -clean=true{{if eq .OBFUSCATED "true"}} -obfuscated{{end}} -ts -i
 
+  # windows/icon.ico is not generated here: its small sizes use a separate drawing
+  # (appicon-small.svg), so it is rendered by render:icons and committed.
+  # `-windowsfilename ""` is needed because the flag defaults to build/windows/icon.ico.
   generate:icons:
-    summary: Generates Windows `.ico` and Mac `.icns` from an image; on macOS, `-iconcomposerinput appicon.icon -macassetdir darwin` also produces `Assets.car` from a `.icon` file (skipped on other platforms).
+    summary: Generates Mac `.icns` from an image; on macOS, `-iconcomposerinput appicon.icon -macassetdir darwin` also produces `Assets.car` from a `.icon` file (skipped on other platforms).
     run: once
     dir: build
     sources:
       - "appicon.png"
-      - "appicon.icon"
+      - "appicon.icon/**/*"
     generates:
       - "darwin/icons.icns"
-      - "windows/icon.ico"
     cmds:
-      - wails3 generate icons -input appicon.png -macfilename darwin/icons.icns -windowsfilename windows/icon.ico -iconcomposerinput appicon.icon -macassetdir darwin
+      - wails3 generate icons -input appicon.png -macfilename darwin/icons.icns -windowsfilename "" -iconcomposerinput appicon.icon -macassetdir darwin
+
+  render:icons:
+    summary: Renders appicon.png and windows/icon.ico from the SVG sources (needs rsvg-convert and ImageMagick). Run by hand after editing the SVGs; the outputs are committed.
+    desc: |
+      appicon.svg is used for appicon.png and the 256, 128 and 64 px icons in windows/icon.ico.
+      appicon-small.svg is used for the 48, 32 and 16 px icons, where the torn tape end and
+      the rounded plate of appicon.svg do not survive downscaling.
+      appicon.icon/Assets/vpmify.svg (the macOS 26 layer) is appicon.svg without the plate.
+    dir: build
+    cmds:
+      - |
+        set -eu
+        tmp="$(mktemp -d "${TMPDIR:-/tmp}/vpmify-icons.XXXXXX")"
+        rsvg-convert -w 1024 -h 1024 appicon.svg -o appicon.png
+        for s in 256 128 64; do rsvg-convert -w $s -h $s appicon.svg -o "$tmp/$s.png"; done
+        for s in 48 32 16; do rsvg-convert -w $s -h $s appicon-small.svg -o "$tmp/$s.png"; done
+        convert "$tmp/256.png" "$tmp/128.png" "$tmp/64.png" "$tmp/48.png" "$tmp/32.png" "$tmp/16.png" windows/icon.ico
+        rm -r "$tmp"
 
   dev:frontend:
     summary: Runs the frontend in development mode
