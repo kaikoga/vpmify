@@ -56,6 +56,8 @@ func TestJSONSuccess(t *testing.T) {
 	}{
 		{[]string{"version", "--json"}, map[string]any{"version": "dev"}},
 		{[]string{"list", "--json"}, map[string]any{"entries": []any{}}},
+		{[]string{"--json", "list"}, map[string]any{"entries": []any{}}},
+		{[]string{"help", "--json"}, map[string]any{"usage": usage}},
 		{[]string{"update", "--json"}, map[string]any{"recipes": []any{}, "errors": []any{}}},
 		{[]string{"pull", "--json"}, map[string]any{
 			"built": []any{}, "upToDate": []any{}, "registered": []any{}, "unregistered": []any{}, "errors": []any{},
@@ -81,6 +83,9 @@ func TestJSONErrors(t *testing.T) {
 		{[]string{"versions", "--json", "nope"}, 1},
 		{[]string{"remove", "--json"}, 2},
 		{[]string{"nope", "--json"}, 2},
+		{[]string{"--json"}, 2},
+		// add reads every argument as a recipe, even one that starts with "-".
+		{[]string{"add", "--json", "-missing.json"}, 1},
 	}
 	for _, tt := range tests {
 		code, obj := runJSON(t, tt.args...)

@@ -240,8 +240,9 @@ func (a *App) ReadRecipes(ctx context.Context, refs ...string) ([]Draft, error) 
 }
 
 // AddDrafts saves recipes that ReadRecipes has read, as they were read, and
-// reads their version lists. Nothing is saved unless every recipe can be.
-// The result is nil when nothing was saved.
+// reads their version lists. Nothing is saved unless every recipe can be,
+// except when writing a file fails partway. The result is nil when no
+// recipe file was written.
 func (a *App) AddDrafts(ctx context.Context, drafts []Draft) (*AddResult, error) {
 	if err := checkDrafts(drafts); err != nil {
 		return nil, err
@@ -277,10 +278,12 @@ func (a *App) AddDrafts(ctx context.Context, drafts []Draft) (*AddResult, error)
 			}
 		}
 		var addedIDs []string
+		res = &AddResult{Added: []Draft{}, UpdateResult: UpdateResult{Recipes: []RecipeUpdate{}, Errors: []Failure{}}}
 		for _, d := range drafts {
 			if err := fsutil.WriteFileAtomic(a.recipePath(d.recipe.ID), d.data, 0o644); err != nil {
 				return err
 			}
+			res.Added = append(res.Added, d)
 			st.Recipe(d.recipe.ID).Origin = d.Origin
 			a.logf("%s: added recipe", d.recipe.ID)
 			addedIDs = append(addedIDs, d.recipe.ID)
@@ -288,13 +291,15 @@ func (a *App) AddDrafts(ctx context.Context, drafts []Draft) (*AddResult, error)
 		if err := st.Save(a.Layout.State()); err != nil {
 			return err
 		}
-		res = &AddResult{Added: append([]Draft{}, drafts...)}
 		up, err := a.update(ctx, addedIDs)
 		if up != nil {
 			res.UpdateResult = *up
 		}
 		return err
 	})
+	if res != nil && len(res.Added) == 0 {
+		res = nil
+	}
 	return res, err
 }
 
@@ -321,7 +326,7 @@ type RecipeUpdate struct {
 // Update reads the version lists of the named recipes (all recipes when
 // ids is empty) from upstream and keeps them for Pull and Versions. It
 // downloads no archive and changes no available version. The result is nil
-// when no recipe was tried.
+// when Update stopped before reading any list.
 func (a *App) Update(ctx context.Context, ids []string) (*UpdateResult, error) {
 	var res *UpdateResult
 	err := a.withLock(func() error {
@@ -462,8 +467,8 @@ type PullOptions struct {
 // versions that the recipe now builds differently are built again; other
 // recipes' are not, because a recipe's output depends only on the recipe
 // (kaikoga 2026-11-18). Pull never removes a version, and reads no version
-// list from upstream; Update does. The result is nil when no recipe was
-// tried.
+// list from upstream; Update does. The result is nil when Pull stopped
+// before trying any recipe.
 func (a *App) Pull(ctx context.Context, args []string, opt PullOptions) (*PullResult, error) {
 	targets, err := parseTargets(args)
 	if err != nil {
@@ -504,7 +509,8 @@ type Built struct {
 	// Origin is where the version came from upstream, such as the tag.
 	Origin string `json:"origin"`
 	// Dependency is true when the version was added because another
-	// available version depends on it.
+	// available version depends on it, and false when it was chosen, named
+	// or built again.
 	Dependency bool `json:"dependency"`
 }
 
@@ -685,10 +691,13 @@ func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pu
 		a.noteUnwrittenDependencies(name, rel, dir)
 		unity := r.Unity(rel.Version, rel.Unity)
 		ps.Versions[v] = &state.VersionState{Path: dir, Fingerprint: fp, Unity: unity}
+		// Recorded before saving: the folder is built, and pull registers it
+		// even when saving fails.
+		dependency := !req.choose && slices.Contains(req.extra, v)
+		res.Built = append(res.Built, Built{Recipe: id, Package: name, Version: v, Unity: unity, Path: dir, Origin: rel.Origin, Dependency: dependency})
 		if err := st.Save(a.Layout.State()); err != nil {
 			return err
 		}
-		res.Built = append(res.Built, Built{Recipe: id, Package: name, Version: v, Unity: unity, Path: dir, Origin: rel.Origin, Dependency: !req.choose})
 		built++
 	}
 	if built == 0 && req.choose && chooseErr == nil {
@@ -983,18 +992,34 @@ func (a *App) reconciler() *alcom.Reconciler {
 	}
 }
 
+// register brings ALCOM's registration in line with st, and returns what it
+// changed, even when it failed partway.
 func (a *App) register(st *state.State) (alcom.Change, error) {
 	change, err := a.reconciler().Reconcile(st.AllPaths())
-	if err != nil {
-		return alcom.Change{}, err
-	}
+	// Reconcile counts a folder twice when it writes again after another
+	// program overwrote the first write.
+	change.Added = uniquePaths(change.Added)
+	change.Removed = uniquePaths(change.Removed)
 	for _, p := range change.Added {
 		a.logf("registered %s", p)
 	}
 	for _, p := range change.Removed {
 		a.logf("unregistered %s", p)
 	}
-	return change, nil
+	return change, err
+}
+
+// uniquePaths returns paths without repeats, in order, never nil.
+func uniquePaths(paths []string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, p := range paths {
+		if c := filepath.Clean(p); !seen[c] {
+			seen[c] = true
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // RemoveResult is what Remove did.
@@ -1004,13 +1029,16 @@ type RemoveResult struct {
 	Removed []Entry `json:"removed"`
 	// RecipeRemoved is true when the recipe itself was removed.
 	RecipeRemoved bool `json:"recipeRemoved"`
-	// Unregistered are the folders unregistered from ALCOM.
+	// Registered and Unregistered are the folders whose registration with
+	// ALCOM changed. Remove registers the available versions ALCOM is
+	// missing, as pull does.
+	Registered   []string `json:"registered"`
 	Unregistered []string `json:"unregistered"`
 }
 
 // Remove unregisters and deletes one version of a recipe's packages, or the
 // whole recipe when version is empty. Copies already in projects stay. The
-// result is nil when nothing was removed.
+// result is nil when Remove stopped before forgetting any version.
 func (a *App) Remove(ctx context.Context, id, version string) (*RemoveResult, error) {
 	var res *RemoveResult
 	err := a.withLock(func() error {
@@ -1041,14 +1069,17 @@ func (a *App) Remove(ctx context.Context, id, version string) (*RemoveResult, er
 		if version != "" && len(dirs) == 0 {
 			return fmt.Errorf("%s: version %s is not available", id, version)
 		}
+		hadRecipe := ok || fsutil.Exists(a.recipePath(id))
 		if version == "" {
 			delete(st.Recipes, id)
 		}
-		change, err := a.forget(st, dirs)
+		change, saved, err := a.forget(st, dirs)
+		if saved {
+			res = &RemoveResult{Removed: removed, Registered: change.Added, Unregistered: change.Removed}
+		}
 		if err != nil {
 			return err
 		}
-		res = &RemoveResult{Removed: removed, Unregistered: append([]string{}, change.Removed...)}
 		if version == "" {
 			for _, p := range []string{a.recipePath(id), a.Layout.Index(id)} {
 				if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -1056,7 +1087,7 @@ func (a *App) Remove(ctx context.Context, id, version string) (*RemoveResult, er
 				}
 			}
 			a.logf("%s: removed recipe", id)
-			res.RecipeRemoved = true
+			res.RecipeRemoved = hadRecipe
 		}
 		return nil
 	})

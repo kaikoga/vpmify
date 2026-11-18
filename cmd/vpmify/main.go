@@ -64,17 +64,25 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	asJSON := slices.Contains(args, "--json")
+	args = slices.DeleteFunc(slices.Clone(args), func(s string) bool { return s == "--json" })
+	out := output{stdout: stdout, stderr: stderr, json: asJSON}
 	if len(args) == 0 {
+		if asJSON {
+			return out.usageError("no command")
+		}
 		fmt.Fprint(stderr, usage)
 		return 2
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	cmd, rest, asJSON := args[0], withoutJSON(args[1:]), slices.Contains(args[1:], "--json")
-	out := output{stdout: stdout, stderr: stderr, json: asJSON}
+	cmd, rest := args[0], args[1:]
 	switch cmd {
 	case "help", "-h", "--help":
+		if asJSON {
+			return out.result(map[string]string{"usage": usage}, nil)
+		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "version", "--version":
@@ -101,11 +109,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	switch cmd {
 	case "add":
-		refs, _, perr := splitFlags(rest)
-		if perr != nil || len(refs) == 0 {
+		// Every argument is a recipe, even one that starts with "-".
+		if len(rest) == 0 {
 			return out.usageError("add takes recipe files or URLs")
 		}
-		res, err := a.Add(ctx, refs...)
+		res, err := a.Add(ctx, rest...)
 		if err == nil && !asJSON {
 			fmt.Fprintln(stderr, "`vpmify versions <id>` lists the versions; `vpmify pull` makes the newest ones available")
 		}
@@ -149,15 +157,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		return out.result(res, err)
 	case "remove":
-		args, _, perr := splitFlags(rest)
-		if perr != nil || len(args) < 1 || len(args) > 2 {
+		if len(rest) < 1 || len(rest) > 2 {
 			return out.usageError("remove takes a recipe id and an optional version")
 		}
 		v := ""
-		if len(args) == 2 {
-			v = args[1]
+		if len(rest) == 2 {
+			v = rest[1]
 		}
-		res, err := a.Remove(ctx, args[0], v)
+		res, err := a.Remove(ctx, rest[0], v)
 		return out.result(res, err)
 	case "clean":
 		args, flags, perr := splitFlags(rest, "--yes", "-y")
@@ -165,13 +172,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return out.usageError("clean takes only --yes")
 		}
 		yes := flags["--yes"] || flags["-y"]
-		entries, err := a.Clean(yes)
+		entries, changed, err := a.Clean(yes)
 		if !asJSON {
 			if perr := printClean(stdout, entries, yes, err == nil); perr != nil && err == nil {
 				err = perr
 			}
 		}
-		return out.result(cleanResult{Applied: yes && err == nil, Entries: nonNil(entries)}, err)
+		return out.result(cleanResult{Applied: changed, Entries: nonNil(entries)}, err)
 	case "doctor":
 		args, flags, perr := splitFlags(rest, "--fix")
 		if perr != nil || len(args) > 0 {
@@ -256,11 +263,6 @@ func writeJSON(w io.Writer, res any, err error) error {
 	return werr
 }
 
-// withoutJSON returns args without "--json", which every command takes.
-func withoutJSON(args []string) []string {
-	return slices.DeleteFunc(slices.Clone(args), func(s string) bool { return s == "--json" })
-}
-
 // nonNil makes an empty list print as [] rather than null.
 func nonNil[T any](s []T) []T {
 	if s == nil {
@@ -269,7 +271,8 @@ func nonNil[T any](s []T) []T {
 	return s
 }
 
-// cleanResult is what `clean --json` prints. Applied is false when clean
+// cleanResult is what `clean --json` prints. Applied is true when clean
+// changed anything, even when it then failed partway, and false when it
 // only showed the versions it would delete.
 type cleanResult struct {
 	Applied bool        `json:"applied"`

@@ -22,16 +22,19 @@ import (
 // record may point outside the store after the user moved Vpmify's data, and
 // two records may share a folder when two recipes provide one package (add
 // refuses that, but recipes written by hand may still do it).
-func (a *App) forget(st *state.State, dirs []string) (alcom.Change, error) {
+//
+// saved is true once st is saved, from which point the versions are
+// forgotten whatever fails after; change is what the registration did.
+func (a *App) forget(st *state.State, dirs []string) (change alcom.Change, saved bool, err error) {
 	if _, err := alcom.Load(a.Layout.ALCOMSettings()); err != nil {
-		return alcom.Change{}, err
+		return change, false, err
 	}
 	if err := st.Save(a.Layout.State()); err != nil {
-		return alcom.Change{}, err
+		return change, false, err
 	}
-	change, err := a.register(st)
+	change, err = a.register(st)
 	if err != nil {
-		return alcom.Change{}, err
+		return change, true, err
 	}
 	still := map[string]bool{}
 	for _, p := range st.AllPaths() {
@@ -45,10 +48,10 @@ func (a *App) forget(st *state.State, dirs []string) (alcom.Change, error) {
 			continue
 		}
 		if err := a.removeFromStore(d); err != nil {
-			return change, err
+			return change, true, err
 		}
 	}
-	return change, nil
+	return change, true, nil
 }
 
 // Clean deletes every available version, the downloads and the work folders,
@@ -57,10 +60,11 @@ func (a *App) forget(st *state.State, dirs []string) (alcom.Change, error) {
 // version has to be named again, and a project that locks a version not made
 // available again
 // cannot resolve it. Clean returns the versions it deletes, or would delete when apply is
-// false.
-func (a *App) Clean(apply bool) ([]Entry, error) {
+// false, and whether it changed anything, which it may have done before
+// failing.
+func (a *App) Clean(apply bool) (entries []Entry, changed bool, err error) {
 	var out []Entry
-	err := a.withLock(func() error {
+	err = a.withLock(func() error {
 		st, err := state.Load(a.Layout.State())
 		if err != nil {
 			return err
@@ -81,14 +85,15 @@ func (a *App) Clean(apply bool) ([]Entry, error) {
 		// Unregister first, so that ALCOM never lists a folder that is gone.
 		// Without settings.json nothing is registered.
 		change, err := a.reconciler().Reconcile(nil)
+		for _, p := range change.Removed {
+			a.logf("unregistered %s", p)
+		}
+		changed = !change.Empty()
 		switch {
 		case errors.Is(err, alcom.ErrNoSettings):
 			a.logf("%v; nothing to unregister", err)
 		case err != nil:
 			return err
-		}
-		for _, p := range change.Removed {
-			a.logf("unregistered %s", p)
 		}
 		for _, rs := range st.Recipes {
 			rs.Packages = map[string]*state.PackageState{}
@@ -96,6 +101,7 @@ func (a *App) Clean(apply bool) ([]Entry, error) {
 		if err := st.Save(a.Layout.State()); err != nil {
 			return err
 		}
+		changed = true
 		for _, d := range []string{a.Layout.Packages(), a.Layout.Cache(), a.Layout.Tmp()} {
 			if !isDir(d) {
 				continue
@@ -107,7 +113,7 @@ func (a *App) Clean(apply bool) ([]Entry, error) {
 		}
 		return nil
 	})
-	return out, err
+	return out, changed, err
 }
 
 // removeFromStore deletes a folder in the store, and the package folder

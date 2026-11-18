@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -289,8 +290,8 @@ func TestRemoveWithoutSettingsChangesNothing(t *testing.T) {
 	if err := os.Remove(f.settings); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.app.Remove(context.Background(), "kit", "1.0.0"); err == nil {
-		t.Error("no error without settings.json")
+	if res, err := f.app.Remove(context.Background(), "kit", "1.0.0"); err == nil || res != nil {
+		t.Errorf("remove without settings.json = %+v, %v; want nil and an error", res, err)
 	}
 	st, err := state.Load(f.app.Layout.State())
 	if err != nil {
@@ -301,6 +302,69 @@ func TestRemoveWithoutSettingsChangesNothing(t *testing.T) {
 	}
 	if !exists(f.app.Layout.PackageDir(pkgName, "1.0.0")) {
 		t.Error("the folder was deleted")
+	}
+}
+
+// lockFolder makes the files in dir undeletable until the test ends.
+func lockFolder(t *testing.T, dir string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		// The read-only attribute on a folder does not keep its files.
+		t.Skip("cannot lock a folder on Windows")
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+}
+
+// A remove that fails after forgetting the version still reports what it
+// changed: the version is gone and ALCOM no longer has it.
+func TestRemoveReportsWhatItDidBeforeFailing(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	dir := f.app.Layout.PackageDir(pkgName, "1.0.0")
+	lockFolder(t, dir)
+	res, err := f.app.Remove(context.Background(), "kit", "1.0.0")
+	if err == nil {
+		t.Fatal("no error for a folder that cannot be deleted")
+	}
+	if res == nil || len(res.Removed) != 1 || !reflect.DeepEqual(res.Unregistered, []string{dir}) {
+		t.Errorf("remove = %+v", res)
+	}
+	if got := f.available(); len(got) != 0 {
+		t.Errorf("available = %v", got)
+	}
+}
+
+func TestRemoveOfNoRecipeRemovesNoRecipe(t *testing.T) {
+	f := newFixture(t)
+	res, err := f.app.Remove(context.Background(), "nosuch", "")
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	if res.RecipeRemoved || len(res.Removed) != 0 {
+		t.Errorf("remove nosuch = %+v", res)
+	}
+}
+
+// A clean that fails after unregistering says it changed things.
+func TestCleanReportsChangesBeforeFailing(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	lockFolder(t, f.app.Layout.PackageDir(pkgName, "1.0.0"))
+	_, changed, err := f.app.Clean(true)
+	if err == nil || !changed {
+		t.Errorf("clean = %v, %v; want changed and an error", changed, err)
+	}
+	if got := f.registered(); !reflect.DeepEqual(got, []string{f.foreign}) {
+		t.Errorf("registered = %v", got)
 	}
 }
 
@@ -316,19 +380,19 @@ func TestCleanDeletesPlacedVersionsAndKeepsRecipes(t *testing.T) {
 		t.Fatal(err, f.log)
 	}
 
-	entries, err := f.app.Clean(false)
+	entries, changed, err := f.app.Clean(false)
 	if err != nil {
 		t.Fatal(err, f.log)
 	}
-	if len(entries) != 2 || entries[0].Version != "1.0.0" || entries[1].Version != "1.1.0" {
-		t.Errorf("entries = %+v", entries)
+	if len(entries) != 2 || entries[0].Version != "1.0.0" || entries[1].Version != "1.1.0" || changed {
+		t.Errorf("entries = %+v, changed = %v", entries, changed)
 	}
 	if got := f.available(); len(got) != 2 {
 		t.Errorf("placed without apply = %v", got)
 	}
 
-	if _, err := f.app.Clean(true); err != nil {
-		t.Fatal(err, f.log)
+	if _, changed, err := f.app.Clean(true); err != nil || !changed {
+		t.Fatal(err, changed, f.log)
 	}
 	if got := f.available(); len(got) != 0 {
 		t.Errorf("placed = %v", got)
@@ -370,7 +434,7 @@ func TestCleanWithoutSettings(t *testing.T) {
 	if err := os.Remove(f.settings); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.app.Clean(true); err != nil {
+	if _, _, err := f.app.Clean(true); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if exists(f.app.Layout.Packages()) {
