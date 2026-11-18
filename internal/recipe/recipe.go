@@ -118,13 +118,6 @@ func Parse(data []byte) (*Recipe, error) {
 	dec.DisallowUnknownFields()
 	var r Recipe
 	if err := dec.Decode(&r); err != nil {
-		// Hints for recipes written before 2026-11-18.
-		switch msg := err.Error(); {
-		case strings.Contains(msg, `unknown field "select"`):
-			return nil, fmt.Errorf("%w (a recipe no longer chooses versions; `vpmify pull --all` makes every version available)", err)
-		case strings.Contains(msg, "Recipe.paths"):
-			return nil, fmt.Errorf(`%w (write "path": "<folder>", or "paths": [{"tags": "<range>", "path": "<folder>"}, ...])`, err)
-		}
 		return nil, err
 	}
 	if err := r.check(); err != nil {

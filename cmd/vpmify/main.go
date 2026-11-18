@@ -120,8 +120,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		opt := app.VersionsOptions{All: flags["--all"], Available: flags["--available"], Unity: unity}
 		err = versions(a, stdout, ids[0], opt, flags["--json"])
-	case "sync":
-		return usageError(stderr, "sync is now `update` (read the version lists) and `pull` (convert versions)")
 	case "list":
 		fs := flag.NewFlagSet("list", flag.ContinueOnError)
 		fs.SetOutput(stderr)

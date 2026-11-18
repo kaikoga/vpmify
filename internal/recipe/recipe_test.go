@@ -69,8 +69,6 @@ func TestParseRejects(t *testing.T) {
 		{"bad folder", `{"id": "pkg", ` + gitSource + `, "paths": [{"path": "../A"}]}`, "bad folder"},
 		{"paths without path", `{"id": "pkg", ` + gitSource + `, "paths": [{"tags": ">=1.0.0"}]}`, `has no "path"`},
 		{"npm with path", `{"id": "pkg", "source": {"type": "npm", "registry": "https://r", "name": "p"}, "path": "A"}`, "npm source takes no"},
-		{"old select", `{"id": "pkg", ` + gitSource + `, "select": "all"}`, "pull --all"},
-		{"old paths", `{"id": "pkg", ` + gitSource + `, "paths": ["A", "B"]}`, `"paths": [{"tags"`},
 	}
 	for _, c := range cases {
 		_, err := Parse([]byte(c.recipe))
