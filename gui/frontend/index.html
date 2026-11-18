@@ -7,10 +7,58 @@
     <title>Vpmify</title>
 </head>
 <body>
-<main>
+<main id="drop" data-file-drop-target>
+    <header class="top">
+        <h1>Vpmify</h1>
+        <div class="actions">
+            <span id="spinner" class="spinner" title="Working" hidden></span>
+            <button id="choose" type="button">Add recipe files…</button>
+        </div>
+    </header>
+    <p class="hint">Recipe files dropped on this window are added too, after you confirm.</p>
+    <p id="error" class="error" hidden></p>
+
+    <section id="pending-section" hidden>
+        <h2>Waiting to add</h2>
+        <div id="pending"></div>
+    </section>
+
     <section>
         <header>
-            <h1>Placed versions</h1>
+            <h2>Recipes</h2>
+            <button id="update-all" type="button">Update all</button>
+        </header>
+        <table>
+            <thead>
+            <tr><th>Recipe</th><th>Package</th><th>Problem</th></tr>
+            </thead>
+            <tbody id="recipes"></tbody>
+        </table>
+        <p id="no-recipes" hidden>No recipes yet.</p>
+    </section>
+
+    <section id="versions-section" hidden>
+        <header>
+            <h2 id="versions-title">Versions</h2>
+            <div class="actions">
+                <label><input id="prereleases" type="checkbox"/> Prereleases</label>
+                <button id="update" type="button">Update</button>
+                <button id="pull-newest" type="button">Make newest available</button>
+            </div>
+        </header>
+        <p id="versions-updated" class="note"></p>
+        <table>
+            <thead>
+            <tr><th>Version</th><th>Unity</th><th>From</th><th>Newest</th><th>Available</th><th></th></tr>
+            </thead>
+            <tbody id="versions"></tbody>
+        </table>
+        <p id="no-versions" hidden>No version to show.</p>
+    </section>
+
+    <section>
+        <header>
+            <h2>Available versions</h2>
             <button id="reload" type="button">Reload</button>
         </header>
         <p id="settings-error" class="error" hidden></p>
@@ -20,12 +68,12 @@
             </thead>
             <tbody id="entries"></tbody>
         </table>
-        <p id="empty" hidden>Nothing placed yet.</p>
+        <p id="empty" hidden>No version is available yet.</p>
     </section>
+
     <section>
-        <h2>Received links</h2>
-        <ul id="urls"></ul>
-        <p id="no-urls">No vpmify: links received.</p>
+        <h2>Log</h2>
+        <pre id="log"></pre>
     </section>
 </main>
 <script type="module" src="/src/main.ts"></script>

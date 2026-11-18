@@ -3,11 +3,11 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"io"
 	"log/slog"
 	"os"
-	"strings"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -15,14 +15,6 @@ import (
 
 //go:embed all:frontend/dist
 var assets embed.FS
-
-// scheme is the custom URL scheme that web pages use to hand a recipe to
-// Vpmify with one click. build/config.yml registers the same name.
-const scheme = "vpmify"
-
-func init() {
-	application.RegisterEvent[string]("url")
-}
 
 func main() {
 	logger := newLogger()
@@ -36,10 +28,10 @@ func main() {
 
 	var app *application.App
 	var window *application.WebviewWindow
+	ctx := context.Background()
 	receive := func(url, via string) {
 		logger.Info("url", "url", url, "via", via)
-		service.addURL(url)
-		app.Event.Emit("url", url)
+		go service.receiveLink(ctx, url)
 		if window != nil {
 			window.Show()
 			window.Restore()
@@ -79,33 +71,31 @@ func main() {
 		receive(e.Context().URL(), "apple event")
 	})
 
+	service.emit = func(name string, data any) { app.Event.Emit(name, data) }
+
 	window = app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:  "Vpmify",
-		Width:  900,
-		Height: 600,
-		URL:    "/",
+		Title:          "Vpmify",
+		Width:          900,
+		Height:         640,
+		URL:            "/",
+		EnableFileDrop: true,
+	})
+	window.OnWindowEvent(events.Common.WindowFilesDropped, func(e *application.WindowEvent) {
+		files := e.Context().DroppedFiles()
+		logger.Info("files dropped", "files", files)
+		go service.receiveFiles(ctx, files)
 	})
 
 	// Windows and Linux pass the URL of the first launch through argv.
 	for _, url := range schemeURLs(os.Args[1:]) {
 		logger.Info("url", "url", url, "via", "argv")
-		service.addURL(url)
+		go service.receiveLink(ctx, url)
 	}
 
 	if err := app.Run(); err != nil {
 		logger.Error("run", "err", err)
 		os.Exit(1)
 	}
-}
-
-func schemeURLs(args []string) []string {
-	var urls []string
-	for _, a := range args {
-		if strings.HasPrefix(a, scheme+":") {
-			urls = append(urls, a)
-		}
-	}
-	return urls
 }
 
 // newLogger writes to the file named by VPMIFY_GUI_LOG, so that a run started

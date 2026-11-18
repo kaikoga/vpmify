@@ -1,19 +1,193 @@
 import {Events} from "@wailsio/runtime";
 import {VpmifyService} from "../bindings/github.com/kaikoga/vpmify/gui";
-import {Url} from "../bindings/events";
+import {Busy, Log, Pending} from "../bindings/events";
 
-const entriesElement = document.getElementById("entries")! as HTMLTableSectionElement;
-const emptyElement = document.getElementById("empty")! as HTMLParagraphElement;
-const settingsErrorElement = document.getElementById("settings-error")! as HTMLParagraphElement;
-const urlsElement = document.getElementById("urls")! as HTMLUListElement;
-const noUrlsElement = document.getElementById("no-urls")! as HTMLParagraphElement;
-
-function cell(row: HTMLTableRowElement, text: string) {
-    const td = row.insertCell();
-    td.textContent = text;
+function byId<T extends HTMLElement>(id: string): T {
+    return document.getElementById(id)! as T;
 }
 
-async function reload() {
+const errorElement = byId<HTMLParagraphElement>("error");
+const spinnerElement = byId<HTMLSpanElement>("spinner");
+const pendingSection = byId<HTMLElement>("pending-section");
+const pendingElement = byId<HTMLDivElement>("pending");
+const recipesElement = byId<HTMLTableSectionElement>("recipes");
+const noRecipesElement = byId<HTMLParagraphElement>("no-recipes");
+const versionsSection = byId<HTMLElement>("versions-section");
+const versionsTitle = byId<HTMLHeadingElement>("versions-title");
+const versionsUpdated = byId<HTMLParagraphElement>("versions-updated");
+const versionsElement = byId<HTMLTableSectionElement>("versions");
+const noVersionsElement = byId<HTMLParagraphElement>("no-versions");
+const prereleasesElement = byId<HTMLInputElement>("prereleases");
+const entriesElement = byId<HTMLTableSectionElement>("entries");
+const emptyElement = byId<HTMLParagraphElement>("empty");
+const settingsErrorElement = byId<HTMLParagraphElement>("settings-error");
+const logElement = byId<HTMLPreElement>("log");
+
+// selected is the recipe whose versions are shown.
+let selected: string | null = null;
+
+function cell(row: HTMLTableRowElement, text: string): HTMLTableCellElement {
+    const td = row.insertCell();
+    td.textContent = text;
+    return td;
+}
+
+function button(label: string, onClick: () => void): HTMLButtonElement {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    b.addEventListener("click", onClick);
+    return b;
+}
+
+function showError(err: unknown) {
+    errorElement.hidden = false;
+    errorElement.textContent = String(err);
+}
+
+function clearError() {
+    errorElement.hidden = true;
+    errorElement.textContent = "";
+}
+
+// act runs one operation the user asked for, then shows what changed.
+async function act(fn: () => Promise<unknown>) {
+    clearError();
+    try {
+        await fn();
+    } catch (err) {
+        showError(err);
+    }
+    await refresh();
+}
+
+function setBusy(busy: boolean) {
+    spinnerElement.hidden = !busy;
+    for (const b of document.querySelectorAll<HTMLButtonElement>("button")) {
+        b.disabled = busy;
+    }
+}
+
+function appendLog(line: string) {
+    logElement.textContent += line + "\n";
+    logElement.scrollTop = logElement.scrollHeight;
+}
+
+async function showPending() {
+    const pending = await VpmifyService.Pending();
+    pendingElement.replaceChildren();
+    for (const p of pending) {
+        const card = document.createElement("div");
+        card.className = "card";
+        const from = document.createElement("p");
+        from.className = "note";
+        from.textContent = "From " + p.from.join(", ");
+        card.appendChild(from);
+        if (p.error) {
+            const e = document.createElement("p");
+            e.className = "error";
+            e.textContent = p.error;
+            card.appendChild(e);
+        } else {
+            const table = document.createElement("table");
+            const head = table.createTHead().insertRow();
+            for (const h of ["Recipe", "Package", "Source", "Versions", ""]) {
+                const th = document.createElement("th");
+                th.textContent = h;
+                head.appendChild(th);
+            }
+            const body = table.createTBody();
+            for (const r of p.recipes) {
+                const row = body.insertRow();
+                row.title = r.origin;
+                cell(row, r.id);
+                cell(row, r.package);
+                cell(row, r.source);
+                cell(row, r.versions || "any");
+                cell(row, r.replaces ? "replaces your recipe" : "new");
+            }
+            card.appendChild(table);
+        }
+        const actions = document.createElement("div");
+        actions.className = "actions";
+        if (!p.error) {
+            const first = p.recipes[0]?.id ?? null;
+            actions.appendChild(button("Add", () => act(async () => {
+                await VpmifyService.ConfirmAdd(p.token);
+                selected = first;
+            })));
+        }
+        actions.appendChild(button(p.error ? "Dismiss" : "Don't add", () => act(() => VpmifyService.DiscardAdd(p.token))));
+        card.appendChild(actions);
+        pendingElement.appendChild(card);
+    }
+    pendingSection.hidden = pending.length === 0;
+}
+
+async function showRecipes() {
+    const recipes = await VpmifyService.Recipes();
+    recipesElement.replaceChildren();
+    for (const r of recipes) {
+        const row = recipesElement.insertRow();
+        row.className = "selectable";
+        if (r.id === selected) {
+            row.classList.add("selected");
+        }
+        if (r.origin) {
+            row.title = r.origin;
+        }
+        cell(row, r.id);
+        cell(row, r.package ?? "");
+        cell(row, r.problem ?? "").className = "error";
+        row.addEventListener("click", async () => {
+            selected = r.id;
+            clearError();
+            await refresh();
+        });
+    }
+    noRecipesElement.hidden = recipes.length > 0;
+    if (selected !== null && !recipes.some((r) => r.id === selected)) {
+        selected = null;
+    }
+}
+
+async function showVersions() {
+    versionsSection.hidden = selected === null;
+    if (selected === null) {
+        return;
+    }
+    const id = selected;
+    versionsTitle.textContent = `Versions of ${id}`;
+    versionsElement.replaceChildren();
+    versionsUpdated.textContent = "";
+    noVersionsElement.hidden = true;
+    let list;
+    try {
+        list = await VpmifyService.Versions(id, prereleasesElement.checked);
+    } catch (err) {
+        versionsUpdated.textContent = String(err);
+        return;
+    }
+    if (!list) {
+        return;
+    }
+    versionsUpdated.textContent = `${list.package}, version list read ${new Date(list.updated).toLocaleString()}`;
+    for (const v of list.versions) {
+        const row = versionsElement.insertRow();
+        cell(row, v.version + (v.prerelease ? " (prerelease)" : ""));
+        cell(row, v.unity ?? "");
+        cell(row, v.origin);
+        cell(row, v.newest ? "yes" : "");
+        cell(row, v.available ? "yes" : "");
+        const td = row.insertCell();
+        if (!v.available) {
+            td.appendChild(button("Make available", () => act(() => VpmifyService.Pull([`${id}@${v.version}`]))));
+        }
+    }
+    noVersionsElement.hidden = list.versions.length > 0;
+}
+
+async function showAvailable() {
     try {
         const result = await VpmifyService.List();
         const entries = result.entries ?? [];
@@ -36,22 +210,38 @@ async function reload() {
     }
 }
 
-function addUrl(url: string) {
-    const li = document.createElement("li");
-    li.textContent = url;
-    urlsElement.appendChild(li);
-    noUrlsElement.hidden = true;
+async function refresh() {
+    try {
+        await showPending();
+        await showRecipes();
+        await showVersions();
+    } catch (err) {
+        showError(err);
+    }
+    await showAvailable();
 }
 
-document.getElementById("reload")!.addEventListener("click", reload);
+byId("choose").addEventListener("click", () => act(() => VpmifyService.ChooseRecipeFiles()));
+byId("update-all").addEventListener("click", () => act(() => VpmifyService.Update([])));
+byId("update").addEventListener("click", () => {
+    if (selected !== null) {
+        act(() => VpmifyService.Update([selected!]));
+    }
+});
+byId("pull-newest").addEventListener("click", () => {
+    if (selected !== null) {
+        act(() => VpmifyService.Pull([selected!]));
+    }
+});
+byId("reload").addEventListener("click", () => act(async () => {}));
+prereleasesElement.addEventListener("change", () => showVersions());
 
 async function start() {
-    // Listen first, then fetch the URLs that arrived before the page loaded.
-    Events.On(Url, (event) => addUrl(event.data));
-    for (const url of (await VpmifyService.ReceivedURLs()) ?? []) {
-        addUrl(url);
-    }
-    await reload();
+    // Listen first, then read what arrived before the page loaded.
+    Events.On(Busy, (event) => setBusy(event.data));
+    Events.On(Log, (event) => appendLog(event.data));
+    Events.On(Pending, () => showPending().catch(showError));
+    await refresh();
 }
 
 start();
