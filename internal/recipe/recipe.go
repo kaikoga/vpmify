@@ -170,8 +170,6 @@ func (r *Recipe) check() error {
 		if err := r.checkPaths(); err != nil {
 			return err
 		}
-	case "git":
-		return fmt.Errorf(`source type "git" is now "github"; only repositories on github.com are read`)
 	default:
 		return fmt.Errorf("unknown source type %q", r.Source.Type)
 	}
