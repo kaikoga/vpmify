@@ -102,10 +102,27 @@ func (s *VpmifyService) Recipes() ([]vpmify.RecipeInfo, error) {
 	return s.core.Recipes()
 }
 
-// Versions lists the versions in a recipe's version list, with prereleases
-// when all is true.
-func (s *VpmifyService) Versions(id string, all bool) (*vpmify.VersionList, error) {
-	return s.core.Versions(id, vpmify.VersionsOptions{All: all})
+// VersionsResult is what Versions shows: the version lists that could be
+// read, and why the others could not.
+type VersionsResult struct {
+	List  *vpmify.VersionList `json:"list"`
+	Error string              `json:"error,omitempty"`
+}
+
+// Versions lists the versions in the version lists of a recipe's packages,
+// with prereleases when all is true. When some of the recipe's sources
+// have no usable list, it lists the others with the error, as the core
+// does; a failed promise would drop them.
+func (s *VpmifyService) Versions(id string, all bool) (VersionsResult, error) {
+	list, err := s.core.Versions(id, vpmify.VersionsOptions{All: all})
+	if list == nil {
+		return VersionsResult{}, err
+	}
+	res := VersionsResult{List: list}
+	if err != nil {
+		res.Error = err.Error()
+	}
+	return res, nil
 }
 
 // Update reads the version lists of the recipes again.
@@ -116,8 +133,8 @@ func (s *VpmifyService) Update(ctx context.Context, ids []string) error {
 	})
 }
 
-// Pull makes versions available as `vpmify pull` does: targets are recipe
-// ids, or "<id>@<version>".
+// Pull makes versions available as `vpmify pull` does: targets are "<id>"
+// or "<id>/<package>", either with "@<version>".
 func (s *VpmifyService) Pull(ctx context.Context, targets []string) error {
 	return s.run(func() error {
 		_, err := s.core.Pull(ctx, targets, vpmify.PullOptions{})

@@ -97,14 +97,18 @@ async function showPending() {
                 head.appendChild(th);
             }
             const body = table.createTBody();
+            // One row per package; the recipe's id and whether it is new go
+            // on its first row.
             for (const r of p.recipes) {
-                const row = body.insertRow();
-                row.title = r.origin;
-                cell(row, r.id);
-                cell(row, r.package);
-                cell(row, r.source);
-                cell(row, r.versions || "any");
-                cell(row, r.replaces ? "replaces your recipe" : "new");
+                (r.packages ?? []).forEach((pkg, i) => {
+                    const row = body.insertRow();
+                    row.title = r.origin;
+                    cell(row, i === 0 ? r.id : "");
+                    cell(row, pkg.name);
+                    cell(row, pkg.source);
+                    cell(row, pkg.versions || "any");
+                    cell(row, i === 0 ? (r.replaces ? "replaces your recipe" : "new") : "");
+                });
             }
             card.appendChild(table);
         }
@@ -137,7 +141,7 @@ async function showRecipes() {
             row.title = r.origin;
         }
         cell(row, r.id);
-        cell(row, r.package ?? "");
+        cell(row, (r.packages ?? []).join(", "));
         cell(row, r.problem ?? "").className = "error";
         row.addEventListener("click", async () => {
             selected = r.id;
@@ -161,30 +165,47 @@ async function showVersions() {
     versionsElement.replaceChildren();
     versionsUpdated.textContent = "";
     noVersionsElement.hidden = true;
-    let list;
+    let result;
     try {
-        list = await VpmifyService.Versions(id, prereleasesElement.checked);
+        result = await VpmifyService.Versions(id, prereleasesElement.checked);
     } catch (err) {
         versionsUpdated.textContent = String(err);
         return;
     }
+    const list = result.list;
     if (!list) {
         return;
     }
-    versionsUpdated.textContent = `${list.package}, version list read ${new Date(list.updated).toLocaleString()}`;
-    for (const v of list.versions) {
-        const row = versionsElement.insertRow();
-        cell(row, v.version + (v.prerelease ? " (prerelease)" : ""));
-        cell(row, v.unity ?? "");
-        cell(row, v.origin);
-        cell(row, v.newest ? "yes" : "");
-        cell(row, v.available ? "yes" : "");
-        const td = row.insertCell();
-        if (!v.available) {
-            td.appendChild(button("Make available", () => act(() => VpmifyService.Pull([`${id}@${v.version}`]))));
+    // The packages whose source has no usable list are left out, with why.
+    versionsUpdated.textContent = result.error ?? "";
+    let shown = 0;
+    for (const p of list.packages ?? []) {
+        // A heading row for each package, as a recipe may have several.
+        const heading = versionsElement.insertRow();
+        heading.className = "group";
+        const th = document.createElement("th");
+        th.colSpan = 6;
+        th.textContent = `${p.package} (${p.source}), version list read ${new Date(p.updated).toLocaleString()}`;
+        heading.appendChild(th);
+        for (const v of p.versions ?? []) {
+            const row = versionsElement.insertRow();
+            cell(row, v.version + (v.prerelease ? " (prerelease)" : ""));
+            cell(row, v.unity ?? "");
+            cell(row, v.origin);
+            cell(row, v.unusable ? "-" : v.newest ? "yes" : "");
+            cell(row, v.available ? "yes" : "");
+            const td = row.insertCell();
+            if (v.unusable) {
+                // Why the version cannot be converted.
+                td.textContent = v.unusable;
+                td.className = "note";
+            } else if (!v.available) {
+                td.appendChild(button("Make available", () => act(() => VpmifyService.Pull([`${id}/${p.package}@${v.version}`]))));
+            }
+            shown++;
         }
     }
-    noVersionsElement.hidden = list.versions.length > 0;
+    noVersionsElement.hidden = shown > 0;
 }
 
 async function showAvailable() {
