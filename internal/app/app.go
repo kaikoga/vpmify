@@ -1047,7 +1047,9 @@ func (a *App) Remove(ctx context.Context, id, version string) (*RemoveResult, er
 			return err
 		}
 		rs, ok := st.Recipes[id]
-		if !ok && version != "" {
+		// A recipe whose file is gone can still be removed by its record, and
+		// one whose record is gone by its file.
+		if !ok && (version != "" || !fsutil.Exists(a.recipePath(id))) {
 			return fmt.Errorf("no recipe %q", id)
 		}
 		var dirs []string
@@ -1069,7 +1071,6 @@ func (a *App) Remove(ctx context.Context, id, version string) (*RemoveResult, er
 		if version != "" && len(dirs) == 0 {
 			return fmt.Errorf("%s: version %s is not available", id, version)
 		}
-		hadRecipe := ok || fsutil.Exists(a.recipePath(id))
 		if version == "" {
 			delete(st.Recipes, id)
 		}
@@ -1087,7 +1088,7 @@ func (a *App) Remove(ctx context.Context, id, version string) (*RemoveResult, er
 				}
 			}
 			a.logf("%s: removed recipe", id)
-			res.RecipeRemoved = hadRecipe
+			res.RecipeRemoved = true
 		}
 		return nil
 	})

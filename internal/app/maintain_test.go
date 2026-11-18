@@ -340,14 +340,11 @@ func TestRemoveReportsWhatItDidBeforeFailing(t *testing.T) {
 	}
 }
 
-func TestRemoveOfNoRecipeRemovesNoRecipe(t *testing.T) {
+func TestRemoveOfNoRecipeFails(t *testing.T) {
 	f := newFixture(t)
 	res, err := f.app.Remove(context.Background(), "nosuch", "")
-	if err != nil {
-		t.Fatal(err, f.log)
-	}
-	if res.RecipeRemoved || len(res.Removed) != 0 {
-		t.Errorf("remove nosuch = %+v", res)
+	if err == nil || !strings.Contains(err.Error(), `no recipe "nosuch"`) || res != nil {
+		t.Errorf("remove nosuch = %+v, %v; want nil and no recipe", res, err)
 	}
 }
 
