@@ -574,3 +574,90 @@ func TestBrokenDownloadIsRejected(t *testing.T) {
 		t.Errorf("placed = %v", got)
 	}
 }
+
+func TestAddDraftsSavesTheRecipeAsRead(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	f.reg.add("2.0.0", "2021.3")
+	ctx := context.Background()
+	p := f.writeRecipe(`, "versions": ">=1.0.0"`)
+
+	drafts, err := f.app.ReadRecipes(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Draft{ID: "kit", Package: pkgName, Source: "npm " + registryURL, Versions: ">=1.0.0", Origin: p}
+	got := drafts[0]
+	got.recipe, got.data = nil, nil
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("draft = %+v, want %+v", got, want)
+	}
+
+	// The file changes after the user saw the draft; what was shown is saved.
+	if err := os.WriteFile(p, []byte(`{"id": "kit", "source": {"type": "npm", "registry": "`+registryURL+`", "name": "`+pkgName+`"}, "versions": ">=2.0.0"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.app.AddDrafts(ctx, drafts); err != nil {
+		t.Fatal(err, f.log)
+	}
+	list, err := f.app.Versions("kit", VersionsOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Versions) != 2 {
+		t.Errorf("versions = %+v, want 1.0.0 and 2.0.0", list.Versions)
+	}
+
+	again, err := f.app.ReadRecipes(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !again[0].Replaces {
+		t.Errorf("Replaces = false for a recipe the user has")
+	}
+}
+
+func TestAddDraftsRefusesDraftsNotRead(t *testing.T) {
+	f := newFixture(t)
+	if err := f.app.AddDrafts(context.Background(), []Draft{{ID: "kit"}}); err == nil {
+		t.Error("err = nil")
+	}
+}
+
+func TestRecipesNamesProblems(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	ctx := context.Background()
+	p := f.writeRecipe("")
+	if err := f.app.Add(ctx, p); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if err := os.WriteFile(filepath.Join(f.app.Layout.Recipes(), "broken.json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unread := `{"id": "unread", "source": {"type": "npm", "registry": "` + registryURL + `", "name": "com.example.other"}}`
+	if err := os.WriteFile(filepath.Join(f.app.Layout.Recipes(), "unread.json"), []byte(unread), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	recipes, err := f.app.Recipes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]RecipeInfo{}
+	for _, r := range recipes {
+		got[r.ID] = r
+	}
+	if r := got["kit"]; r.Package != pkgName || r.Origin != p || r.Problem != "" {
+		t.Errorf("kit = %+v", r)
+	}
+	if r := got["broken"]; r.Problem == "" {
+		t.Errorf("broken = %+v, want a problem", r)
+	}
+	if r := got["unread"]; r.Package != "com.example.other" || !strings.Contains(r.Problem, "update") {
+		t.Errorf("unread = %+v, want a problem naming update", r)
+	}
+	if len(recipes) != 3 {
+		t.Errorf("recipes = %+v", recipes)
+	}
+}

@@ -94,6 +94,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return usageError(stderr, "add takes recipe files or URLs")
 		}
 		err = a.Add(ctx, rest...)
+		if err == nil {
+			fmt.Fprintln(stderr, "`vpmify versions <id>` lists the versions; `vpmify pull` makes the newest ones available")
+		}
 	case "update":
 		ids, _, perr := splitFlags(rest)
 		if perr != nil {

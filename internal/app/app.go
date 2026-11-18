@@ -94,13 +94,26 @@ func (a *App) recipeIDs() ([]string, error) {
 	return ids, nil
 }
 
-type addedRecipe struct {
+// Draft is a recipe that ReadRecipes has read and AddDrafts has not saved
+// yet, so that the GUI can show what a link would add before the user
+// agrees to it.
+type Draft struct {
+	ID      string `json:"id"`
+	Package string `json:"package"`
+	// Source is where the versions come from: the Git repository's URL, or
+	// "npm" and the registry.
+	Source   string `json:"source"`
+	Versions string `json:"versions,omitempty"`
+	// Origin is the file path or URL the recipe was read from.
+	Origin string `json:"origin"`
+	// Replaces is true when the user already has a recipe with this id.
+	Replaces bool `json:"replaces"`
+
 	recipe *recipe.Recipe
 	data   []byte
-	origin string
 }
 
-func (a *App) readRecipeRef(ctx context.Context, ref string) (addedRecipe, error) {
+func (a *App) readRecipeRef(ctx context.Context, ref string) (Draft, error) {
 	var data []byte
 	var err error
 	origin := ref
@@ -113,13 +126,56 @@ func (a *App) readRecipeRef(ctx context.Context, ref string) (addedRecipe, error
 		data, err = os.ReadFile(ref)
 	}
 	if err != nil {
-		return addedRecipe{}, err
+		return Draft{}, err
 	}
 	r, err := recipe.Parse(data)
 	if err != nil {
-		return addedRecipe{}, fmt.Errorf("%s: %w", ref, err)
+		return Draft{}, fmt.Errorf("%s: %w", ref, err)
 	}
-	return addedRecipe{recipe: r, data: data, origin: origin}, nil
+	return Draft{
+		ID:       r.ID,
+		Package:  r.Source.Name,
+		Source:   describeSource(r.Source),
+		Versions: r.Versions,
+		Origin:   origin,
+		Replaces: fsutil.Exists(a.recipePath(r.ID)),
+		recipe:   r,
+		data:     data,
+	}, nil
+}
+
+func describeSource(s recipe.Source) string {
+	switch s.Type {
+	case recipe.SourceNPM:
+		if s.Registry != "" {
+			return "npm " + s.Registry
+		}
+		return "npm"
+	case recipe.SourceGit:
+		return s.URL
+	}
+	return s.Type
+}
+
+// checkDrafts refuses two drafts with one id or one package: saving both
+// would keep only the last.
+func checkDrafts(drafts []Draft) error {
+	ids := map[string]string{}
+	names := map[string]string{}
+	for _, d := range drafts {
+		if d.recipe == nil {
+			return fmt.Errorf("recipe %q was not read by ReadRecipes", d.ID)
+		}
+		if prev, ok := ids[d.recipe.ID]; ok {
+			return fmt.Errorf("%s and %s both have id %q", prev, d.Origin, d.recipe.ID)
+		}
+		if prev, ok := names[d.recipe.Source.Name]; ok {
+			return fmt.Errorf("%s and %s both provide %s", prev, d.Origin, d.recipe.Source.Name)
+		}
+		ids[d.recipe.ID] = d.Origin
+		names[d.recipe.Source.Name] = d.Origin
+	}
+	return nil
 }
 
 // Add reads recipes from file paths or http(s) URLs, saves them among the
@@ -127,23 +183,41 @@ func (a *App) readRecipeRef(ctx context.Context, ref string) (addedRecipe, error
 // does (kaikoga 2026-11-18). Nothing is saved unless every recipe reads
 // well.
 func (a *App) Add(ctx context.Context, refs ...string) error {
-	var added []addedRecipe
-	ids := map[string]string{}
-	names := map[string]string{}
+	drafts, err := a.ReadRecipes(ctx, refs...)
+	if err != nil {
+		return err
+	}
+	return a.AddDrafts(ctx, drafts)
+}
+
+// ReadRecipes reads recipes from file paths or http(s) URLs as Add does,
+// without saving them.
+func (a *App) ReadRecipes(ctx context.Context, refs ...string) ([]Draft, error) {
+	var drafts []Draft
 	for _, ref := range refs {
-		ar, err := a.readRecipeRef(ctx, ref)
+		d, err := a.readRecipeRef(ctx, ref)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if prev, ok := ids[ar.recipe.ID]; ok {
-			return fmt.Errorf("%s and %s both have id %q", prev, ref, ar.recipe.ID)
-		}
-		if prev, ok := names[ar.recipe.Source.Name]; ok {
-			return fmt.Errorf("%s and %s both provide %s", prev, ref, ar.recipe.Source.Name)
-		}
-		ids[ar.recipe.ID] = ref
-		names[ar.recipe.Source.Name] = ref
-		added = append(added, ar)
+		drafts = append(drafts, d)
+	}
+	if err := checkDrafts(drafts); err != nil {
+		return nil, err
+	}
+	return drafts, nil
+}
+
+// AddDrafts saves recipes that ReadRecipes has read, as they were read, and
+// reads their version lists. Nothing is saved unless every recipe can be.
+func (a *App) AddDrafts(ctx context.Context, drafts []Draft) error {
+	if err := checkDrafts(drafts); err != nil {
+		return err
+	}
+	ids := map[string]bool{}
+	names := map[string]string{}
+	for _, d := range drafts {
+		ids[d.recipe.ID] = true
+		names[d.recipe.Source.Name] = d.Origin
 	}
 	return a.withLock(func() error {
 		st, err := state.Load(a.Layout.State())
@@ -157,7 +231,7 @@ func (a *App) Add(ctx context.Context, refs ...string) error {
 			return err
 		}
 		for _, id := range existing {
-			if _, replaced := ids[id]; replaced {
+			if ids[id] {
 				continue
 			}
 			r, err := a.loadRecipe(id)
@@ -169,22 +243,18 @@ func (a *App) Add(ctx context.Context, refs ...string) error {
 			}
 		}
 		var addedIDs []string
-		for _, ar := range added {
-			if err := fsutil.WriteFileAtomic(a.recipePath(ar.recipe.ID), ar.data, 0o644); err != nil {
+		for _, d := range drafts {
+			if err := fsutil.WriteFileAtomic(a.recipePath(d.recipe.ID), d.data, 0o644); err != nil {
 				return err
 			}
-			st.Recipe(ar.recipe.ID).Origin = ar.origin
-			a.logf("%s: added recipe", ar.recipe.ID)
-			addedIDs = append(addedIDs, ar.recipe.ID)
+			st.Recipe(d.recipe.ID).Origin = d.Origin
+			a.logf("%s: added recipe", d.recipe.ID)
+			addedIDs = append(addedIDs, d.recipe.ID)
 		}
 		if err := st.Save(a.Layout.State()); err != nil {
 			return err
 		}
-		if err := a.update(ctx, addedIDs); err != nil {
-			return err
-		}
-		a.logf("`vpmify versions <id>` lists the versions; `vpmify pull` makes the newest ones available")
-		return nil
+		return a.update(ctx, addedIDs)
 	})
 }
 
@@ -905,6 +975,47 @@ func (a *App) List() (entries []Entry, settingsErr error, err error) {
 		}
 	}
 	return out, settingsErr, nil
+}
+
+// RecipeInfo is one of the user's recipes.
+type RecipeInfo struct {
+	ID      string `json:"id"`
+	Package string `json:"package,omitempty"`
+	// Origin is the file path or URL the recipe was added from.
+	Origin string `json:"origin,omitempty"`
+	// Problem says why the recipe or its version list cannot be used, such
+	// as a recipe in a form Vpmify no longer reads.
+	Problem string `json:"problem,omitempty"`
+}
+
+// Recipes lists the user's recipes by id. A recipe that cannot be read is
+// listed with its problem, so that it can be added again or removed.
+func (a *App) Recipes() ([]RecipeInfo, error) {
+	ids, err := a.recipeIDs()
+	if err != nil {
+		return nil, err
+	}
+	st, err := state.Load(a.Layout.State())
+	if err != nil {
+		return nil, err
+	}
+	out := []RecipeInfo{}
+	for _, id := range ids {
+		info := RecipeInfo{ID: id}
+		if rs, ok := st.Recipes[id]; ok {
+			info.Origin = rs.Origin
+		}
+		r, err := a.loadRecipe(id)
+		if err == nil {
+			info.Package = r.Source.Name
+			_, err = a.loadIndex(r)
+		}
+		if err != nil {
+			info.Problem = err.Error()
+		}
+		out = append(out, info)
+	}
+	return out, nil
 }
 
 // VersionInfo is one version in a recipe's version list, as `vpmify
