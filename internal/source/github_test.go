@@ -131,6 +131,38 @@ func TestGitHubSameTag(t *testing.T) {
 	}
 }
 
+// A stable version first seen in a release candidate's tag is taken from
+// the release's tag; a prerelease stays with its oldest tag.
+func TestGitHubStableVersionComesFromAStableTag(t *testing.T) {
+	gh := testutil.NewFakeGitHub("owner", "repo")
+	gh.Tag("v1.0.0-rc1", map[string]string{
+		"Base/package.json": manifest("com.example.base", "2.0.0-rc1"),
+		"Pkg/package.json":  manifest("com.example.pkg", "1.0.0"),
+	})
+	release := gh.Tag("v1.0.0", map[string]string{
+		"Base/package.json": manifest("com.example.base", "2.0.0"),
+		"Pkg/package.json":  manifest("com.example.pkg", "1.0.0"),
+	})
+	gh.Tag("v1.0.1", map[string]string{
+		"Base/package.json": manifest("com.example.base", "2.0.1"),
+		"Pkg/package.json":  manifest("com.example.pkg", "1.0.0"),
+	})
+	src := newSource(t, gh, `{"id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
+  "packages": [{"name": "com.example.base", "path": "Base"}, {"name": "com.example.pkg", "path": "Pkg"}]}]}`)
+	all, err := src.Releases(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := all["com.example.pkg"]
+	if len(pkg) != 1 || pkg[0].Origin != "tag v1.0.0" || pkg[0].SameTag["com.example.base"] != "2.0.0" ||
+		pkg[0].ArchiveURL != "https://codeload.github.com/owner/repo/tar.gz/"+release {
+		t.Errorf("pkg = %+v", pkg)
+	}
+	if base := all["com.example.base"]; len(base) != 3 || base[0].Version.String() != "2.0.0-rc1" || base[0].Origin != "tag v1.0.0-rc1" {
+		t.Errorf("base = %+v", base)
+	}
+}
+
 func TestGitHubTagsRangeLimitsReads(t *testing.T) {
 	gh := testutil.NewFakeGitHub("owner", "repo")
 	for _, v := range []string{"1.0.0", "1.1.0", "2.0.0"} {

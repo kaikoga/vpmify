@@ -315,6 +315,35 @@ func TestSameTag(t *testing.T) {
 	}
 }
 
+// A stable pkg first seen in a release candidate's tag depends on the
+// release's base, not the candidate's prerelease (kaikoga 2026-11-19).
+func TestSameTagOfAStableVersionIsTheRelease(t *testing.T) {
+	f := newFixture(t)
+	gh := testutil.NewFakeGitHub("owner", "mono")
+	gh.Tag("v1.0.0-rc1", monoTag("2.0.0-rc1", "1.0.0"))
+	gh.Tag("v1.0.0", monoTag("2.0.0", "1.0.0"))
+	f.app.Client.HTTP.Transport = gh
+	ctx := context.Background()
+	if _, err := f.app.Add(ctx, f.writeFile("mono.json", pkgSameTag)); err != nil {
+		t.Fatal(err, f.log)
+	}
+	res, err := f.app.Pull(ctx, []string{"mono/com.example.pkg"}, PullOptions{})
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	var built []string
+	for _, b := range res.Built {
+		built = append(built, fmt.Sprintf("%s %s %s", b.Package, b.Version, b.Origin))
+	}
+	if want := []string{"com.example.pkg 1.0.0 tag v1.0.0", "com.example.base 2.0.0 tag v1.0.0"}; !reflect.DeepEqual(built, want) {
+		t.Errorf("built = %v, want %v", built, want)
+	}
+	m := readManifest(t, f.app.Layout.PackageDir("mono", "com.example.pkg", "1.0.0"))
+	if got, want := m["vpmDependencies"], map[string]any{"com.example.base": "=2.0.0"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("vpmDependencies = %v, want %v", got, want)
+	}
+}
+
 // "<id>@<version>" names the version in every package that has it, and
 // "<id>/<name>@<version>" in that package only.
 func TestPullNamesVersionsByPackage(t *testing.T) {

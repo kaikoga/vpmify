@@ -103,7 +103,11 @@ type tag struct {
 // version. When a version appears in several tags, the oldest tag wins:
 // that is where the version was first published, and what Vpmify converts
 // never changes when newer tags keep the same version (kaikoga 2026-11-18).
-// Each release keeps the versions the other packages have in its tag.
+// A stable version is taken from the oldest stable tag that has it when
+// there is one, so that it is built from the release and its {sameTag}
+// names the release's packages, not a release candidate's prereleases
+// (kaikoga 2026-11-19). Each release keeps the versions the other packages
+// have in its tag.
 func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, error) {
 	tags, err := g.tags(ctx)
 	if err != nil {
@@ -130,35 +134,41 @@ func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, error) {
 		return nil, err
 	}
 	out := map[string][]Release{}
-	seen := map[string]map[string]bool{}
-	for _, p := range g.Packages {
-		out[p.Name] = []Release{}
-		seen[p.Name] = map[string]bool{}
-	}
-	for i := range tags { // oldest first
-		inTag := map[string]string{}
-		for j, p := range g.Packages {
-			if rel := found[i*n+j]; rel != nil {
-				inTag[p.Name] = rel.Version.String()
-			}
-		}
-		for j, p := range g.Packages {
+	for j, p := range g.Packages {
+		// chosen is the tag each version is taken from, by version.
+		chosen := map[string]int{}
+		var order []string
+		for i := range tags { // oldest first
 			rel := found[i*n+j]
-			if rel == nil || seen[p.Name][rel.Version.String()] {
+			if rel == nil {
 				continue
 			}
-			seen[p.Name][rel.Version.String()] = true
-			for name, v := range inTag {
-				if name == p.Name {
+			v := rel.Version.String()
+			cur, ok := chosen[v]
+			switch {
+			case !ok:
+				chosen[v] = i
+				order = append(order, v)
+			case !rel.Version.IsPrerelease() && tags[cur].version.IsPrerelease() && !tags[i].version.IsPrerelease():
+				chosen[v] = i
+			}
+		}
+		rels := []Release{}
+		for _, v := range order {
+			i := chosen[v]
+			rel := found[i*n+j]
+			for k, sibling := range g.Packages {
+				if k == j || found[i*n+k] == nil {
 					continue
 				}
 				if rel.SameTag == nil {
 					rel.SameTag = map[string]string{}
 				}
-				rel.SameTag[name] = v
+				rel.SameTag[sibling.Name] = found[i*n+k].Version.String()
 			}
-			out[p.Name] = append(out[p.Name], *rel)
+			rels = append(rels, *rel)
 		}
+		out[p.Name] = rels
 	}
 	for _, rels := range out {
 		sort.SliceStable(rels, func(i, j int) bool { return semver.Compare(rels[i].Version, rels[j].Version) < 0 })
