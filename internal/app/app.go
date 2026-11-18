@@ -178,14 +178,46 @@ func checkDrafts(drafts []Draft) error {
 	return nil
 }
 
+// Failure is one recipe a command could not finish while it went on with
+// the others, or, with Recipe empty, a step that belongs to no one recipe.
+// The command's error says the same in words.
+type Failure struct {
+	Recipe string `json:"recipe,omitempty"`
+	Error  string `json:"error"`
+}
+
+// failures keeps the Failures of a command and the errors it returns, so
+// that the error still wraps what went wrong.
+type failures struct {
+	list *[]Failure
+	errs []error
+}
+
+func (f *failures) add(recipe string, err error) {
+	*f.list = append(*f.list, Failure{Recipe: recipe, Error: err.Error()})
+	if recipe != "" {
+		err = fmt.Errorf("%s: %w", recipe, err)
+	}
+	f.errs = append(f.errs, err)
+}
+
+func (f *failures) err() error { return errors.Join(f.errs...) }
+
+// AddResult is what Add and AddDrafts did: the recipes they saved, and the
+// reading of their version lists.
+type AddResult struct {
+	Added []Draft `json:"added"`
+	UpdateResult
+}
+
 // Add reads recipes from file paths or http(s) URLs, saves them among the
 // user's recipes, and reads their version lists. It converts nothing; Pull
 // does (kaikoga 2026-11-18). Nothing is saved unless every recipe reads
 // well.
-func (a *App) Add(ctx context.Context, refs ...string) error {
+func (a *App) Add(ctx context.Context, refs ...string) (*AddResult, error) {
 	drafts, err := a.ReadRecipes(ctx, refs...)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	return a.AddDrafts(ctx, drafts)
 }
@@ -209,9 +241,10 @@ func (a *App) ReadRecipes(ctx context.Context, refs ...string) ([]Draft, error) 
 
 // AddDrafts saves recipes that ReadRecipes has read, as they were read, and
 // reads their version lists. Nothing is saved unless every recipe can be.
-func (a *App) AddDrafts(ctx context.Context, drafts []Draft) error {
+// The result is nil when nothing was saved.
+func (a *App) AddDrafts(ctx context.Context, drafts []Draft) (*AddResult, error) {
 	if err := checkDrafts(drafts); err != nil {
-		return err
+		return nil, err
 	}
 	ids := map[string]bool{}
 	names := map[string]string{}
@@ -219,7 +252,8 @@ func (a *App) AddDrafts(ctx context.Context, drafts []Draft) error {
 		ids[d.recipe.ID] = true
 		names[d.recipe.Source.Name] = d.Origin
 	}
-	return a.withLock(func() error {
+	var res *AddResult
+	err := a.withLock(func() error {
 		st, err := state.Load(a.Layout.State())
 		if err != nil {
 			return err
@@ -254,49 +288,86 @@ func (a *App) AddDrafts(ctx context.Context, drafts []Draft) error {
 		if err := st.Save(a.Layout.State()); err != nil {
 			return err
 		}
-		return a.update(ctx, addedIDs)
+		res = &AddResult{Added: append([]Draft{}, drafts...)}
+		up, err := a.update(ctx, addedIDs)
+		if up != nil {
+			res.UpdateResult = *up
+		}
+		return err
 	})
+	return res, err
+}
+
+// UpdateResult is what Update did.
+type UpdateResult struct {
+	Recipes []RecipeUpdate `json:"recipes"`
+	// Errors are the recipes whose version lists could not be read.
+	Errors []Failure `json:"errors"`
+}
+
+// RecipeUpdate is one version list Update read.
+type RecipeUpdate struct {
+	ID string `json:"id"`
+	// Versions is how many versions the list has: those in the recipe's
+	// range.
+	Versions int `json:"versions"`
+	// Upstream is how many versions the source has.
+	Upstream int `json:"upstream"`
+	// New are the versions the last list did not have. It is empty when
+	// there was no list for what the recipe is now.
+	New []string `json:"new"`
 }
 
 // Update reads the version lists of the named recipes (all recipes when
 // ids is empty) from upstream and keeps them for Pull and Versions. It
-// downloads no archive and changes no available version.
-func (a *App) Update(ctx context.Context, ids []string) error {
-	return a.withLock(func() error { return a.update(ctx, ids) })
+// downloads no archive and changes no available version. The result is nil
+// when no recipe was tried.
+func (a *App) Update(ctx context.Context, ids []string) (*UpdateResult, error) {
+	var res *UpdateResult
+	err := a.withLock(func() error {
+		var err error
+		res, err = a.update(ctx, ids)
+		return err
+	})
+	return res, err
 }
 
-func (a *App) update(ctx context.Context, ids []string) error {
+func (a *App) update(ctx context.Context, ids []string) (*UpdateResult, error) {
 	if len(ids) == 0 {
 		all, err := a.recipeIDs()
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if len(all) == 0 {
 			a.logf("no recipes; add one with `vpmify add <recipe.json>`")
 		}
 		ids = all
 	}
-	var errs []error
+	res := &UpdateResult{Recipes: []RecipeUpdate{}, Errors: []Failure{}}
+	fails := failures{list: &res.Errors}
 	for _, id := range ids {
-		if err := a.updateRecipe(ctx, id); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", id, err))
+		u, err := a.updateRecipe(ctx, id)
+		if err != nil {
+			fails.add(id, err)
+			continue
 		}
+		res.Recipes = append(res.Recipes, u)
 	}
-	return errors.Join(errs...)
+	return res, fails.err()
 }
 
-func (a *App) updateRecipe(ctx context.Context, id string) error {
+func (a *App) updateRecipe(ctx context.Context, id string) (RecipeUpdate, error) {
 	r, err := a.loadRecipe(id)
 	if err != nil {
-		return err
+		return RecipeUpdate{}, err
 	}
 	src, err := source.New(r, a.Client, a.Layout.Cache())
 	if err != nil {
-		return err
+		return RecipeUpdate{}, err
 	}
 	upstream, err := src.Releases(ctx)
 	if err != nil {
-		return err
+		return RecipeUpdate{}, err
 	}
 	// The recipe's range is the rule for what Vpmify takes from the source,
 	// so the list keeps only the versions in it (kaikoga 2026-11-18).
@@ -317,9 +388,9 @@ func (a *App) updateRecipe(ctx context.Context, id string) error {
 		}
 	}
 	if err := index.New(r.ListingKey(), releases, time.Now()).Save(a.Layout.Index(id)); err != nil {
-		return err
+		return RecipeUpdate{}, err
 	}
-	var fresh []string
+	fresh := []string{}
 	for _, rel := range releases {
 		if hadPrev && !known[rel.Version.String()] {
 			fresh = append(fresh, rel.Version.String())
@@ -330,7 +401,7 @@ func (a *App) updateRecipe(ctx context.Context, id string) error {
 		msg += "; new: " + strings.Join(fresh, ", ")
 	}
 	a.logf("%s", msg)
-	return nil
+	return RecipeUpdate{ID: id, Versions: len(releases), Upstream: len(upstream), New: fresh}, nil
 }
 
 // loadIndex returns the version list of recipe r, refusing one read for
@@ -391,19 +462,56 @@ type PullOptions struct {
 // versions that the recipe now builds differently are built again; other
 // recipes' are not, because a recipe's output depends only on the recipe
 // (kaikoga 2026-11-18). Pull never removes a version, and reads no version
-// list from upstream; Update does.
-func (a *App) Pull(ctx context.Context, args []string, opt PullOptions) error {
+// list from upstream; Update does. The result is nil when no recipe was
+// tried.
+func (a *App) Pull(ctx context.Context, args []string, opt PullOptions) (*PullResult, error) {
 	targets, err := parseTargets(args)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return a.withLock(func() error { return a.pull(ctx, targets, opt) })
+	var res *PullResult
+	err = a.withLock(func() error {
+		var err error
+		res, err = a.pull(ctx, targets, opt)
+		return err
+	})
+	return res, err
 }
 
-func (a *App) pull(ctx context.Context, targets []target, opt PullOptions) error {
+// PullResult is what Pull did.
+type PullResult struct {
+	// Built are the versions converted into the store, in the order they
+	// were.
+	Built []Built `json:"built"`
+	// UpToDate are the recipes that had nothing to convert.
+	UpToDate []string `json:"upToDate"`
+	// Registered and Unregistered are the folders whose registration with
+	// ALCOM changed.
+	Registered   []string `json:"registered"`
+	Unregistered []string `json:"unregistered"`
+	// Errors are the recipes that could not be done, and the dependencies
+	// that could not be made available.
+	Errors []Failure `json:"errors"`
+}
+
+// Built is one version Pull converted.
+type Built struct {
+	Recipe  string `json:"recipe"`
+	Package string `json:"package"`
+	Version string `json:"version"`
+	Unity   string `json:"unity,omitempty"`
+	Path    string `json:"path"`
+	// Origin is where the version came from upstream, such as the tag.
+	Origin string `json:"origin"`
+	// Dependency is true when the version was added because another
+	// available version depends on it.
+	Dependency bool `json:"dependency"`
+}
+
+func (a *App) pull(ctx context.Context, targets []target, opt PullOptions) (*PullResult, error) {
 	all, err := a.recipeIDs()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(targets) == 0 {
 		if len(all) == 0 {
@@ -427,11 +535,11 @@ func (a *App) pull(ctx context.Context, targets []target, opt PullOptions) error
 
 	st, err := state.Load(a.Layout.State())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	managed, err := a.managedNames()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// fresh holds the archives downloaded again in this run; recipes that
 	// share an archive (UniVRM's packages share a tag) download it once.
@@ -439,22 +547,24 @@ func (a *App) pull(ctx context.Context, targets []target, opt PullOptions) error
 	if opt.Refetch {
 		fresh = map[string]bool{}
 	}
-	var errs []error
+	res := &PullResult{Built: []Built{}, UpToDate: []string{}, Registered: []string{}, Unregistered: []string{}, Errors: []Failure{}}
+	fails := failures{list: &res.Errors}
 	for _, id := range order {
 		req := pullRequest{choose: true, all: opt.All, extra: extra[id]}
-		if err := a.pullRecipe(ctx, st, id, req, fresh); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", id, err))
+		if err := a.pullRecipe(ctx, st, id, req, fresh, res); err != nil {
+			fails.add(id, err)
 		}
 	}
-	if err := a.addDependencies(ctx, st, managed); err != nil {
-		errs = append(errs, err)
-	}
+	a.addDependencies(ctx, st, managed, res, &fails)
 	// Register whatever is in the store, even when a recipe failed, so that
 	// versions made available before stay usable.
-	if err := a.register(st); err != nil {
-		errs = append(errs, err)
+	change, err := a.register(st)
+	if err != nil {
+		fails.add("", err)
 	}
-	return errors.Join(errs...)
+	res.Registered = append(res.Registered, change.Added...)
+	res.Unregistered = append(res.Unregistered, change.Removed...)
+	return res, fails.err()
 }
 
 // providers maps the package name of every recipe the user has to the
@@ -490,8 +600,8 @@ type pullRequest struct {
 // pullRecipe makes the versions req asks for from recipe id's version list
 // available, and builds available versions again when the recipe now
 // builds them differently. With fresh non-nil it builds every available
-// version again from a new download.
-func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pullRequest, fresh map[string]bool) error {
+// version again from a new download. It adds what it does to res.
+func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pullRequest, fresh map[string]bool, res *PullResult) error {
 	r, err := a.loadRecipe(id)
 	if err != nil {
 		return err
@@ -573,14 +683,17 @@ func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pu
 			return fmt.Errorf("%s %s: %w", name, v, err)
 		}
 		a.noteUnwrittenDependencies(name, rel, dir)
-		ps.Versions[v] = &state.VersionState{Path: dir, Fingerprint: fp, Unity: r.Unity(rel.Version, rel.Unity)}
+		unity := r.Unity(rel.Version, rel.Unity)
+		ps.Versions[v] = &state.VersionState{Path: dir, Fingerprint: fp, Unity: unity}
 		if err := st.Save(a.Layout.State()); err != nil {
 			return err
 		}
+		res.Built = append(res.Built, Built{Recipe: id, Package: name, Version: v, Unity: unity, Path: dir, Origin: rel.Origin, Dependency: !req.choose})
 		built++
 	}
 	if built == 0 && req.choose && chooseErr == nil {
 		a.logf("%s: up to date (%d versions available; version list of %s)", id, len(ps.Versions), idx.Updated.Local().Format("2006-01-02 15:04"))
+		res.UpToDate = append(res.UpToDate, id)
 	}
 	return chooseErr
 }
@@ -606,9 +719,14 @@ func (a *App) noteUnwrittenDependencies(name string, rel source.Release, dir str
 // vpmDependencies name a package a recipe provides, a version of that
 // package that satisfies it when none is available, so that ALCOM can
 // install the dependent (kaikoga 2026-11-18). A pull that names only the
-// dependent would otherwise leave it pointing at nothing.
-func (a *App) addDependencies(ctx context.Context, st *state.State, managed providers) error {
-	failed := map[string]error{}
+// dependent would otherwise leave it pointing at nothing. What it does goes
+// to res, and what it cannot do to fails.
+func (a *App) addDependencies(ctx context.Context, st *state.State, managed providers, res *PullResult, fails *failures) {
+	type failure struct {
+		recipe string
+		err    error
+	}
+	failed := map[string]failure{}
 	tried := map[string]bool{}
 	// A dependency made available may need its own dependencies, so this
 	// goes on until nothing new is needed.
@@ -623,7 +741,7 @@ func (a *App) addDependencies(ctx context.Context, st *state.State, managed prov
 			tried[key] = true
 			v, err := a.dependencyVersion(n.id, n.rng)
 			if err != nil {
-				failed[key] = fmt.Errorf("%s needs %s %s: %w", n.dependent, n.dep, n.rng, err)
+				failed[key] = failure{err: fmt.Errorf("%s needs %s %s: %w", n.dependent, n.dep, n.rng, err)}
 				continue
 			}
 			if _, ok := needs[n.id]; !ok {
@@ -638,16 +756,14 @@ func (a *App) addDependencies(ctx context.Context, st *state.State, managed prov
 		}
 		for _, id := range order {
 			a.logf("%s: adding %s, which available versions depend on", id, strings.Join(needs[id], ", "))
-			if err := a.pullRecipe(ctx, st, id, pullRequest{extra: needs[id]}, nil); err != nil {
-				failed["pull "+id] = fmt.Errorf("%s: %w", id, err)
+			if err := a.pullRecipe(ctx, st, id, pullRequest{extra: needs[id]}, nil, res); err != nil {
+				failed["pull "+id] = failure{recipe: id, err: err}
 			}
 		}
 	}
-	var errs []error
 	for _, k := range state.SortedKeys(failed) {
-		errs = append(errs, failed[k])
+		fails.add(failed[k].recipe, failed[k].err)
 	}
-	return errors.Join(errs...)
 }
 
 // unmet is one vpmDependencies entry no available version satisfies.
@@ -867,10 +983,10 @@ func (a *App) reconciler() *alcom.Reconciler {
 	}
 }
 
-func (a *App) register(st *state.State) error {
+func (a *App) register(st *state.State) (alcom.Change, error) {
 	change, err := a.reconciler().Reconcile(st.AllPaths())
 	if err != nil {
-		return err
+		return alcom.Change{}, err
 	}
 	for _, p := range change.Added {
 		a.logf("registered %s", p)
@@ -878,13 +994,26 @@ func (a *App) register(st *state.State) error {
 	for _, p := range change.Removed {
 		a.logf("unregistered %s", p)
 	}
-	return nil
+	return change, nil
+}
+
+// RemoveResult is what Remove did.
+type RemoveResult struct {
+	// Removed are the versions that are no longer available; Registered is
+	// false for each.
+	Removed []Entry `json:"removed"`
+	// RecipeRemoved is true when the recipe itself was removed.
+	RecipeRemoved bool `json:"recipeRemoved"`
+	// Unregistered are the folders unregistered from ALCOM.
+	Unregistered []string `json:"unregistered"`
 }
 
 // Remove unregisters and deletes one version of a recipe's packages, or the
-// whole recipe when version is empty. Copies already in projects stay.
-func (a *App) Remove(ctx context.Context, id, version string) error {
-	return a.withLock(func() error {
+// whole recipe when version is empty. Copies already in projects stay. The
+// result is nil when nothing was removed.
+func (a *App) Remove(ctx context.Context, id, version string) (*RemoveResult, error) {
+	var res *RemoveResult
+	err := a.withLock(func() error {
 		st, err := state.Load(a.Layout.State())
 		if err != nil {
 			return err
@@ -894,6 +1023,7 @@ func (a *App) Remove(ctx context.Context, id, version string) error {
 			return fmt.Errorf("no recipe %q", id)
 		}
 		var dirs []string
+		removed := []Entry{}
 		if rs != nil {
 			for _, name := range state.SortedKeys(rs.Packages) {
 				ps := rs.Packages[name]
@@ -901,7 +1031,9 @@ func (a *App) Remove(ctx context.Context, id, version string) error {
 					if version != "" && v != version {
 						continue
 					}
-					dirs = append(dirs, ps.Versions[v].Path)
+					vs := ps.Versions[v]
+					dirs = append(dirs, vs.Path)
+					removed = append(removed, Entry{Recipe: id, Package: name, Version: v, Unity: vs.Unity, Path: vs.Path})
 					delete(ps.Versions, v)
 				}
 			}
@@ -912,9 +1044,11 @@ func (a *App) Remove(ctx context.Context, id, version string) error {
 		if version == "" {
 			delete(st.Recipes, id)
 		}
-		if err := a.forget(st, dirs); err != nil {
+		change, err := a.forget(st, dirs)
+		if err != nil {
 			return err
 		}
+		res = &RemoveResult{Removed: removed, Unregistered: append([]string{}, change.Removed...)}
 		if version == "" {
 			for _, p := range []string{a.recipePath(id), a.Layout.Index(id)} {
 				if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -922,9 +1056,11 @@ func (a *App) Remove(ctx context.Context, id, version string) error {
 				}
 			}
 			a.logf("%s: removed recipe", id)
+			res.RecipeRemoved = true
 		}
 		return nil
 	})
+	return res, err
 }
 
 // Entry is one available version, as `vpmify list` shows it.
@@ -937,33 +1073,40 @@ type Entry struct {
 	Registered bool   `json:"registered"`
 }
 
+// ListResult is what List returns.
+type ListResult struct {
+	Entries []Entry `json:"entries"`
+	// SettingsError says why ALCOM's settings.json could not be read; every
+	// entry then shows as unregistered.
+	SettingsError string `json:"settingsError,omitempty"`
+}
+
 // List returns every available version and whether ALCOM has it
-// registered.
-// When settings.json cannot be read, every Registered is false and
-// settingsErr says why; err is for failures that leave no list.
-func (a *App) List() (entries []Entry, settingsErr error, err error) {
+// registered. The error is for failures that leave no list.
+func (a *App) List() (*ListResult, error) {
 	st, err := state.Load(a.Layout.State())
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
+	res := &ListResult{}
 	registered := map[string]bool{}
 	if s, err := alcom.Load(a.Layout.ALCOMSettings()); err != nil {
-		settingsErr = err
+		res.SettingsError = err.Error()
 	} else if folders, err := s.UserPackageFolders(); err != nil {
-		settingsErr = err
+		res.SettingsError = err.Error()
 	} else {
 		for _, f := range folders {
 			registered[filepath.Clean(f)] = true
 		}
 	}
-	out := []Entry{}
+	res.Entries = []Entry{}
 	for _, id := range state.SortedKeys(st.Recipes) {
 		rs := st.Recipes[id]
 		for _, name := range state.SortedKeys(rs.Packages) {
 			ps := rs.Packages[name]
 			for _, v := range ps.SortedVersions() {
 				vs := ps.Versions[v]
-				out = append(out, Entry{
+				res.Entries = append(res.Entries, Entry{
 					Recipe:     id,
 					Package:    name,
 					Version:    v,
@@ -974,7 +1117,7 @@ func (a *App) List() (entries []Entry, settingsErr error, err error) {
 			}
 		}
 	}
-	return out, settingsErr, nil
+	return res, nil
 }
 
 // RecipeInfo is one of the user's recipes.

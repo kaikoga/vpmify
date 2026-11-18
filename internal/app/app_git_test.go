@@ -98,7 +98,7 @@ func TestGitRecipesShareArchivesAndWriteTheDependenciesTheyName(t *testing.T) {
 	}
 
 	// Refetching downloads the shared archive once more, not once per recipe.
-	if err := f.app.Pull(ctx, nil, PullOptions{Refetch: true}); err != nil {
+	if _, err := f.app.Pull(ctx, nil, PullOptions{Refetch: true}); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if n := gh.Requests["codeload"]; n != 2 {
@@ -134,14 +134,22 @@ func TestPullAddsTheDependencyItWrites(t *testing.T) {
 	gh := monorepo("1.0.0", "1.1.0")
 	f.app.Client.HTTP.Transport = gh
 	ctx := context.Background()
-	if err := f.app.Add(ctx,
+	if _, err := f.app.Add(ctx,
 		f.writeGitRecipe("pkg", "com.example.pkg", "Packages/Pkg", pkgNeedsBase),
 		f.writeGitRecipe("base", "com.example.base", "Packages/Base", "")); err != nil {
 		t.Fatal(err, f.log)
 	}
 	// An older pkg too, so its dependency is not the newest base.
-	if err := f.app.Pull(ctx, []string{"pkg", "pkg@1.0.0"}, PullOptions{}); err != nil {
+	res, err := f.app.Pull(ctx, []string{"pkg", "pkg@1.0.0"}, PullOptions{})
+	if err != nil {
 		t.Fatal(err, f.log)
+	}
+	var built []string
+	for _, b := range res.Built {
+		built = append(built, fmt.Sprintf("%s %s %v", b.Package, b.Version, b.Dependency))
+	}
+	if want := []string{"com.example.pkg 1.1.0 false", "com.example.pkg 1.0.0 false", "com.example.base 1.0.0 true", "com.example.base 1.1.0 true"}; !reflect.DeepEqual(built, want) {
+		t.Errorf("built = %v, want %v", built, want)
 	}
 	m := readManifest(t, f.app.Layout.PackageDir("com.example.pkg", "1.0.0"))
 	if got, want := m["vpmDependencies"], map[string]any{"com.example.base": ">=1.0.0"}; !reflect.DeepEqual(got, want) {
@@ -165,10 +173,10 @@ func TestPullFailsWhenTheDependencyCannotBeAdded(t *testing.T) {
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.app.Add(ctx, f.writeGitRecipe("pkg", "com.example.pkg", "Packages/Pkg", pkgNeedsBase), p); err != nil {
+	if _, err := f.app.Add(ctx, f.writeGitRecipe("pkg", "com.example.pkg", "Packages/Pkg", pkgNeedsBase), p); err != nil {
 		t.Fatal(err, f.log)
 	}
-	err := f.app.Pull(ctx, []string{"pkg"}, PullOptions{})
+	_, err := f.app.Pull(ctx, []string{"pkg"}, PullOptions{})
 	if err == nil || !strings.Contains(err.Error(), "com.example.pkg 1.1.0 needs com.example.base >=1.1.0") {
 		t.Errorf("err = %v", err)
 	}
@@ -202,7 +210,7 @@ func TestPullBuildsAgainOnlyTheRecipesItPulls(t *testing.T) {
 		t.Fatal(err)
 	}
 	pkgDir := f.app.Layout.PackageDir("com.example.pkg", "1.1.0")
-	if err := f.app.Pull(ctx, []string{"base"}, PullOptions{}); err != nil {
+	if _, err := f.app.Pull(ctx, []string{"base"}, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if m := readManifest(t, pkgDir); m["displayName"] != nil {
@@ -213,12 +221,12 @@ func TestPullBuildsAgainOnlyTheRecipesItPulls(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.app.Client.HTTP.Transport = failCodeload{gh}
-	if err := f.app.Pull(ctx, []string{"pkg"}, PullOptions{}); err == nil || !strings.Contains(err.Error(), "pkg: com.example.pkg 1.1.0") {
+	if _, err := f.app.Pull(ctx, []string{"pkg"}, PullOptions{}); err == nil || !strings.Contains(err.Error(), "pkg: com.example.pkg 1.1.0") {
 		t.Errorf("err = %v", err)
 	}
 
 	f.app.Client.HTTP.Transport = gh
-	if err := f.app.Pull(ctx, []string{"pkg"}, PullOptions{}); err != nil {
+	if _, err := f.app.Pull(ctx, []string{"pkg"}, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if m := readManifest(t, pkgDir); m["displayName"] != "X" {

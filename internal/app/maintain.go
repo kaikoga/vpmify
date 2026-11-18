@@ -22,15 +22,16 @@ import (
 // record may point outside the store after the user moved Vpmify's data, and
 // two records may share a folder when two recipes provide one package (add
 // refuses that, but recipes written by hand may still do it).
-func (a *App) forget(st *state.State, dirs []string) error {
+func (a *App) forget(st *state.State, dirs []string) (alcom.Change, error) {
 	if _, err := alcom.Load(a.Layout.ALCOMSettings()); err != nil {
-		return err
+		return alcom.Change{}, err
 	}
 	if err := st.Save(a.Layout.State()); err != nil {
-		return err
+		return alcom.Change{}, err
 	}
-	if err := a.register(st); err != nil {
-		return err
+	change, err := a.register(st)
+	if err != nil {
+		return alcom.Change{}, err
 	}
 	still := map[string]bool{}
 	for _, p := range st.AllPaths() {
@@ -44,10 +45,10 @@ func (a *App) forget(st *state.State, dirs []string) error {
 			continue
 		}
 		if err := a.removeFromStore(d); err != nil {
-			return err
+			return change, err
 		}
 	}
-	return nil
+	return change, nil
 }
 
 // Clean deletes every available version, the downloads and the work folders,
@@ -303,7 +304,7 @@ func (a *App) fix(st *state.State, problems []*Problem) error {
 		return err
 	}
 	if needRegister {
-		if err := a.register(st); err != nil {
+		if _, err := a.register(st); err != nil {
 			return err
 		}
 	}

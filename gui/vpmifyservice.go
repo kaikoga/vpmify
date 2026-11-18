@@ -88,24 +88,13 @@ func (s *VpmifyService) run(fn func() error) error {
 	return fn()
 }
 
-// ListResult is what `vpmify list` shows.
-type ListResult struct {
-	Entries []vpmify.Entry `json:"entries"`
-	// SettingsError says why ALCOM's settings.json could not be read; every
-	// entry then shows as unregistered.
-	SettingsError string `json:"settingsError,omitempty"`
-}
-
-func (s *VpmifyService) List() (ListResult, error) {
-	entries, settingsErr, err := s.core.List()
+// List returns what `vpmify list` shows.
+func (s *VpmifyService) List() (vpmify.ListResult, error) {
+	r, err := s.core.List()
 	if err != nil {
-		return ListResult{}, err
+		return vpmify.ListResult{}, err
 	}
-	r := ListResult{Entries: entries}
-	if settingsErr != nil {
-		r.SettingsError = settingsErr.Error()
-	}
-	return r, nil
+	return *r, nil
 }
 
 // Recipes lists the user's recipes.
@@ -121,13 +110,19 @@ func (s *VpmifyService) Versions(id string, all bool) (*vpmify.VersionList, erro
 
 // Update reads the version lists of the recipes again.
 func (s *VpmifyService) Update(ctx context.Context, ids []string) error {
-	return s.run(func() error { return s.core.Update(ctx, ids) })
+	return s.run(func() error {
+		_, err := s.core.Update(ctx, ids)
+		return err
+	})
 }
 
 // Pull makes versions available as `vpmify pull` does: targets are recipe
 // ids, or "<id>@<version>".
 func (s *VpmifyService) Pull(ctx context.Context, targets []string) error {
-	return s.run(func() error { return s.core.Pull(ctx, targets, vpmify.PullOptions{}) })
+	return s.run(func() error {
+		_, err := s.core.Pull(ctx, targets, vpmify.PullOptions{})
+		return err
+	})
 }
 
 // PendingAdd is a set of recipes read from one link or one choice of files,
@@ -159,7 +154,10 @@ func (s *VpmifyService) ConfirmAdd(ctx context.Context, token string) error {
 	if p.Error != "" {
 		return errors.New(p.Error)
 	}
-	return s.run(func() error { return s.core.AddDrafts(ctx, p.Recipes) })
+	return s.run(func() error {
+		_, err := s.core.AddDrafts(ctx, p.Recipes)
+		return err
+	})
 }
 
 // DiscardAdd drops a pending set without adding it.

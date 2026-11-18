@@ -149,20 +149,24 @@ func (f *fixture) writeRecipe(extra string) string {
 func (f *fixture) addAndPull(opt PullOptions, refs ...string) error {
 	f.t.Helper()
 	ctx := context.Background()
-	if err := f.app.Add(ctx, refs...); err != nil {
+	if _, err := f.app.Add(ctx, refs...); err != nil {
 		return err
 	}
-	return f.app.Pull(ctx, nil, opt)
+	_, err := f.app.Pull(ctx, nil, opt)
+	return err
 }
 
 func (f *fixture) available() []string {
 	f.t.Helper()
-	entries, settingsErr, err := f.app.List()
-	if err != nil || settingsErr != nil {
-		f.t.Fatal(err, settingsErr)
+	res, err := f.app.List()
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if res.SettingsError != "" {
+		f.t.Fatal(res.SettingsError)
 	}
 	var out []string
-	for _, e := range entries {
+	for _, e := range res.Entries {
 		reg := ""
 		if !e.Registered {
 			reg = " unregistered"
@@ -211,7 +215,7 @@ func TestPullPlacesLatestPerUnityAndRegisters(t *testing.T) {
 	ctx := context.Background()
 
 	// add reads the version list and places nothing.
-	if err := f.app.Add(ctx, f.writeRecipe(overrideNewUnity)); err != nil {
+	if _, err := f.app.Add(ctx, f.writeRecipe(overrideNewUnity)); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if got := f.available(); len(got) != 0 {
@@ -221,7 +225,7 @@ func TestPullPlacesLatestPerUnityAndRegisters(t *testing.T) {
 		t.Errorf("add downloaded %v", f.reg.downloads)
 	}
 
-	if err := f.app.Pull(ctx, nil, PullOptions{}); err != nil {
+	if _, err := f.app.Pull(ctx, nil, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if got, want := f.available(), []string{"1.1.0@2021.3", "2.0.0@6000.2"}; !reflect.DeepEqual(got, want) {
@@ -263,33 +267,33 @@ func TestPullKeepsOlderVersionsAndAddsNamedOnes(t *testing.T) {
 	// A new version upstream is not pulled until the version list is read
 	// again.
 	f.reg.add("1.2.0", "2021.3")
-	if err := f.app.Pull(ctx, nil, PullOptions{}); err != nil {
+	if _, err := f.app.Pull(ctx, nil, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if got, want := f.available(), []string{"1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed before update = %v, want %v", got, want)
 	}
-	if err := f.app.Update(ctx, nil); err != nil {
+	if _, err := f.app.Update(ctx, nil); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if !strings.Contains(f.log.String(), "new: 1.2.0") {
 		t.Errorf("update did not name the new version:\n%s", f.log)
 	}
-	if err := f.app.Pull(ctx, nil, PullOptions{}); err != nil {
+	if _, err := f.app.Pull(ctx, nil, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if got, want := f.available(), []string{"1.1.0@2021.3", "1.2.0@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed = %v, want %v", got, want)
 	}
 
-	if err := f.app.Pull(ctx, []string{"kit@1.0.0"}, PullOptions{}); err != nil {
+	if _, err := f.app.Pull(ctx, []string{"kit@1.0.0"}, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if got, want := f.available(), []string{"1.0.0@2021.3", "1.1.0@2021.3", "1.2.0@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed = %v, want %v", got, want)
 	}
 
-	if err := f.app.Pull(ctx, []string{"kit@9.9.9"}, PullOptions{}); err == nil {
+	if _, err := f.app.Pull(ctx, []string{"kit@9.9.9"}, PullOptions{}); err == nil {
 		t.Error("no error for a version the version list does not have")
 	}
 
@@ -298,6 +302,77 @@ func TestPullKeepsOlderVersionsAndAddsNamedOnes(t *testing.T) {
 		if n != 1 {
 			t.Errorf("%s downloaded %d times", v, n)
 		}
+	}
+}
+
+// TestResults checks what add, update, pull and remove return, which
+// `--json` prints.
+func TestResults(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	f.reg.add("1.1.0", "2021.3")
+	ctx := context.Background()
+
+	added, err := f.app.Add(ctx, f.writeRecipe(""))
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	if len(added.Added) != 1 || added.Added[0].ID != "kit" {
+		t.Errorf("added = %+v", added.Added)
+	}
+	// The first list has nothing to call new.
+	if want := []RecipeUpdate{{ID: "kit", Versions: 2, Upstream: 2, New: []string{}}}; !reflect.DeepEqual(added.Recipes, want) {
+		t.Errorf("add read %+v, want %+v", added.Recipes, want)
+	}
+
+	pulled, err := f.app.Pull(ctx, nil, PullOptions{})
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	dir := f.app.Layout.PackageDir(pkgName, "1.1.0")
+	wantBuilt := []Built{{Recipe: "kit", Package: pkgName, Version: "1.1.0", Unity: "2021.3", Path: dir, Origin: pulled.Built[0].Origin}}
+	if !reflect.DeepEqual(pulled.Built, wantBuilt) || pulled.Built[0].Origin == "" {
+		t.Errorf("built = %+v, want %+v with an origin", pulled.Built, wantBuilt)
+	}
+	if !reflect.DeepEqual(pulled.Registered, []string{dir}) || len(pulled.Unregistered) != 0 || len(pulled.UpToDate) != 0 {
+		t.Errorf("pull = %+v", pulled)
+	}
+
+	f.reg.add("1.2.0", "2021.3")
+	updated, err := f.app.Update(ctx, nil)
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	if want := []RecipeUpdate{{ID: "kit", Versions: 3, Upstream: 3, New: []string{"1.2.0"}}}; !reflect.DeepEqual(updated.Recipes, want) {
+		t.Errorf("update read %+v, want %+v", updated.Recipes, want)
+	}
+
+	// A recipe that fails leaves the others done, and is named in Errors.
+	pulled, err = f.app.Pull(ctx, []string{"kit@1.1.0", "nope"}, PullOptions{})
+	if err == nil {
+		t.Fatal("no error for a recipe the user does not have")
+	}
+	if len(pulled.Errors) != 1 || pulled.Errors[0].Recipe != "nope" || !strings.Contains(err.Error(), "nope: "+pulled.Errors[0].Error) {
+		t.Errorf("errors = %+v, err = %v", pulled.Errors, err)
+	}
+	if !reflect.DeepEqual(pulled.UpToDate, []string{}) || len(pulled.Built) != 1 || pulled.Built[0].Version != "1.2.0" {
+		t.Errorf("pull = %+v", pulled)
+	}
+
+	removed, err := f.app.Remove(ctx, "kit", "1.1.0")
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	wantRemoved := []Entry{{Recipe: "kit", Package: pkgName, Version: "1.1.0", Unity: "2021.3", Path: dir}}
+	if !reflect.DeepEqual(removed.Removed, wantRemoved) || removed.RecipeRemoved || !reflect.DeepEqual(removed.Unregistered, []string{dir}) {
+		t.Errorf("remove = %+v", removed)
+	}
+	removed, err = f.app.Remove(ctx, "kit", "")
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	if len(removed.Removed) != 1 || !removed.RecipeRemoved {
+		t.Errorf("remove kit = %+v", removed)
 	}
 }
 
@@ -320,17 +395,17 @@ func TestVersions(t *testing.T) {
 		f.reg.add(v, "2021.3")
 	}
 	ctx := context.Background()
-	if err := f.app.Add(ctx, f.writeRecipe(`, "versions": ">=1.0.0"`+overrideNewUnity)); err != nil {
+	if _, err := f.app.Add(ctx, f.writeRecipe(`, "versions": ">=1.0.0"`+overrideNewUnity)); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if err := f.app.Pull(ctx, []string{"kit@1.0.0"}, PullOptions{}); err != nil {
+	if _, err := f.app.Pull(ctx, []string{"kit@1.0.0"}, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if err := f.app.Remove(ctx, "kit", "1.1.0"); err != nil {
+	if _, err := f.app.Remove(ctx, "kit", "1.1.0"); err != nil {
 		t.Fatal(err, f.log)
 	}
 	// The version list keeps only the recipe's range, so 0.9.0 is not taken.
-	if err := f.app.Pull(ctx, []string{"kit@0.9.0"}, PullOptions{}); err == nil || !strings.Contains(err.Error(), "outside the recipe's versions") {
+	if _, err := f.app.Pull(ctx, []string{"kit@0.9.0"}, PullOptions{}); err == nil || !strings.Contains(err.Error(), "outside the recipe's versions") {
 		t.Errorf("pull kit@0.9.0: err = %v", err)
 	}
 	f.reg.down = true // versions reads only the version list
@@ -394,7 +469,7 @@ func TestPullRefusesAVersionListOfAnotherRecipe(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
 	ctx := context.Background()
-	if err := f.app.Add(ctx, f.writeRecipe("")); err != nil {
+	if _, err := f.app.Add(ctx, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
 	// The user edits the recipe to read another registry.
@@ -402,16 +477,16 @@ func TestPullRefusesAVersionListOfAnotherRecipe(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(f.app.Layout.Recipes(), "kit.json"), []byte(edited), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.app.Pull(ctx, nil, PullOptions{}); err == nil || !strings.Contains(err.Error(), "vpmify update kit") {
+	if _, err := f.app.Pull(ctx, nil, PullOptions{}); err == nil || !strings.Contains(err.Error(), "vpmify update kit") {
 		t.Errorf("err = %v", err)
 	}
 	if _, err := f.app.Versions("kit", VersionsOptions{}); err == nil {
 		t.Error("versions read a stale version list")
 	}
-	if err := f.app.Update(ctx, nil); err != nil {
+	if _, err := f.app.Update(ctx, nil); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if err := f.app.Pull(ctx, nil, PullOptions{}); err != nil {
+	if _, err := f.app.Pull(ctx, nil, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
 }
@@ -422,13 +497,13 @@ func TestPullNamedVersionWithAnEmptyRange(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0-beta.1", "2021.3")
 	ctx := context.Background()
-	if err := f.app.Add(ctx, f.writeRecipe("")); err != nil {
+	if _, err := f.app.Add(ctx, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if err := f.app.Pull(ctx, nil, PullOptions{}); err == nil || !strings.Contains(err.Error(), "no version in the version list matches") {
+	if _, err := f.app.Pull(ctx, nil, PullOptions{}); err == nil || !strings.Contains(err.Error(), "no version in the version list matches") {
 		t.Errorf("err = %v", err)
 	}
-	if err := f.app.Pull(ctx, []string{"kit@1.0.0-beta.1"}, PullOptions{}); err != nil {
+	if _, err := f.app.Pull(ctx, []string{"kit@1.0.0-beta.1"}, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if got, want := f.available(), []string{"1.0.0-beta.1@2021.3"}; !reflect.DeepEqual(got, want) {
@@ -446,7 +521,7 @@ func TestBrokenVersionListPointsAtUpdate(t *testing.T) {
 	if err := os.WriteFile(f.app.Layout.Index("kit"), []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.app.Pull(ctx, nil, PullOptions{}); err == nil || !strings.Contains(err.Error(), "run `vpmify update kit`") {
+	if _, err := f.app.Pull(ctx, nil, PullOptions{}); err == nil || !strings.Contains(err.Error(), "run `vpmify update kit`") {
 		t.Errorf("pull: err = %v", err)
 	}
 	problems, err := f.app.Doctor(false)
@@ -454,7 +529,7 @@ func TestBrokenVersionListPointsAtUpdate(t *testing.T) {
 		t.Errorf("doctor: problems = %v, err = %v", problemMessages(problems), err)
 	}
 	// update mends it.
-	if err := f.app.Update(ctx, nil); err != nil {
+	if _, err := f.app.Update(ctx, nil); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if problems, err := f.app.Doctor(false); err != nil || len(problems) != 0 {
@@ -495,7 +570,7 @@ func TestRemove(t *testing.T) {
 		t.Fatal(err, f.log)
 	}
 
-	if err := f.app.Remove(ctx, "kit", "1.0.0"); err != nil {
+	if _, err := f.app.Remove(ctx, "kit", "1.0.0"); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if got, want := f.available(), []string{"2.0.0@6000.2"}; !reflect.DeepEqual(got, want) {
@@ -505,7 +580,7 @@ func TestRemove(t *testing.T) {
 		t.Errorf("1.0.0 still in the store: %v", err)
 	}
 
-	if err := f.app.Remove(ctx, "kit", ""); err != nil {
+	if _, err := f.app.Remove(ctx, "kit", ""); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if got := f.available(); len(got) != 0 {
@@ -540,7 +615,7 @@ func TestRegistersEvenWhenARecipeFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.reg.down = true
-	if err := f.app.Update(ctx, nil); err == nil {
+	if _, err := f.app.Update(ctx, nil); err == nil {
 		t.Error("no error while the registry is down")
 	}
 	// Another recipe that cannot be read.
@@ -548,7 +623,7 @@ func TestRegistersEvenWhenARecipeFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := f.app.Pull(ctx, nil, PullOptions{}); err == nil || !strings.Contains(err.Error(), "broken") {
+	if _, err := f.app.Pull(ctx, nil, PullOptions{}); err == nil || !strings.Contains(err.Error(), "broken") {
 		t.Errorf("err = %v", err)
 	}
 	if got, want := f.available(), []string{"1.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
@@ -597,7 +672,7 @@ func TestAddDraftsSavesTheRecipeAsRead(t *testing.T) {
 	if err := os.WriteFile(p, []byte(`{"id": "kit", "source": {"type": "npm", "registry": "`+registryURL+`", "name": "`+pkgName+`"}, "versions": ">=2.0.0"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.app.AddDrafts(ctx, drafts); err != nil {
+	if _, err := f.app.AddDrafts(ctx, drafts); err != nil {
 		t.Fatal(err, f.log)
 	}
 	list, err := f.app.Versions("kit", VersionsOptions{})
@@ -619,7 +694,7 @@ func TestAddDraftsSavesTheRecipeAsRead(t *testing.T) {
 
 func TestAddDraftsRefusesDraftsNotRead(t *testing.T) {
 	f := newFixture(t)
-	if err := f.app.AddDrafts(context.Background(), []Draft{{ID: "kit"}}); err == nil {
+	if _, err := f.app.AddDrafts(context.Background(), []Draft{{ID: "kit"}}); err == nil {
 		t.Error("err = nil")
 	}
 }
@@ -629,7 +704,7 @@ func TestRecipesNamesProblems(t *testing.T) {
 	f.reg.add("1.0.0", "2021.3")
 	ctx := context.Background()
 	p := f.writeRecipe("")
-	if err := f.app.Add(ctx, p); err != nil {
+	if _, err := f.app.Add(ctx, p); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if err := os.WriteFile(filepath.Join(f.app.Layout.Recipes(), "broken.json"), []byte("{"), 0o644); err != nil {
