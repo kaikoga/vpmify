@@ -132,12 +132,20 @@ func jsonString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
+// npmRecipe returns a recipe with one npm source whose one package has the
+// fields in extra (each starting with ", ").
+func npmRecipe(id, registry, name, extra string) string {
+	return `{
+  "id": "` + id + `",
+  "sources": [{"type": "npm", "registry": "` + registry + `", "packages": [{"name": "` + name + `"` + extra + `}]}]
+}`
+}
+
+// writeRecipe writes recipe kit for the fake registry's package, with the
+// package fields in extra.
 func (f *fixture) writeRecipe(extra string) string {
 	f.t.Helper()
-	content := `{
-  "id": "kit",
-  "source": {"type": "npm", "registry": "` + registryURL + `", "name": "` + pkgName + `"}` + extra + `
-}`
+	content := npmRecipe("kit", registryURL, pkgName, extra)
 	p := filepath.Join(f.t.TempDir(), "kit.json")
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 		f.t.Fatal(err)
@@ -192,7 +200,7 @@ func (f *fixture) registered() []string {
 
 func (f *fixture) manifest(version string) map[string]any {
 	f.t.Helper()
-	data, err := os.ReadFile(filepath.Join(f.app.Layout.PackageDir(pkgName, version), "package.json"))
+	data, err := os.ReadFile(filepath.Join(f.app.Layout.PackageDir("kit", pkgName, version), "package.json"))
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -232,8 +240,8 @@ func TestPullPlacesLatestPerUnityAndRegisters(t *testing.T) {
 		t.Errorf("placed = %v, want %v", got, want)
 	}
 	wantFolders := []string{
-		f.app.Layout.PackageDir(pkgName, "1.1.0"),
-		f.app.Layout.PackageDir(pkgName, "2.0.0"),
+		f.app.Layout.PackageDir("kit", pkgName, "1.1.0"),
+		f.app.Layout.PackageDir("kit", pkgName, "2.0.0"),
 		f.foreign,
 	}
 	sort.Strings(wantFolders)
@@ -246,7 +254,7 @@ func TestPullPlacesLatestPerUnityAndRegisters(t *testing.T) {
 	if m := f.manifest("1.1.0"); m["unity"] != "2021.3" || m["unityRelease"] != nil {
 		t.Errorf("1.1.0 manifest = %v", m)
 	}
-	if _, err := os.Stat(filepath.Join(f.app.Layout.PackageDir(pkgName, "2.0.0"), "Runtime", "Kit.cs")); err != nil {
+	if _, err := os.Stat(filepath.Join(f.app.Layout.PackageDir("kit", pkgName, "2.0.0"), "Runtime", "Kit.cs")); err != nil {
 		t.Error(err)
 	}
 	// Work folders are cleaned up.
@@ -321,7 +329,7 @@ func TestResults(t *testing.T) {
 		t.Errorf("added = %+v", added.Added)
 	}
 	// The first list has nothing to call new.
-	if want := []RecipeUpdate{{ID: "kit", Versions: 2, Upstream: 2, New: []string{}}}; !reflect.DeepEqual(added.Recipes, want) {
+	if want := []RecipeUpdate{{ID: "kit", Packages: []PackageUpdate{{Package: pkgName, Versions: 2, Upstream: 2, New: []string{}}}}}; !reflect.DeepEqual(added.Recipes, want) {
 		t.Errorf("add read %+v, want %+v", added.Recipes, want)
 	}
 
@@ -329,7 +337,7 @@ func TestResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err, f.log)
 	}
-	dir := f.app.Layout.PackageDir(pkgName, "1.1.0")
+	dir := f.app.Layout.PackageDir("kit", pkgName, "1.1.0")
 	wantBuilt := []Built{{Recipe: "kit", Package: pkgName, Version: "1.1.0", Unity: "2021.3", Path: dir, Origin: pulled.Built[0].Origin}}
 	if !reflect.DeepEqual(pulled.Built, wantBuilt) || pulled.Built[0].Origin == "" {
 		t.Errorf("built = %+v, want %+v with an origin", pulled.Built, wantBuilt)
@@ -343,7 +351,7 @@ func TestResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err, f.log)
 	}
-	if want := []RecipeUpdate{{ID: "kit", Versions: 3, Upstream: 3, New: []string{"1.2.0"}}}; !reflect.DeepEqual(updated.Recipes, want) {
+	if want := []RecipeUpdate{{ID: "kit", Packages: []PackageUpdate{{Package: pkgName, Versions: 3, Upstream: 3, New: []string{"1.2.0"}}}}}; !reflect.DeepEqual(updated.Recipes, want) {
 		t.Errorf("update read %+v, want %+v", updated.Recipes, want)
 	}
 
@@ -405,7 +413,10 @@ func TestVersions(t *testing.T) {
 		t.Fatal(err, f.log)
 	}
 	// The version list keeps only the recipe's range, so 0.9.0 is not taken.
-	if _, err := f.app.Pull(ctx, []string{"kit@0.9.0"}, PullOptions{}); err == nil || !strings.Contains(err.Error(), "outside the recipe's versions") {
+	if _, err := f.app.Pull(ctx, []string{"kit@0.9.0"}, PullOptions{}); err == nil || !strings.Contains(err.Error(), "outside the packages' versions") {
+		t.Errorf("pull kit@0.9.0: err = %v", err)
+	}
+	if _, err := f.app.Pull(ctx, []string{"kit/" + pkgName + "@0.9.0"}, PullOptions{}); err == nil || !strings.Contains(err.Error(), "outside the package's versions") {
 		t.Errorf("pull kit@0.9.0: err = %v", err)
 	}
 	f.reg.down = true // versions reads only the version list
@@ -417,7 +428,7 @@ func TestVersions(t *testing.T) {
 			t.Fatal(err)
 		}
 		var out []string
-		for _, v := range list.Versions {
+		for _, v := range list.Packages[0].Versions {
 			out = append(out, fmt.Sprintf("%s %s newest=%v available=%v", v.Version, v.Unity, v.Newest, v.Available))
 		}
 		return out
@@ -456,12 +467,15 @@ func TestVersions(t *testing.T) {
 	if _, err := f.app.Versions("kit", VersionsOptions{Unity: "six"}); err == nil {
 		t.Error("a bad Unity version was taken")
 	}
-	list, err := f.app.Versions("kit", VersionsOptions{})
+	list, err := f.app.Versions("kit/"+pkgName, VersionsOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if list.Package != pkgName || list.Updated.IsZero() {
+	if len(list.Packages) != 1 || list.Packages[0].Package != pkgName || list.Packages[0].Updated.IsZero() || list.Packages[0].Source != "npm "+registryURL {
 		t.Errorf("list = %+v", list)
+	}
+	if _, err := f.app.Versions("kit/com.example.none", VersionsOptions{}); err == nil {
+		t.Error("versions of a package the recipe does not have")
 	}
 }
 
@@ -473,7 +487,7 @@ func TestPullRefusesAVersionListOfAnotherRecipe(t *testing.T) {
 		t.Fatal(err, f.log)
 	}
 	// The user edits the recipe to read another registry.
-	edited := `{"id": "kit", "source": {"type": "npm", "registry": "http://mirror.test", "name": "` + pkgName + `"}}`
+	edited := npmRecipe("kit", "http://mirror.test", pkgName, "")
 	if err := os.WriteFile(filepath.Join(f.app.Layout.Recipes(), "kit.json"), []byte(edited), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -576,7 +590,7 @@ func TestRemove(t *testing.T) {
 	if got, want := f.available(), []string{"2.0.0@6000.2"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed = %v, want %v", got, want)
 	}
-	if _, err := os.Stat(f.app.Layout.PackageDir(pkgName, "1.0.0")); !os.IsNotExist(err) {
+	if _, err := os.Stat(f.app.Layout.PackageDir("kit", pkgName, "1.0.0")); !os.IsNotExist(err) {
 		t.Errorf("1.0.0 still in the store: %v", err)
 	}
 
@@ -661,7 +675,7 @@ func TestAddDraftsSavesTheRecipeAsRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Draft{ID: "kit", Package: pkgName, Source: "npm " + registryURL, Versions: ">=1.0.0", Origin: p}
+	want := Draft{ID: "kit", Packages: []DraftPackage{{Name: pkgName, Source: "npm " + registryURL, Versions: ">=1.0.0"}}, Origin: p}
 	got := drafts[0]
 	got.recipe, got.data = nil, nil
 	if !reflect.DeepEqual(got, want) {
@@ -669,7 +683,7 @@ func TestAddDraftsSavesTheRecipeAsRead(t *testing.T) {
 	}
 
 	// The file changes after the user saw the draft; what was shown is saved.
-	if err := os.WriteFile(p, []byte(`{"id": "kit", "source": {"type": "npm", "registry": "`+registryURL+`", "name": "`+pkgName+`"}, "versions": ">=2.0.0"}`), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(npmRecipe("kit", registryURL, pkgName, `, "versions": ">=2.0.0"`)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.app.AddDrafts(ctx, drafts); err != nil {
@@ -679,8 +693,8 @@ func TestAddDraftsSavesTheRecipeAsRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list.Versions) != 2 {
-		t.Errorf("versions = %+v, want 1.0.0 and 2.0.0", list.Versions)
+	if len(list.Packages[0].Versions) != 2 {
+		t.Errorf("versions = %+v, want 1.0.0 and 2.0.0", list.Packages[0].Versions)
 	}
 
 	again, err := f.app.ReadRecipes(ctx, p)
@@ -710,7 +724,7 @@ func TestRecipesNamesProblems(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(f.app.Layout.Recipes(), "broken.json"), []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	unread := `{"id": "unread", "source": {"type": "npm", "registry": "` + registryURL + `", "name": "com.example.other"}}`
+	unread := npmRecipe("unread", registryURL, "com.example.other", "")
 	if err := os.WriteFile(filepath.Join(f.app.Layout.Recipes(), "unread.json"), []byte(unread), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -723,13 +737,13 @@ func TestRecipesNamesProblems(t *testing.T) {
 	for _, r := range recipes {
 		got[r.ID] = r
 	}
-	if r := got["kit"]; r.Package != pkgName || r.Origin != p || r.Problem != "" {
+	if r := got["kit"]; !reflect.DeepEqual(r.Packages, []string{pkgName}) || r.Origin != p || r.Problem != "" {
 		t.Errorf("kit = %+v", r)
 	}
 	if r := got["broken"]; r.Problem == "" {
 		t.Errorf("broken = %+v, want a problem", r)
 	}
-	if r := got["unread"]; r.Package != "com.example.other" || !strings.Contains(r.Problem, "update") {
+	if r := got["unread"]; !reflect.DeepEqual(r.Packages, []string{"com.example.other"}) || !strings.Contains(r.Problem, "update") {
 		t.Errorf("unread = %+v, want a problem naming update", r)
 	}
 	if len(recipes) != 3 {

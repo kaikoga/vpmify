@@ -50,9 +50,12 @@ func (l Layout) Home() string { return filepath.Join(l.Base, "Vpmify") }
 // Packages is the store of converted packages.
 func (l Layout) Packages() string { return filepath.Join(l.Home(), "packages") }
 
-// PackageDir is the folder of one version of a package in the store.
-func (l Layout) PackageDir(name, version string) string {
-	return filepath.Join(l.Packages(), name, version)
+// PackageDir is the folder of one version of a package that recipe id
+// makes, in the store. The store is divided by recipe, so that recipes that
+// provide the same package do not share folders; ALCOM chooses among the
+// versions they register (kaikoga 2026-11-19).
+func (l Layout) PackageDir(id, name, version string) string {
+	return filepath.Join(l.Packages(), id, name, version)
 }
 
 // Cache holds downloaded archives.

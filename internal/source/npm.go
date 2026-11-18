@@ -12,10 +12,10 @@ import (
 	"github.com/kaikoga/vpmify/internal/semver"
 )
 
-// NPM is a package on an npm-compatible registry (npmjs, OpenUPM).
+// NPM is packages on an npm-compatible registry (npmjs, OpenUPM).
 type NPM struct {
 	Registry string
-	Package  string
+	Packages []string
 	Client   *fetch.Client
 }
 
@@ -37,16 +37,28 @@ type packumentRecord struct {
 	} `json:"dist"`
 }
 
-// Releases lists the versions in the registry, oldest first. Versions whose
-// number is not SemVer are left out.
-func (n *NPM) Releases(ctx context.Context) ([]Release, error) {
-	u := strings.TrimRight(n.Registry, "/") + "/" + url.PathEscape(n.Package)
+// Releases lists the versions of each package in the registry, oldest
+// first. Versions whose number is not SemVer are left out.
+func (n *NPM) Releases(ctx context.Context) (map[string][]Release, error) {
+	out := map[string][]Release{}
+	for _, name := range n.Packages {
+		rels, err := n.releases(ctx, name)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		out[name] = rels
+	}
+	return out, nil
+}
+
+func (n *NPM) releases(ctx context.Context, name string) ([]Release, error) {
+	u := strings.TrimRight(n.Registry, "/") + "/" + url.PathEscape(name)
 	var doc packument
 	if err := n.Client.GetJSON(ctx, u, &doc); err != nil {
 		return nil, err
 	}
-	if doc.Name != n.Package {
-		return nil, fmt.Errorf("registry returned %q for %q", doc.Name, n.Package)
+	if doc.Name != name {
+		return nil, fmt.Errorf("registry returned %q for %q", doc.Name, name)
 	}
 	var out []Release
 	for key, rec := range doc.Versions {
@@ -64,7 +76,7 @@ func (n *NPM) Releases(ctx context.Context) ([]Release, error) {
 			Dependencies: rec.Dependencies,
 			ArchiveURL:   rec.Dist.Tarball,
 			Digests:      fetch.Digests{Integrity: rec.Dist.Integrity, Shasum: rec.Dist.Shasum},
-			CacheKey:     path.Join("npm", n.Package, v.String()+".tgz"),
+			CacheKey:     path.Join("npm", name, v.String()+".tgz"),
 			Origin:       "npm " + v.String(),
 		})
 	}

@@ -1,14 +1,17 @@
 package app
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/kaikoga/vpmify/internal/alcom"
 	"github.com/kaikoga/vpmify/internal/convert"
+	"github.com/kaikoga/vpmify/internal/recipe"
 	"github.com/kaikoga/vpmify/internal/state"
 )
 
@@ -20,8 +23,7 @@ import (
 //
 // Only folders in the store that no other record points to are deleted. A
 // record may point outside the store after the user moved Vpmify's data, and
-// two records may share a folder when two recipes provide one package (add
-// refuses that, but recipes written by hand may still do it).
+// a state.json edited by hand may have two records share a folder.
 //
 // saved is true once st is saved, from which point the versions are
 // forgotten whatever fails after; change is what the registration did.
@@ -116,17 +118,21 @@ func (a *App) Clean(apply bool) (entries []Entry, changed bool, err error) {
 	return out, changed, err
 }
 
-// removeFromStore deletes a folder in the store, and the package folder
-// above it when that is left empty.
+// removeFromStore deletes a folder in the store, and the package and the
+// recipe folders above it when they are left empty.
 func (a *App) removeFromStore(dir string) error {
 	a.logf("deleting %s", dir)
 	if err := os.RemoveAll(dir); err != nil {
 		return err
 	}
+	owner := a.reconciler()
 	parent := filepath.Dir(dir)
-	if a.reconciler().Owns(parent) {
-		// Fails, as wanted, when other versions are left.
-		_ = os.Remove(parent)
+	for range 2 {
+		// Fails, as wanted, when something else is left.
+		if !owner.Owns(parent) || os.Remove(parent) != nil {
+			break
+		}
+		parent = filepath.Dir(parent)
 	}
 	return nil
 }
@@ -165,7 +171,7 @@ func (a *App) Doctor(fix bool) ([]Problem, error) {
 			return err
 		}
 		hasRecipe := map[string]bool{}
-		providers := map[string][]string{}
+		recipes := map[string]*recipe.Recipe{}
 		for _, id := range ids {
 			hasRecipe[id] = true
 			r, err := a.loadRecipe(id)
@@ -173,16 +179,11 @@ func (a *App) Doctor(fix bool) ([]Problem, error) {
 				add(&Problem{Message: fmt.Sprintf("%s: recipe cannot be read: %v", id, err)})
 				continue
 			}
-			providers[r.Source.Name] = append(providers[r.Source.Name], id)
+			recipes[id] = r
 			// A missing, stale or broken version list needs the network to
 			// mend, so doctor only points at update.
-			if _, err := a.loadIndex(r); err != nil {
+			if _, err := a.loadLists(r); err != nil {
 				add(&Problem{Message: fmt.Sprintf("%s: %v", id, err)})
-			}
-		}
-		for _, name := range state.SortedKeys(providers) {
-			if ids := providers[name]; len(ids) > 1 {
-				add(&Problem{Message: fmt.Sprintf("recipes %v all provide %s and share its folders; `vpmify remove` all but one", ids, name)})
 			}
 		}
 
@@ -194,6 +195,12 @@ func (a *App) Doctor(fix bool) ([]Problem, error) {
 			}
 			for _, name := range state.SortedKeys(rs.Packages) {
 				ps := rs.Packages[name]
+				// Not removed on its own: a project may lock the versions.
+				if r := recipes[id]; r != nil && len(ps.Versions) > 0 {
+					if src, _ := r.Package(name); src == nil {
+						add(&Problem{Message: fmt.Sprintf("%s: versions of %s are available but the recipe no longer provides it; `vpmify remove %s/%s` deletes them", id, name, id, name)})
+					}
+				}
 				for _, v := range ps.SortedVersions() {
 					p, inStore := a.checkVersion(id, name, v, ps)
 					if p != nil {
@@ -201,10 +208,13 @@ func (a *App) Doctor(fix bool) ([]Problem, error) {
 					}
 					// A folder in the store is reported once, by its version.
 					if inStore {
-						keep[a.Layout.PackageDir(name, v)] = true
+						keep[a.Layout.PackageDir(id, name, v)] = true
 					}
 				}
 			}
+		}
+		for _, p := range differingCopies(st) {
+			add(p)
 		}
 
 		orphans, err := a.storeOrphans(keep)
@@ -262,8 +272,8 @@ func (a *App) Doctor(fix bool) ([]Problem, error) {
 // the version's folder in the store is accounted for by this record.
 func (a *App) checkVersion(id, name, v string, ps *state.PackageState) (p *Problem, inStore bool) {
 	vs := ps.Versions[v]
-	want := a.Layout.PackageDir(name, v)
-	resync := fmt.Sprintf("; `vpmify pull %s@%s` makes it available again", id, v)
+	want := a.Layout.PackageDir(id, name, v)
+	resync := fmt.Sprintf("; `vpmify pull %s/%s@%s` makes it available again", id, name, v)
 	forget := func() { delete(ps.Versions, v) }
 	if !samePath(vs.Path, want) {
 		// The user may have moved Vpmify's data. The recorded folder is
@@ -368,47 +378,95 @@ func (a *App) checkRegistration(st *state.State, forgotten map[string]bool) ([]*
 // osClutter are files the OS's file browser leaves in folders it shows.
 var osClutter = map[string]bool{".DS_Store": true, "desktop.ini": true, "Thumbs.db": true}
 
-// storeOrphans returns what the store holds, at the package and the version
-// level, besides the folders in keep. A package folder with nothing to keep
-// is returned whole. Files the OS's file browser leaves are not counted, so
-// opening the store in a file browser does not make doctor fail.
+// storeOrphans returns what the store holds, at the recipe, the package and
+// the version level, besides the folders in keep. A folder with nothing to
+// keep is returned whole. Files the OS's file browser leaves are not
+// counted, so opening the store in a file browser does not make doctor fail.
 func (a *App) storeOrphans(keep map[string]bool) ([]string, error) {
-	var out []string
-	names, err := readDirNames(a.Layout.Packages())
+	out, _, err := orphansIn(a.Layout.Packages(), 3, keep)
+	return out, err
+}
+
+// orphansIn returns what dir holds, depth levels down to the version
+// folders, besides the folders in keep, and whether dir holds any folder to
+// keep.
+func orphansIn(dir string, depth int, keep map[string]bool) (out []string, kept bool, err error) {
+	names, err := readDirNames(dir)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	for _, name := range names {
-		if osClutter[name] {
+	for _, n := range names {
+		if osClutter[n] {
 			continue
 		}
-		pkgDir := filepath.Join(a.Layout.Packages(), name)
-		if !isDir(pkgDir) {
-			out = append(out, pkgDir)
+		p := filepath.Join(dir, n)
+		if depth == 1 {
+			if keep[p] {
+				kept = true
+			} else {
+				out = append(out, p)
+			}
 			continue
 		}
-		versions, err := readDirNames(pkgDir)
+		if !isDir(p) {
+			out = append(out, p)
+			continue
+		}
+		sub, subKept, err := orphansIn(p, depth-1, keep)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		var orphans []string
-		counted := 0
-		for _, v := range versions {
-			if osClutter[v] {
-				continue
-			}
-			counted++
-			if p := filepath.Join(pkgDir, v); !keep[p] {
-				orphans = append(orphans, p)
-			}
-		}
-		if len(orphans) == counted {
-			out = append(out, pkgDir)
+		if subKept {
+			kept = true
+			out = append(out, sub...)
 		} else {
-			out = append(out, orphans...)
+			out = append(out, p)
 		}
 	}
-	return out, nil
+	return out, kept, nil
+}
+
+// differingCopies returns a problem for each package version that two or
+// more recipes make with different package.json. ALCOM tells them apart by
+// name and version only, so it uses one of them, and which one depends on
+// how the package is installed; Vpmify leaves that to ALCOM and only says so
+// (kaikoga 2026-11-19).
+func differingCopies(st *state.State) []*Problem {
+	type copyOf struct{ recipe, manifest string }
+	byVersion := map[string][]copyOf{}
+	for _, id := range state.SortedKeys(st.Recipes) {
+		for name, ps := range st.Recipes[id].Packages {
+			for v, vs := range ps.Versions {
+				data, err := os.ReadFile(filepath.Join(vs.Path, "package.json"))
+				if err != nil {
+					continue // checkVersion reports it
+				}
+				var m any
+				if json.Unmarshal(data, &m) != nil {
+					continue
+				}
+				// encoding/json writes map keys sorted, so equal content
+				// gives equal bytes.
+				canonical, _ := json.Marshal(m)
+				key := name + " " + v
+				byVersion[key] = append(byVersion[key], copyOf{id, string(canonical)})
+			}
+		}
+	}
+	var out []*Problem
+	for _, key := range state.SortedKeys(byVersion) {
+		copies := byVersion[key]
+		var ids []string
+		differ := false
+		for _, c := range copies {
+			ids = append(ids, c.recipe)
+			differ = differ || c.manifest != copies[0].manifest
+		}
+		if differ {
+			out = append(out, &Problem{Message: fmt.Sprintf("%s: recipes %s make it with different package.json; ALCOM uses one of them", key, strings.Join(ids, ", "))})
+		}
+	}
+	return out
 }
 
 func readDirNames(dir string) ([]string, error) {

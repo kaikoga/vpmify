@@ -15,16 +15,26 @@ import (
 	"github.com/kaikoga/vpmify/internal/testutil"
 )
 
+const monoURL = "https://github.com/owner/mono.git"
+
 // monorepo is a repository with two packages in lockstep, like UniVRM's
 // com.vrmc.gltf and com.vrmc.univrm.
 func monorepo(versions ...string) *testutil.FakeGitHub {
 	gh := testutil.NewFakeGitHub("owner", "mono")
 	for _, v := range versions {
-		gh.Tag("v"+v, map[string]string{
-			"README.md":                  "root",
-			"Packages/Base/package.json": fmt.Sprintf(`{"name": "com.example.base", "version": %q, "unity": "2021.3"}`, v),
-			"Packages/Base/Base.cs":      "class Base {}",
-			"Packages/Pkg/package.json": fmt.Sprintf(`{
+		gh.Tag("v"+v, monoTag(v, v))
+	}
+	return gh
+}
+
+// monoTag is the files of a tag in which base has version base and pkg
+// version pkg.
+func monoTag(base, pkg string) map[string]string {
+	return map[string]string{
+		"README.md":                  "root",
+		"Packages/Base/package.json": fmt.Sprintf(`{"name": "com.example.base", "version": %q, "unity": "2021.3"}`, base),
+		"Packages/Base/Base.cs":      "class Base {}",
+		"Packages/Pkg/package.json": fmt.Sprintf(`{
   "name": "com.example.pkg",
   "version": %q,
   "unity": "2021.3",
@@ -34,11 +44,9 @@ func monorepo(versions ...string) *testutil.FakeGitHub {
     "org.other.lib": "1.0.0"
   }
 }
-`, v, v),
-			"Packages/Pkg/Pkg.cs": "class Pkg {}",
-		})
+`, pkg, base),
+		"Packages/Pkg/Pkg.cs": "class Pkg {}",
 	}
-	return gh
 }
 
 // pkgNeedsBase makes pkg depend on base in vpmDependencies, as a recipe
@@ -46,18 +54,31 @@ func monorepo(versions ...string) *testutil.FakeGitHub {
 const pkgNeedsBase = `,
   "overrides": [{"set": {"vpmDependencies": {"com.example.base": ">={dependencies}"}}}]`
 
-func (f *fixture) writeGitRecipe(id, name, dir, extra string) string {
-	f.t.Helper()
-	content := fmt.Sprintf(`{
+// gitRecipe returns a recipe with one source on the monorepo, whose
+// packages are given as JSON objects.
+func gitRecipe(id, sourceExtra string, packages ...string) string {
+	return fmt.Sprintf(`{
   "id": %q,
-  "source": {"type": "github", "url": "https://github.com/owner/mono.git", "name": %q, "tagPattern": "v*"},
-  "path": %q%s
-}`, id, name, dir, extra)
-	p := filepath.Join(f.t.TempDir(), id+".json")
+  "sources": [{"type": "github", "url": %q, "tagPattern": "v*"%s, "packages": [%s]}]
+}`, id, monoURL, sourceExtra, strings.Join(packages, ", "))
+}
+
+func gitPackage(name, dir, extra string) string {
+	return fmt.Sprintf(`{"name": %q, "path": %q%s}`, name, dir, extra)
+}
+
+func (f *fixture) writeFile(name, content string) string {
+	f.t.Helper()
+	p := filepath.Join(f.t.TempDir(), name)
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 		f.t.Fatal(err)
 	}
 	return p
+}
+
+func (f *fixture) writeGitRecipe(id, name, dir, extra string) string {
+	f.t.Helper()
+	return f.writeFile(id+".json", gitRecipe(id, "", gitPackage(name, dir, extra)))
 }
 
 func TestGitRecipesShareArchivesAndWriteTheDependenciesTheyName(t *testing.T) {
@@ -71,7 +92,7 @@ func TestGitRecipesShareArchivesAndWriteTheDependenciesTheyName(t *testing.T) {
 		f.writeGitRecipe("base", "com.example.base", "Packages/Base", "")); err != nil {
 		t.Fatal(err, f.log)
 	}
-	pkgDir := f.app.Layout.PackageDir("com.example.pkg", "1.1.0")
+	pkgDir := f.app.Layout.PackageDir("pkg", "com.example.pkg", "1.1.0")
 	m := readManifest(t, pkgDir)
 	if got, want := m["vpmDependencies"], map[string]any{"com.example.base": ">=1.1.0"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("vpmDependencies = %v, want %v", got, want)
@@ -119,7 +140,7 @@ func TestARecipeBuildsTheSameWhateverOtherRecipesThereAre(t *testing.T) {
 	if err := f.addAndPull(PullOptions{}, f.writeGitRecipe("base", "com.example.base", "Packages/Base", "")); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if m := readManifest(t, f.app.Layout.PackageDir("com.example.pkg", "1.1.0")); m["vpmDependencies"] != nil {
+	if m := readManifest(t, f.app.Layout.PackageDir("pkg", "com.example.pkg", "1.1.0")); m["vpmDependencies"] != nil {
 		t.Errorf("vpmDependencies = %v", m["vpmDependencies"])
 	}
 	if n := strings.Count(f.log.String(), "converting com.example.pkg"); n != 1 {
@@ -151,7 +172,7 @@ func TestPullAddsTheDependencyItWrites(t *testing.T) {
 	if want := []string{"com.example.pkg 1.1.0 false", "com.example.pkg 1.0.0 false", "com.example.base 1.0.0 true", "com.example.base 1.1.0 true"}; !reflect.DeepEqual(built, want) {
 		t.Errorf("built = %v, want %v", built, want)
 	}
-	m := readManifest(t, f.app.Layout.PackageDir("com.example.pkg", "1.0.0"))
+	m := readManifest(t, f.app.Layout.PackageDir("pkg", "com.example.pkg", "1.0.0"))
 	if got, want := m["vpmDependencies"], map[string]any{"com.example.base": ">=1.0.0"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("vpmDependencies = %v, want %v", got, want)
 	}
@@ -167,12 +188,7 @@ func TestPullFailsWhenTheDependencyCannotBeAdded(t *testing.T) {
 	f.app.Client.HTTP.Transport = gh
 	ctx := context.Background()
 	// base's recipe reads only tags before pkg's version.
-	content := `{"id": "base", "source": {"type": "github", "url": "https://github.com/owner/mono.git", "name": "com.example.base", "tagPattern": "v*", "tags": "<1.1.0"},
-  "path": "Packages/Base"}`
-	p := filepath.Join(t.TempDir(), "base.json")
-	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	p := f.writeFile("base.json", gitRecipe("base", `, "tags": "<1.1.0"`, gitPackage("com.example.base", "Packages/Base", "")))
 	if _, err := f.app.Add(ctx, f.writeGitRecipe("pkg", "com.example.pkg", "Packages/Pkg", pkgNeedsBase), p); err != nil {
 		t.Fatal(err, f.log)
 	}
@@ -204,12 +220,11 @@ func TestPullBuildsAgainOnlyTheRecipesItPulls(t *testing.T) {
 		t.Fatal(err, f.log)
 	}
 	// New overrides keep the version list but change how pkg is built.
-	content := `{"id": "pkg", "source": {"type": "github", "url": "https://github.com/owner/mono.git", "name": "com.example.pkg", "tagPattern": "v*"},
-  "path": "Packages/Pkg", "overrides": [{"set": {"displayName": "X"}}]}`
+	content := gitRecipe("pkg", "", gitPackage("com.example.pkg", "Packages/Pkg", `, "overrides": [{"set": {"displayName": "X"}}]`))
 	if err := os.WriteFile(f.app.recipePath("pkg"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	pkgDir := f.app.Layout.PackageDir("com.example.pkg", "1.1.0")
+	pkgDir := f.app.Layout.PackageDir("pkg", "com.example.pkg", "1.1.0")
 	if _, err := f.app.Pull(ctx, []string{"base"}, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
@@ -221,7 +236,7 @@ func TestPullBuildsAgainOnlyTheRecipesItPulls(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.app.Client.HTTP.Transport = failCodeload{gh}
-	if _, err := f.app.Pull(ctx, []string{"pkg"}, PullOptions{}); err == nil || !strings.Contains(err.Error(), "pkg: com.example.pkg 1.1.0") {
+	if _, err := f.app.Pull(ctx, []string{"pkg"}, PullOptions{}); err == nil || !strings.Contains(err.Error(), "pkg: com.example.pkg: 1.1.0") {
 		t.Errorf("err = %v", err)
 	}
 
@@ -232,6 +247,264 @@ func TestPullBuildsAgainOnlyTheRecipesItPulls(t *testing.T) {
 	if m := readManifest(t, pkgDir); m["displayName"] != "X" {
 		t.Errorf("pkg not built again: %v", m)
 	}
+}
+
+// sameTagRepo has base numbered apart from the tags, as UniVRM's UniGLTF
+// was, and a tag without base.
+func sameTagRepo() *testutil.FakeGitHub {
+	gh := testutil.NewFakeGitHub("owner", "mono")
+	gh.Tag("v1.0.0", monoTag("2.16.0", "1.0.0"))
+	gh.Tag("v1.1.0", monoTag("2.17.0", "1.1.0"))
+	noBase := monoTag("0.0.0", "1.2.0")
+	delete(noBase, "Packages/Base/package.json")
+	gh.Tag("v1.2.0", noBase)
+	return gh
+}
+
+// pkgSameTag is a recipe whose pkg depends on the base of its own tag.
+var pkgSameTag = gitRecipe("mono", "",
+	gitPackage("com.example.base", "Packages/Base", ""),
+	gitPackage("com.example.pkg", "Packages/Pkg", `, "overrides": [{"set": {"vpmDependencies": {"com.example.base": "={sameTag}"}}}]`))
+
+func TestSameTag(t *testing.T) {
+	f := newFixture(t)
+	gh := sameTagRepo()
+	f.app.Client.HTTP.Transport = gh
+	ctx := context.Background()
+	if _, err := f.app.Add(ctx, f.writeFile("mono.json", pkgSameTag)); err != nil {
+		t.Fatal(err, f.log)
+	}
+	// One listing of the tags reads both packages.
+	if n := gh.Requests["refs"]; n != 1 {
+		t.Errorf("refs requests = %d, want 1", n)
+	}
+
+	// pkg 1.2.0 has no base in its tag, so it cannot be converted.
+	list, err := f.app.Versions("mono/com.example.pkg", VersionsOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var shown []string
+	for _, v := range list.Packages[0].Versions {
+		shown = append(shown, fmt.Sprintf("%s newest=%v unusable=%v", v.Version, v.Newest, v.Unusable != ""))
+	}
+	if want := []string{"1.2.0 newest=false unusable=true", "1.1.0 newest=true unusable=false", "1.0.0 newest=false unusable=false"}; !reflect.DeepEqual(shown, want) {
+		t.Errorf("versions = %v, want %v", shown, want)
+	}
+	if _, err := f.app.Pull(ctx, []string{"mono/com.example.pkg@1.2.0"}, PullOptions{}); err == nil || !strings.Contains(err.Error(), "same tag has no version of com.example.base") {
+		t.Errorf("pull 1.2.0: err = %v", err)
+	}
+
+	// Naming only an old pkg brings the base of its tag, from the recipe.
+	res, err := f.app.Pull(ctx, []string{"mono/com.example.pkg@1.0.0"}, PullOptions{})
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	var built []string
+	for _, b := range res.Built {
+		built = append(built, fmt.Sprintf("%s %s %v", b.Package, b.Version, b.Dependency))
+	}
+	// The named package is chosen from, the other is only made to satisfy
+	// it.
+	if want := []string{"com.example.pkg 1.1.0 false", "com.example.pkg 1.0.0 false", "com.example.base 2.16.0 true", "com.example.base 2.17.0 true"}; !reflect.DeepEqual(built, want) {
+		t.Errorf("built = %v, want %v", built, want)
+	}
+	m := readManifest(t, f.app.Layout.PackageDir("mono", "com.example.pkg", "1.0.0"))
+	if got, want := m["vpmDependencies"], map[string]any{"com.example.base": "=2.16.0"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("vpmDependencies = %v, want %v", got, want)
+	}
+}
+
+// "<id>@<version>" names the version in every package that has it, and
+// "<id>/<name>@<version>" in that package only.
+func TestPullNamesVersionsByPackage(t *testing.T) {
+	f := newFixture(t)
+	gh := monorepo("1.0.0", "1.1.0")
+	f.app.Client.HTTP.Transport = gh
+	ctx := context.Background()
+	recipe := gitRecipe("mono", "",
+		gitPackage("com.example.base", "Packages/Base", ""),
+		gitPackage("com.example.pkg", "Packages/Pkg", ""))
+	if _, err := f.app.Add(ctx, f.writeFile("mono.json", recipe)); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if _, err := f.app.Pull(ctx, []string{"mono/com.example.base@1.0.0"}, PullOptions{}); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if got, want := f.available(), []string{"1.0.0@2021.3", "1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("after base@1.0.0: available = %v, want %v (base only)", got, want)
+	}
+	if _, err := f.app.Pull(ctx, []string{"mono@1.0.0"}, PullOptions{}); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if got, want := f.available(), []string{"1.0.0@2021.3", "1.1.0@2021.3", "1.0.0@2021.3", "1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("after mono@1.0.0: available = %v, want %v", got, want)
+	}
+	if _, err := f.app.Pull(ctx, []string{"mono/com.example.none"}, PullOptions{}); err == nil {
+		t.Error("pulled a package the recipe does not have")
+	}
+
+	// remove takes the same names.
+	res, err := f.app.Remove(ctx, "mono/com.example.pkg", "")
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	if len(res.Removed) != 2 || res.RecipeRemoved {
+		t.Errorf("remove pkg = %+v", res)
+	}
+	if _, err := f.app.Remove(ctx, "mono", "1.0.0"); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if got, want := f.available(), []string{"1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("after removing: available = %v, want %v", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(f.app.Layout.Recipes(), "mono.json")); err != nil {
+		t.Errorf("the recipe went with its package: %v", err)
+	}
+}
+
+// Two recipes may provide one package: each has its own folders, and ALCOM
+// chooses among the versions both register (kaikoga 2026-11-19).
+func TestRecipesThatShareAPackage(t *testing.T) {
+	f := newFixture(t)
+	gh := monorepo("1.0.0", "1.1.0")
+	f.app.Client.HTTP.Transport = gh
+	ctx := context.Background()
+	both := gitRecipe("both", "",
+		gitPackage("com.example.base", "Packages/Base", ""),
+		gitPackage("com.example.pkg", "Packages/Pkg", pkgNeedsBase))
+	// The other recipe makes base with another package.json.
+	alone := gitRecipe("alone", "", gitPackage("com.example.base", "Packages/Base", `, "overrides": [{"set": {"displayName": "Base"}}]`))
+	if err := f.addAndPull(PullOptions{}, f.writeFile("both.json", both), f.writeFile("alone.json", alone)); err != nil {
+		t.Fatal(err, f.log)
+	}
+	mine := f.app.Layout.PackageDir("both", "com.example.base", "1.1.0")
+	theirs := f.app.Layout.PackageDir("alone", "com.example.base", "1.1.0")
+	registered := strings.Join(f.registered(), "\n")
+	if !strings.Contains(registered, mine) || !strings.Contains(registered, theirs) {
+		t.Errorf("registered = %s", registered)
+	}
+	problems, err := f.app.Doctor(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msgs := problemMessages(problems); len(msgs) != 1 || !strings.Contains(msgs[0], "com.example.base 1.1.0: recipes alone, both make it with different package.json") {
+		t.Errorf("doctor = %v", msgs)
+	}
+
+	// The dependency comes from the dependent's own recipe first.
+	if _, err := f.app.Remove(ctx, "both/com.example.base", ""); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if _, err := f.app.Remove(ctx, "alone", ""); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if _, err := f.app.Add(ctx, f.writeFile("alone.json", alone)); err != nil {
+		t.Fatal(err, f.log)
+	}
+	res, err := f.app.Pull(ctx, []string{"both/com.example.pkg"}, PullOptions{})
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	var built []string
+	for _, b := range res.Built {
+		built = append(built, b.Recipe+" "+b.Package+" "+b.Version)
+	}
+	if want := []string{"both com.example.base 1.1.0"}; !reflect.DeepEqual(built, want) {
+		t.Errorf("built = %v, want %v", built, want)
+	}
+	// Removing one recipe leaves the other's folders.
+	if _, err := f.app.Remove(ctx, "both", ""); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if _, err := f.app.Pull(ctx, []string{"alone"}, PullOptions{}); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if _, err := f.app.Remove(ctx, "alone/com.example.base", "1.1.0"); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if _, err := os.Stat(filepath.Join(f.app.Layout.Packages(), "alone")); !os.IsNotExist(err) {
+		t.Errorf("the recipe's folder is left empty: %v", err)
+	}
+	if problems, err := f.app.Doctor(false); err != nil || len(problems) != 0 {
+		t.Errorf("doctor = %v, %v", problemMessages(problems), err)
+	}
+}
+
+// A source that cannot be read keeps its last list, and the recipe's other
+// sources go on.
+func TestUpdateGoesOnPastASourceThatFails(t *testing.T) {
+	f := newFixture(t)
+	gh := monorepo("1.0.0")
+	f.reg.add("1.0.0", "2021.3")
+	f.app.Client.HTTP.Transport = routeByHost{"github.com": gh, "raw.githubusercontent.com": gh, "codeload.github.com": gh, "registry.test": f.reg}
+	ctx := context.Background()
+	recipe := `{"id": "two", "sources": [
+  {"type": "github", "url": "` + monoURL + `", "packages": [{"name": "com.example.base", "path": "Packages/Base"}]},
+  {"type": "npm", "registry": "` + registryURL + `", "packages": [{"name": "` + pkgName + `"}]}]}`
+	if _, err := f.app.Add(ctx, f.writeFile("two.json", recipe)); err != nil {
+		t.Fatal(err, f.log)
+	}
+	gh.Tag("v1.1.0", monoTag("1.1.0", "1.1.0"))
+	f.reg.add("1.1.0", "2021.3")
+	f.reg.down = true
+	up, err := f.app.Update(ctx, nil)
+	if err == nil || !strings.Contains(err.Error(), "npm "+registryURL) {
+		t.Errorf("update: err = %v", err)
+	}
+	if len(up.Recipes) != 1 || len(up.Recipes[0].Packages) != 1 || !reflect.DeepEqual(up.Recipes[0].Packages[0].New, []string{"1.1.0"}) {
+		t.Errorf("update = %+v", up)
+	}
+	f.reg.down = false
+	if _, err := f.app.Pull(ctx, nil, PullOptions{}); err != nil {
+		t.Fatal(err, f.log)
+	}
+	// The npm package comes from the list the failed update kept.
+	if got, want := f.available(), []string{"1.1.0@2021.3", "1.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("available = %v, want %v", got, want)
+	}
+}
+
+// A package taken out of a recipe leaves its versions available, and
+// doctor names them.
+func TestDoctorNamesAPackageTheRecipeNoLongerHas(t *testing.T) {
+	f := newFixture(t)
+	gh := monorepo("1.0.0")
+	f.app.Client.HTTP.Transport = gh
+	ctx := context.Background()
+	two := gitRecipe("mono", "",
+		gitPackage("com.example.base", "Packages/Base", ""),
+		gitPackage("com.example.pkg", "Packages/Pkg", ""))
+	if err := f.addAndPull(PullOptions{}, f.writeFile("mono.json", two)); err != nil {
+		t.Fatal(err, f.log)
+	}
+	one := gitRecipe("mono", "", gitPackage("com.example.base", "Packages/Base", ""))
+	if _, err := f.app.Add(ctx, f.writeFile("mono.json", one)); err != nil {
+		t.Fatal(err, f.log)
+	}
+	problems, err := f.app.Doctor(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msgs := problemMessages(problems); len(msgs) != 1 || !strings.Contains(msgs[0], "`vpmify remove mono/com.example.pkg`") {
+		t.Errorf("doctor = %v", msgs)
+	}
+	if _, err := f.app.Remove(ctx, "mono/com.example.pkg", ""); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if problems, err := f.app.Doctor(false); err != nil || len(problems) != 0 {
+		t.Errorf("after remove: doctor = %v, %v", problemMessages(problems), err)
+	}
+}
+
+// routeByHost sends each request to the transport for its host.
+type routeByHost map[string]http.RoundTripper
+
+func (r routeByHost) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t, ok := r[req.URL.Host]; ok {
+		return t.RoundTrip(req)
+	}
+	return nil, fmt.Errorf("no route to %s", req.URL.Host)
 }
 
 func readManifest(t *testing.T, dir string) map[string]any {

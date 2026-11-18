@@ -1,0 +1,40 @@
+{
+  "id": "univrm",
+  "sources": [
+    {
+      "type": "github",
+      "url": "https://github.com/vrm-c/UniVRM.git",
+      "tagPattern": "v*",
+      "tags": ">=0.125.0",
+      "packages": [
+        {
+          "name": "com.vrmc.gltf",
+          "paths": [
+            { "tags": ">=0.131.0", "path": "Packages/UniGLTF" },
+            { "tags": "<0.131.0", "path": "Assets/UniGLTF" }
+          ]
+        },
+        {
+          "name": "com.vrmc.univrm",
+          "paths": [
+            { "tags": ">=0.131.0", "path": "Packages/VRM" },
+            { "tags": "<0.131.0", "path": "Assets/VRM" }
+          ],
+          "overrides": [
+            { "set": { "vpmDependencies": { "com.vrmc.gltf": ">={sameTag}" } } }
+          ]
+        },
+        {
+          "name": "com.vrmc.vrm",
+          "paths": [
+            { "tags": ">=0.131.0", "path": "Packages/VRM10" },
+            { "tags": "<0.131.0", "path": "Assets/VRM10" }
+          ],
+          "overrides": [
+            { "set": { "vpmDependencies": { "com.vrmc.gltf": ">={sameTag}" } } }
+          ]
+        }
+      ]
+    }
+  ]
+}

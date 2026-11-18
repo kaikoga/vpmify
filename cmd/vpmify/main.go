@@ -31,20 +31,25 @@ commands:
   add <recipe.json|URL>...     add recipes and read their version lists
   update [<id>...]             read the version lists from upstream again;
                                converts nothing
-  versions [--all] [--available] [--unity <version>] <id>
-                               show the stable versions in a recipe's version
-                               list: --all with prereleases, --available only
-                               those available to ALCOM, --unity only those a
-                               project on that Unity can use
-  pull [--all] [--refetch] [<id>[@<version>]...]
+  versions [--all] [--available] [--unity <version>] <id>[/<package>]
+                               show the stable versions in the version lists of
+                               a recipe's packages, or of one package: --all
+                               with prereleases, --available only those
+                               available to ALCOM, --unity only those a project
+                               on that Unity can use
+  pull [--all] [--refetch] [<id>[/<package>][@<version>]...]
                                convert versions from the version lists and
                                register them with ALCOM, which makes them
-                               available: the newest for each Unity, every
-                               version with --all, and each <id>@<version> named;
+                               available: the newest for each Unity of each
+                               package (of the one named after "/"), every
+                               version with --all, and each @<version> named
+                               (of every package that has it, without "/");
                                --refetch also downloads and builds every
                                available version again
   list                         show available versions
-  remove <id> [<version>]      unregister and delete a version, or the whole recipe
+  remove <id>[/<package>] [<version>]
+                               unregister and delete a version, every version
+                               of a package, or the whole recipe
   doctor [--fix]               find disagreements among recipes, the store and
                                ALCOM's settings; --fix fixes what it can
   clean [--yes]                show what clean deletes; --yes unregisters and deletes
@@ -139,7 +144,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		ids, flags, perr := splitFlags(rest, "--all", "--available")
 		if perr != nil || len(ids) != 1 {
-			return out.usageError("versions takes one recipe id")
+			return out.usageError("versions takes one recipe id, or <id>/<package>")
 		}
 		opt := app.VersionsOptions{All: flags["--all"], Available: flags["--available"], Unity: unity}
 		list, err := a.Versions(ids[0], opt)
@@ -158,7 +163,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return out.result(res, err)
 	case "remove":
 		if len(rest) < 1 || len(rest) > 2 {
-			return out.usageError("remove takes a recipe id and an optional version")
+			return out.usageError("remove takes a recipe id or <id>/<package>, and an optional version")
 		}
 		v := ""
 		if len(rest) == 2 {
@@ -325,30 +330,43 @@ func takeValue(args []string, name string) (rest []string, value string, err err
 	return rest, value, nil
 }
 
-// printVersions prints the versions in a recipe's version list, newest
-// first.
+// printVersions prints the versions in the version lists of a recipe's
+// packages, newest first.
 func printVersions(stdout io.Writer, list *app.VersionList) error {
-	fmt.Fprintf(stdout, "%s (%s), version list of %s\n", list.Recipe, list.Package, list.Updated.Local().Format("2006-01-02 15:04"))
-	if len(list.Versions) == 0 {
-		fmt.Fprintln(stdout, "no version to show")
-		return nil
-	}
-	tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "VERSION\tUNITY\tFROM\tNEWEST\tAVAILABLE")
-	for _, v := range list.Versions {
-		newest, available := "", ""
-		if v.Newest {
-			newest = "yes"
+	for i, p := range list.Packages {
+		if i > 0 {
+			fmt.Fprintln(stdout)
 		}
-		if v.Available {
-			available = "yes"
+		fmt.Fprintf(stdout, "%s/%s (%s), version list of %s\n", list.Recipe, p.Package, p.Source, p.Updated.Local().Format("2006-01-02 15:04"))
+		if len(p.Versions) == 0 {
+			fmt.Fprintln(stdout, "no version to show")
+			continue
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", v.Version, v.Unity, v.Origin, newest, available)
+		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "VERSION\tUNITY\tFROM\tNEWEST\tAVAILABLE")
+		var unusable []app.VersionInfo
+		for _, v := range p.Versions {
+			newest, available := "", ""
+			if v.Newest {
+				newest = "yes"
+			}
+			if v.Available {
+				available = "yes"
+			}
+			if v.Unusable != "" {
+				newest = "-"
+				unusable = append(unusable, v)
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", v.Version, v.Unity, v.Origin, newest, available)
+		}
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+		for _, v := range unusable {
+			fmt.Fprintf(stdout, "%s cannot be converted: %s\n", v.Version, v.Unusable)
+		}
 	}
-	if err := tw.Flush(); err != nil {
-		return err
-	}
-	fmt.Fprintf(stdout, "`vpmify pull` makes the NEWEST ones available; `vpmify pull %s@<version>` adds another.\n", list.Recipe)
+	fmt.Fprintf(stdout, "\n`vpmify pull` makes the NEWEST ones available; `vpmify pull %s/<package>@<version>` adds another.\n", list.Recipe)
 	return nil
 }
 
@@ -376,7 +394,7 @@ func printClean(stdout io.Writer, entries []app.Entry, yes, succeeded bool) erro
 	}
 	fmt.Fprintf(stdout, "deleted %d versions and the downloads.\n", len(entries))
 	fmt.Fprintln(stdout, "run `vpmify pull` to make the newest versions available again, and")
-	fmt.Fprintln(stdout, "`vpmify pull <id>@<version>` for each other version a project needs.")
+	fmt.Fprintln(stdout, "`vpmify pull <id>/<package>@<version>` for each other version a project needs.")
 	return nil
 }
 

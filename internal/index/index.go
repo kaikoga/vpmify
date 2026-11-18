@@ -1,6 +1,6 @@
-// Package index keeps the version list `vpmify update` reads from upstream
+// Package index keeps the version lists `vpmify update` reads from upstream
 // for one recipe: what each version is and where its archive is. `vpmify
-// pull` and `vpmify versions` read only this list, so what they show and
+// pull` and `vpmify versions` read only these lists, so what they show and
 // make available does not change until the next update (kaikoga
 // 2026-11-18).
 package index
@@ -19,20 +19,29 @@ import (
 	"github.com/kaikoga/vpmify/internal/source"
 )
 
-// Format is the version of the index file layout.
-const Format = 1
+// Format is the version of the index file layout. 2: one list per source.
+const Format = 2
 
 // ErrNoIndex means the recipe has not been updated yet.
 var ErrNoIndex = errors.New("no version list")
 
-// Index is the version list of one recipe.
+// Index is the version lists of one recipe, one per source. A source's list
+// is read as a whole, and the lists of a recipe's sources are not: one
+// upstream that fails leaves the other sources' lists new (kaikoga
+// 2026-11-19).
 type Index struct {
-	Format int `json:"format"`
-	// Key is the recipe's ListingKey when the list was read. A recipe whose
+	Format  int     `json:"format"`
+	Sources []*List `json:"sources"`
+}
+
+// List is the version list of one source.
+type List struct {
+	// Key is the source's ListingKey when the list was read. A source whose
 	// key differs now needs another update.
-	Key      string    `json:"key"`
-	Updated  time.Time `json:"updated"`
-	Releases []Entry   `json:"releases"`
+	Key     string    `json:"key"`
+	Updated time.Time `json:"updated"`
+	// Packages are the versions of each package, oldest first.
+	Packages map[string][]Entry `json:"packages"`
 }
 
 // Entry is one version upstream offers, as source.Release has it.
@@ -40,6 +49,7 @@ type Entry struct {
 	Version      string            `json:"version"`
 	Unity        string            `json:"unity,omitempty"`
 	Dependencies map[string]string `json:"dependencies,omitempty"`
+	SameTag      map[string]string `json:"sameTag,omitempty"`
 	Dir          string            `json:"dir,omitempty"`
 	ArchiveURL   string            `json:"archiveUrl"`
 	Integrity    string            `json:"integrity,omitempty"`
@@ -49,24 +59,30 @@ type Entry struct {
 	Origin       string            `json:"origin"`
 }
 
-// New makes an index of releases, read now for a recipe with key.
-func New(key string, releases []source.Release, now time.Time) *Index {
-	idx := &Index{Format: Format, Key: key, Updated: now.UTC(), Releases: []Entry{}}
-	for _, r := range releases {
-		idx.Releases = append(idx.Releases, Entry{
-			Version:      r.Version.String(),
-			Unity:        r.Unity,
-			Dependencies: r.Dependencies,
-			Dir:          r.Dir,
-			ArchiveURL:   r.ArchiveURL,
-			Integrity:    r.Digests.Integrity,
-			Shasum:       r.Digests.Shasum,
-			Pinned:       r.Pinned,
-			CacheKey:     r.CacheKey,
-			Origin:       r.Origin,
-		})
+// NewList makes the list of releases, by package name, read now for a
+// source with key.
+func NewList(key string, releases map[string][]source.Release, now time.Time) *List {
+	l := &List{Key: key, Updated: now.UTC(), Packages: map[string][]Entry{}}
+	for name, rels := range releases {
+		entries := []Entry{}
+		for _, r := range rels {
+			entries = append(entries, Entry{
+				Version:      r.Version.String(),
+				Unity:        r.Unity,
+				Dependencies: r.Dependencies,
+				SameTag:      r.SameTag,
+				Dir:          r.Dir,
+				ArchiveURL:   r.ArchiveURL,
+				Integrity:    r.Digests.Integrity,
+				Shasum:       r.Digests.Shasum,
+				Pinned:       r.Pinned,
+				CacheKey:     r.CacheKey,
+				Origin:       r.Origin,
+			})
+		}
+		l.Packages[name] = entries
 	}
-	return idx
+	return l
 }
 
 // Load reads an index file. A missing file is ErrNoIndex.
@@ -90,6 +106,7 @@ func Load(path string) (*Index, error) {
 
 // Save writes the index file.
 func (idx *Index) Save(path string) error {
+	idx.Format = Format
 	data, err := json.MarshalIndent(idx, "", "  ")
 	if err != nil {
 		return err
@@ -97,10 +114,25 @@ func (idx *Index) Save(path string) error {
 	return fsutil.WriteFileAtomic(path, append(data, '\n'), 0o644)
 }
 
-// SourceReleases returns the versions as source releases, oldest first.
-func (idx *Index) SourceReleases() ([]source.Release, error) {
-	out := make([]source.Release, 0, len(idx.Releases))
-	for _, e := range idx.Releases {
+// List returns the list read for a source with key, or nil.
+func (idx *Index) List(key string) *List {
+	if idx == nil {
+		return nil
+	}
+	for _, l := range idx.Sources {
+		if l != nil && l.Key == key {
+			return l
+		}
+	}
+	return nil
+}
+
+// Releases returns the versions of package name as source releases, oldest
+// first.
+func (l *List) Releases(name string) ([]source.Release, error) {
+	entries := l.Packages[name]
+	out := make([]source.Release, 0, len(entries))
+	for _, e := range entries {
 		v, err := semver.Parse(e.Version)
 		if err != nil {
 			return nil, err
@@ -109,6 +141,7 @@ func (idx *Index) SourceReleases() ([]source.Release, error) {
 			Version:      v,
 			Unity:        e.Unity,
 			Dependencies: e.Dependencies,
+			SameTag:      e.SameTag,
 			Dir:          e.Dir,
 			ArchiveURL:   e.ArchiveURL,
 			Digests:      fetch.Digests{Integrity: e.Integrity, Shasum: e.Shasum},

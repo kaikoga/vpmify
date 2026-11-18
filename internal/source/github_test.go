@@ -15,6 +15,7 @@ func manifest(name, version string) string {
 	return fmt.Sprintf(`{"name": %q, "version": %q, "unity": "2021.3", "dependencies": {"com.example.base": %q}}`, name, version, version)
 }
 
+// newSource returns the upstream of the first source of recipeJSON.
 func newSource(t *testing.T, gh *testutil.FakeGitHub, recipeJSON string) *GitHub {
 	t.Helper()
 	r, err := recipe.Parse([]byte(recipeJSON))
@@ -23,7 +24,7 @@ func newSource(t *testing.T, gh *testutil.FakeGitHub, recipeJSON string) *GitHub
 	}
 	client := fetch.NewClient("vpmify-test")
 	client.HTTP.Transport = gh
-	g, err := NewGitHub(r, client, t.TempDir())
+	g, err := NewGitHub(r.Sources[0], client, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,13 +47,15 @@ func TestGitHubReleases(t *testing.T) {
 
 	src := newSource(t, gh, `{
   "id": "pkg",
-  "source": {"type": "github", "url": "https://github.com/owner/repo.git", "name": "com.example.pkg", "tagPattern": "v*", "tags": ">=0.9.0"},
-  "paths": [{"tags": ">=1.1.0", "path": "Packages/Pkg"}, {"tags": "<1.1.0", "path": "Assets/Pkg"}]
+  "sources": [{"type": "github", "url": "https://github.com/owner/repo.git", "tagPattern": "v*", "tags": ">=0.9.0",
+    "packages": [{"name": "com.example.pkg",
+      "paths": [{"tags": ">=1.1.0", "path": "Packages/Pkg"}, {"tags": "<1.1.0", "path": "Assets/Pkg"}]}]}]
 }`)
-	got, err := src.Releases(context.Background())
+	all, err := src.Releases(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
+	got := all["com.example.pkg"]
 	var summary []string
 	for _, r := range got {
 		summary = append(summary, r.Version.String()+" "+r.Dir+" "+r.Origin)
@@ -72,7 +75,7 @@ func TestGitHubReleases(t *testing.T) {
 	if r.ArchiveURL != "https://codeload.github.com/owner/repo/tar.gz/"+v110 || !r.Pinned {
 		t.Errorf("archive = %s pinned=%v", r.ArchiveURL, r.Pinned)
 	}
-	if r.Dependencies["com.example.base"] != "2.0.0" || r.Unity != "2021.3" {
+	if r.Dependencies["com.example.base"] != "2.0.0" || r.Unity != "2021.3" || r.SameTag != nil {
 		t.Errorf("manifest fields = %+v", r)
 	}
 
@@ -86,6 +89,48 @@ func TestGitHubReleases(t *testing.T) {
 	}
 }
 
+func TestGitHubSameTag(t *testing.T) {
+	gh := testutil.NewFakeGitHub("owner", "repo")
+	// The base's numbers differ from the tag's.
+	gh.Tag("v1.0.0", map[string]string{
+		"Base/package.json": manifest("com.example.base", "2.16.0"),
+		"Pkg/package.json":  manifest("com.example.pkg", "1.0.0"),
+	})
+	// The package stays at 1.0.0 in a newer tag: it keeps the oldest tag's
+	// base.
+	gh.Tag("v1.0.1", map[string]string{
+		"Base/package.json": manifest("com.example.base", "2.17.0"),
+		"Pkg/package.json":  manifest("com.example.pkg", "1.0.0"),
+	})
+	// No base in this tag.
+	gh.Tag("v1.1.0", map[string]string{"Pkg/package.json": manifest("com.example.pkg", "1.1.0")})
+	src := newSource(t, gh, `{"id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
+  "packages": [{"name": "com.example.base", "path": "Base"}, {"name": "com.example.pkg", "path": "Pkg"}]}]}`)
+	all, err := src.Releases(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var summary []string
+	for _, name := range []string{"com.example.base", "com.example.pkg"} {
+		for _, r := range all[name] {
+			summary = append(summary, fmt.Sprintf("%s %s %s %v", name, r.Version, r.Origin, r.SameTag))
+		}
+	}
+	want := []string{
+		"com.example.base 2.16.0 tag v1.0.0 map[com.example.pkg:1.0.0]",
+		"com.example.base 2.17.0 tag v1.0.1 map[com.example.pkg:1.0.0]",
+		"com.example.pkg 1.0.0 tag v1.0.0 map[com.example.base:2.16.0]",
+		"com.example.pkg 1.1.0 tag v1.1.0 map[]",
+	}
+	if !reflect.DeepEqual(summary, want) {
+		t.Errorf("releases =\n%q\nwant\n%q", summary, want)
+	}
+	// One listing of the tags for both packages.
+	if n := gh.Requests["refs"]; n != 1 {
+		t.Errorf("refs requests = %d, want 1", n)
+	}
+}
+
 func TestGitHubTagsRangeLimitsReads(t *testing.T) {
 	gh := testutil.NewFakeGitHub("owner", "repo")
 	for _, v := range []string{"1.0.0", "1.1.0", "2.0.0"} {
@@ -93,12 +138,13 @@ func TestGitHubTagsRangeLimitsReads(t *testing.T) {
 	}
 	src := newSource(t, gh, `{
   "id": "pkg",
-  "source": {"type": "github", "url": "https://github.com/owner/repo", "name": "com.example.pkg", "tags": ">=1.1.0"}
+  "sources": [{"type": "github", "url": "https://github.com/owner/repo", "tags": ">=1.1.0", "packages": [{"name": "com.example.pkg"}]}]
 }`)
-	got, err := src.Releases(context.Background())
+	all, err := src.Releases(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
+	got := all["com.example.pkg"]
 	if len(got) != 2 || got[0].Version.String() != "1.1.0" || got[0].Dir != "" {
 		t.Errorf("releases = %+v", got)
 	}

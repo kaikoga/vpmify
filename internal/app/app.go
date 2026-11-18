@@ -98,12 +98,8 @@ func (a *App) recipeIDs() ([]string, error) {
 // yet, so that the GUI can show what a link would add before the user
 // agrees to it.
 type Draft struct {
-	ID      string `json:"id"`
-	Package string `json:"package"`
-	// Source is where the versions come from: the Git repository's URL, or
-	// "npm" and the registry.
-	Source   string `json:"source"`
-	Versions string `json:"versions,omitempty"`
+	ID       string         `json:"id"`
+	Packages []DraftPackage `json:"packages"`
 	// Origin is the file path or URL the recipe was read from.
 	Origin string `json:"origin"`
 	// Replaces is true when the user already has a recipe with this id.
@@ -111,6 +107,15 @@ type Draft struct {
 
 	recipe *recipe.Recipe
 	data   []byte
+}
+
+// DraftPackage is one package a Draft provides.
+type DraftPackage struct {
+	Name string `json:"name"`
+	// Source is where the versions come from: the Git repository's URL, or
+	// "npm" and the registry.
+	Source   string `json:"source"`
+	Versions string `json:"versions,omitempty"`
 }
 
 func (a *App) readRecipeRef(ctx context.Context, ref string) (Draft, error) {
@@ -132,36 +137,27 @@ func (a *App) readRecipeRef(ctx context.Context, ref string) (Draft, error) {
 	if err != nil {
 		return Draft{}, fmt.Errorf("%s: %w", ref, err)
 	}
-	return Draft{
+	d := Draft{
 		ID:       r.ID,
-		Package:  r.Source.Name,
-		Source:   describeSource(r.Source),
-		Versions: r.Versions,
+		Packages: []DraftPackage{},
 		Origin:   origin,
 		Replaces: fsutil.Exists(a.recipePath(r.ID)),
 		recipe:   r,
 		data:     data,
-	}, nil
-}
-
-func describeSource(s recipe.Source) string {
-	switch s.Type {
-	case recipe.SourceNPM:
-		if s.Registry != "" {
-			return "npm " + s.Registry
-		}
-		return "npm"
-	case recipe.SourceGitHub:
-		return s.URL
 	}
-	return s.Type
+	for _, s := range r.Sources {
+		for _, p := range s.Packages {
+			d.Packages = append(d.Packages, DraftPackage{Name: p.Name, Source: s.Describe(), Versions: p.Versions})
+		}
+	}
+	return d, nil
 }
 
-// checkDrafts refuses two drafts with one id or one package: saving both
-// would keep only the last.
+// checkDrafts refuses two drafts with one id: saving both would keep only
+// the last. Two recipes may provide one package; each has its own folders
+// (kaikoga 2026-11-19).
 func checkDrafts(drafts []Draft) error {
 	ids := map[string]string{}
-	names := map[string]string{}
 	for _, d := range drafts {
 		if d.recipe == nil {
 			return fmt.Errorf("recipe %q was not read by ReadRecipes", d.ID)
@@ -169,11 +165,7 @@ func checkDrafts(drafts []Draft) error {
 		if prev, ok := ids[d.recipe.ID]; ok {
 			return fmt.Errorf("%s and %s both have id %q", prev, d.Origin, d.recipe.ID)
 		}
-		if prev, ok := names[d.recipe.Source.Name]; ok {
-			return fmt.Errorf("%s and %s both provide %s", prev, d.Origin, d.recipe.Source.Name)
-		}
 		ids[d.recipe.ID] = d.Origin
-		names[d.recipe.Source.Name] = d.Origin
 	}
 	return nil
 }
@@ -247,35 +239,11 @@ func (a *App) AddDrafts(ctx context.Context, drafts []Draft) (*AddResult, error)
 	if err := checkDrafts(drafts); err != nil {
 		return nil, err
 	}
-	ids := map[string]bool{}
-	names := map[string]string{}
-	for _, d := range drafts {
-		ids[d.recipe.ID] = true
-		names[d.recipe.Source.Name] = d.Origin
-	}
 	var res *AddResult
 	err := a.withLock(func() error {
 		st, err := state.Load(a.Layout.State())
 		if err != nil {
 			return err
-		}
-		// Two recipes for one package would convert it into the same folders,
-		// and removing one would delete the other's.
-		existing, err := a.recipeIDs()
-		if err != nil {
-			return err
-		}
-		for _, id := range existing {
-			if ids[id] {
-				continue
-			}
-			r, err := a.loadRecipe(id)
-			if err != nil {
-				continue
-			}
-			if ref, ok := names[r.Source.Name]; ok {
-				return fmt.Errorf("%s: recipe %q already provides %s", ref, id, r.Source.Name)
-			}
 		}
 		var addedIDs []string
 		res = &AddResult{Added: []Draft{}, UpdateResult: UpdateResult{Recipes: []RecipeUpdate{}, Errors: []Failure{}}}
@@ -310,10 +278,17 @@ type UpdateResult struct {
 	Errors []Failure `json:"errors"`
 }
 
-// RecipeUpdate is one version list Update read.
+// RecipeUpdate is the version lists Update read for one recipe. A source
+// that could not be read has no packages here, and is in the errors.
 type RecipeUpdate struct {
-	ID string `json:"id"`
-	// Versions is how many versions the list has: those in the recipe's
+	ID       string          `json:"id"`
+	Packages []PackageUpdate `json:"packages"`
+}
+
+// PackageUpdate is the version list of one package.
+type PackageUpdate struct {
+	Package string `json:"package"`
+	// Versions is how many versions the list has: those in the package's
 	// range.
 	Versions int `json:"versions"`
 	// Upstream is how many versions the source has.
@@ -352,100 +327,130 @@ func (a *App) update(ctx context.Context, ids []string) (*UpdateResult, error) {
 	fails := failures{list: &res.Errors}
 	for _, id := range ids {
 		u, err := a.updateRecipe(ctx, id)
+		if len(u.Packages) > 0 {
+			res.Recipes = append(res.Recipes, u)
+		}
 		if err != nil {
 			fails.add(id, err)
-			continue
 		}
-		res.Recipes = append(res.Recipes, u)
 	}
 	return res, fails.err()
 }
 
+// updateRecipe reads the version list of each of recipe id's sources. A
+// source that fails keeps the list it had, if it is still for what the
+// source is, and the others go on (kaikoga 2026-11-19).
 func (a *App) updateRecipe(ctx context.Context, id string) (RecipeUpdate, error) {
+	u := RecipeUpdate{ID: id, Packages: []PackageUpdate{}}
 	r, err := a.loadRecipe(id)
 	if err != nil {
-		return RecipeUpdate{}, err
+		return u, err
 	}
-	src, err := source.New(r, a.Client, a.Layout.Cache())
+	// update writes the index anew whatever is there, so a broken one is
+	// only left unused.
+	prev, _ := index.Load(a.Layout.Index(id))
+	idx := &index.Index{Sources: []*index.List{}}
+	var errs []error
+	for _, s := range r.Sources {
+		key := s.ListingKey()
+		old := prev.List(key)
+		l, ups, err := a.readSource(ctx, id, s, old)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", s.Describe(), err))
+			if old != nil {
+				idx.Sources = append(idx.Sources, old)
+			}
+			continue
+		}
+		idx.Sources = append(idx.Sources, l)
+		u.Packages = append(u.Packages, ups...)
+	}
+	if err := idx.Save(a.Layout.Index(id)); err != nil {
+		errs = append(errs, err)
+	}
+	return u, errors.Join(errs...)
+}
+
+// readSource reads the version list of source s from upstream. old is the
+// list the last update kept for it, if any.
+func (a *App) readSource(ctx context.Context, id string, s *recipe.Source, old *index.List) (*index.List, []PackageUpdate, error) {
+	src, err := source.New(s, a.Client, a.Layout.Cache())
 	if err != nil {
-		return RecipeUpdate{}, err
+		return nil, nil, err
 	}
 	upstream, err := src.Releases(ctx)
 	if err != nil {
-		return RecipeUpdate{}, err
+		return nil, nil, err
 	}
-	// The recipe's range is the rule for what Vpmify takes from the source,
-	// so the list keeps only the versions in it (kaikoga 2026-11-18).
-	var releases []source.Release
-	for _, rel := range upstream {
-		if r.InRange(rel.Version) {
-			releases = append(releases, rel)
+	kept := map[string][]source.Release{}
+	var ups []PackageUpdate
+	for _, p := range s.Packages {
+		// The package's range is the rule for what Vpmify takes from the
+		// source, so the list keeps only the versions in it (kaikoga
+		// 2026-11-18).
+		releases := []source.Release{}
+		for _, rel := range upstream[p.Name] {
+			if p.InRange(rel.Version) {
+				releases = append(releases, rel)
+			}
 		}
-	}
-	// Name the versions the last list did not have, so the user sees what
-	// a pull would add.
-	known := map[string]bool{}
-	prev, err := index.Load(a.Layout.Index(id))
-	hadPrev := err == nil && prev.Key == r.ListingKey()
-	if hadPrev {
-		for _, e := range prev.Releases {
-			known[e.Version] = true
+		kept[p.Name] = releases
+		// Name the versions the last list did not have, so the user sees
+		// what a pull would add.
+		fresh := []string{}
+		if old != nil {
+			known := map[string]bool{}
+			for _, e := range old.Packages[p.Name] {
+				known[e.Version] = true
+			}
+			for _, rel := range releases {
+				if !known[rel.Version.String()] {
+					fresh = append(fresh, rel.Version.String())
+				}
+			}
 		}
-	}
-	if err := index.New(r.ListingKey(), releases, time.Now()).Save(a.Layout.Index(id)); err != nil {
-		return RecipeUpdate{}, err
-	}
-	fresh := []string{}
-	for _, rel := range releases {
-		if hadPrev && !known[rel.Version.String()] {
-			fresh = append(fresh, rel.Version.String())
+		msg := fmt.Sprintf("%s: %s: %d versions in the recipe's range (%d upstream)", id, p.Name, len(releases), len(upstream[p.Name]))
+		if len(fresh) > 0 {
+			msg += "; new: " + strings.Join(fresh, ", ")
 		}
+		a.logf("%s", msg)
+		ups = append(ups, PackageUpdate{Package: p.Name, Versions: len(releases), Upstream: len(upstream[p.Name]), New: fresh})
 	}
-	msg := fmt.Sprintf("%s: %d versions in the recipe's range (%d upstream)", id, len(releases), len(upstream))
-	if len(fresh) > 0 {
-		msg += "; new: " + strings.Join(fresh, ", ")
-	}
-	a.logf("%s", msg)
-	return RecipeUpdate{ID: id, Versions: len(releases), Upstream: len(upstream), New: fresh}, nil
+	return index.NewList(s.ListingKey(), kept, time.Now()), ups, nil
 }
 
-// loadIndex returns the version list of recipe r, refusing one read for
-// what the recipe was before: it may list other folders or another source.
-func (a *App) loadIndex(r *recipe.Recipe) (*index.Index, error) {
-	idx, err := index.Load(a.Layout.Index(r.ID))
-	if errors.Is(err, index.ErrNoIndex) {
-		return nil, fmt.Errorf("no version list yet; run `vpmify update %s`", r.ID)
-	}
-	if err != nil {
-		// update writes the list anew whatever is there, so it mends this.
-		return nil, fmt.Errorf("the version list cannot be read (%w); run `vpmify update %s`", err, r.ID)
-	}
-	if idx.Key != r.ListingKey() {
-		return nil, fmt.Errorf("the recipe changed since its version list was read; run `vpmify update %s`", r.ID)
-	}
-	return idx, nil
-}
-
+// target is one argument of pull: "<id>", "<id>/<name>", and either with
+// "@<version>".
 type target struct {
-	id      string
-	version string
+	id, name, version string
 }
 
 func parseTargets(args []string) ([]target, error) {
 	var out []target
 	for _, arg := range args {
-		id, version, _ := strings.Cut(arg, "@")
-		if id == "" {
-			return nil, fmt.Errorf("bad target %q", arg)
+		ref, version, _ := strings.Cut(arg, "@")
+		id, name, err := parseRef(ref)
+		if err != nil {
+			return nil, fmt.Errorf("bad target %q: %w", arg, err)
 		}
 		if version != "" {
 			if _, err := semver.Parse(version); err != nil {
 				return nil, fmt.Errorf("bad target %q: %w", arg, err)
 			}
 		}
-		out = append(out, target{id: id, version: version})
+		out = append(out, target{id: id, name: name, version: version})
 	}
 	return out, nil
+}
+
+// parseRef reads "<id>" or "<id>/<name>". Neither a recipe id nor a
+// package name holds "/", so the form is not ambiguous.
+func parseRef(ref string) (id, name string, err error) {
+	id, name, hasName := strings.Cut(ref, "/")
+	if id == "" || (hasName && (name == "" || strings.Contains(name, "/"))) {
+		return "", "", fmt.Errorf("want <recipe> or <recipe>/<package>, not %q", ref)
+	}
+	return id, name, nil
 }
 
 // PullOptions say what Pull does besides adding the newest versions.
@@ -527,15 +532,23 @@ func (a *App) pull(ctx context.Context, targets []target, opt PullOptions) (*Pul
 			targets = append(targets, target{id: id})
 		}
 	}
-	extra := map[string][]string{}
+	reqs := map[string]*pullRequest{}
 	var order []string
 	for _, t := range targets {
-		if _, ok := extra[t.id]; !ok {
+		req, ok := reqs[t.id]
+		if !ok {
+			req = &pullRequest{choose: true, all: opt.All, only: map[string]bool{}}
+			reqs[t.id] = req
 			order = append(order, t.id)
-			extra[t.id] = nil
+		}
+		// A target without a package name chooses from every package.
+		if t.name == "" {
+			req.whole = true
+		} else {
+			req.only[t.name] = true
 		}
 		if t.version != "" {
-			extra[t.id] = append(extra[t.id], t.version)
+			req.extra = append(req.extra, pkgVersion{name: t.name, version: t.version})
 		}
 	}
 
@@ -556,8 +569,7 @@ func (a *App) pull(ctx context.Context, targets []target, opt PullOptions) (*Pul
 	res := &PullResult{Built: []Built{}, UpToDate: []string{}, Registered: []string{}, Unregistered: []string{}, Errors: []Failure{}}
 	fails := failures{list: &res.Errors}
 	for _, id := range order {
-		req := pullRequest{choose: true, all: opt.All, extra: extra[id]}
-		if err := a.pullRecipe(ctx, st, id, req, fresh, res); err != nil {
+		if err := a.pullRecipe(ctx, st, id, *reqs[id], fresh, res); err != nil {
 			fails.add(id, err)
 		}
 	}
@@ -573,12 +585,13 @@ func (a *App) pull(ctx context.Context, targets []target, opt PullOptions) (*Pul
 	return res, fails.err()
 }
 
-// providers maps the package name of every recipe the user has to the
-// recipe's id.
-type providers map[string]string
+// providers maps each package name to the recipes that provide it, in id
+// order. Several recipes may provide one package (kaikoga 2026-11-19).
+type providers map[string][]string
 
-// managedNames returns the providers of every recipe the user has. A recipe
-// file that cannot be read is left out here; pulling it reports the error.
+// managedNames returns the providers of every package the user's recipes
+// provide. A recipe file that cannot be read is left out here; pulling it
+// reports the error.
 func (a *App) managedNames() (providers, error) {
 	ids, err := a.recipeIDs()
 	if err != nil {
@@ -587,85 +600,160 @@ func (a *App) managedNames() (providers, error) {
 	names := providers{}
 	for _, id := range ids {
 		if r, err := a.loadRecipe(id); err == nil {
-			names[r.Source.Name] = id
+			for _, n := range r.Names() {
+				names[n] = append(names[n], id)
+			}
 		}
 	}
 	return names, nil
+}
+
+// pkgVersion names one version of one package. An empty name means every
+// package of the recipe that has the version.
+type pkgVersion struct {
+	name, version string
 }
 
 // pullRequest says which versions pullRecipe adds. The zero value adds
 // none, and only builds available versions again when they need it.
 type pullRequest struct {
 	// choose adds the newest version for each value of "unity", or every
-	// version with all.
+	// version with all, of every package when whole is true and of the
+	// packages in only otherwise.
 	choose, all bool
+	whole       bool
+	only        map[string]bool
 	// extra names more versions.
-	extra []string
+	extra []pkgVersion
 }
 
-// pullRecipe makes the versions req asks for from recipe id's version list
+func (req pullRequest) chooses(name string) bool {
+	return req.choose && (req.whole || req.only[name])
+}
+
+// pullRecipe makes the versions req asks for from recipe id's version lists
 // available, and builds available versions again when the recipe now
 // builds them differently. With fresh non-nil it builds every available
-// version again from a new download. It adds what it does to res.
+// version again from a new download. It adds what it does to res. A source
+// without a usable version list is an error, and the packages of the
+// others are still done.
 func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pullRequest, fresh map[string]bool, res *PullResult) error {
 	r, err := a.loadRecipe(id)
 	if err != nil {
 		return err
 	}
-	idx, err := a.loadIndex(r)
-	if err != nil {
-		return err
+	lists, listErr := a.loadLists(r)
+	if len(lists) == 0 && listErr != nil {
+		return listErr
 	}
-	releases, err := idx.SourceReleases()
-	if err != nil {
-		return err
+	// What the user names wrongly stops the recipe before anything is
+	// built.
+	for name := range req.only {
+		if src, _ := r.Package(name); src == nil {
+			return fmt.Errorf("the recipe has no package %s", name)
+		}
 	}
-	byVersion := map[string]source.Release{}
-	for _, rel := range releases {
-		byVersion[rel.Version.String()] = rel
+	extra := map[string][]string{}
+	for _, e := range req.extra {
+		if e.name != "" {
+			extra[e.name] = append(extra[e.name], e.version)
+			continue
+		}
+		// "<id>@<version>" names the version of every package that has it.
+		matched := false
+		for _, l := range lists {
+			if _, ok := l.byVersion[e.version]; ok {
+				extra[l.pkg.Name] = append(extra[l.pkg.Name], e.version)
+				matched = true
+			}
+		}
+		if !matched {
+			return errors.Join(listErr, fmt.Errorf("no version list has %s: it is outside the packages' versions, or `vpmify update %s` has not read it yet", e.version, id))
+		}
 	}
+	for _, l := range lists {
+		for _, v := range extra[l.pkg.Name] {
+			rel, ok := l.byVersion[v]
+			if !ok {
+				return fmt.Errorf("%s: the version list has no %s: it is outside the package's versions, or `vpmify update %s` has not read it yet", l.pkg.Name, v, id)
+			}
+			if _, err := l.expand(rel); err != nil {
+				return fmt.Errorf("%s: %s: %w", l.pkg.Name, v, err)
+			}
+		}
+	}
+	var errs []error
+	if listErr != nil {
+		errs = append(errs, listErr)
+	}
+	built := 0
+	for _, l := range lists {
+		n, err := a.pullPackage(ctx, st, id, l, req.chooses(l.pkg.Name), req.all, req.choose, extra[l.pkg.Name], fresh, res)
+		built += n
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", l.pkg.Name, err))
+		}
+	}
+	if built == 0 && req.choose && len(errs) == 0 {
+		available := 0
+		for _, ps := range st.Recipe(id).Packages {
+			available += len(ps.Versions)
+		}
+		a.logf("%s: up to date (%d versions available)", id, available)
+		res.UpToDate = append(res.UpToDate, id)
+	}
+	return errors.Join(errs...)
+}
+
+// pullPackage makes the versions of one package available: the newest for
+// each value of "unity" when choose is true (every version with all), the
+// versions in extra, and the available versions the recipe now builds
+// differently. byUser says the request came from the user rather than from
+// a dependency. It returns how many versions it converted.
+func (a *App) pullPackage(ctx context.Context, st *state.State, id string, l *pkgList, choose, all, byUser bool, extra []string, fresh map[string]bool, res *PullResult) (int, error) {
+	name := l.pkg.Name
 	var selected []source.Release
 	// chooseErr is returned after the named and available versions are
-	// done: a recipe whose range has only prereleases still takes one named
-	// outright.
+	// done: a package whose range has only prereleases still takes one
+	// named outright.
 	var chooseErr error
-	if req.choose {
-		accepted := acceptedReleases(r, releases)
+	if choose {
+		accepted := l.accepted()
 		switch {
-		case len(accepted) > 0 && req.all:
+		case len(accepted) > 0 && all:
 			selected = accepted
 		case len(accepted) > 0:
-			selected = newestPerUnity(r, accepted)
-		case len(req.extra) == 0:
+			selected = l.newestPerUnity(accepted)
+		case len(extra) == 0:
 			chooseErr = fmt.Errorf("no version in the version list matches the recipe")
 		}
 	}
-	for _, v := range req.extra {
-		rel, ok := byVersion[v]
+	for _, v := range extra {
+		rel, ok := l.byVersion[v]
 		if !ok {
-			return fmt.Errorf("the version list has no %s: it is outside the recipe's versions, or `vpmify update %s` has not read it yet", v, id)
+			return 0, fmt.Errorf("the version list has no %s: it is outside the package's versions, or `vpmify update %s` has not read it yet", v, id)
 		}
 		selected = appendRelease(selected, rel)
 	}
 
-	name := r.Source.Name
-	rs := st.Recipe(id)
-	ps := rs.Package(name)
-	fingerprint := func(rel source.Release) string {
-		return r.Fingerprint(rel.Version, rel.Dir)
-	}
+	ps := st.Recipe(id).Package(name)
 	// Versions made available before are built again when the recipe now
 	// builds them differently.
 	refetch := fresh != nil
 	for _, v := range ps.SortedVersions() {
-		rel, ok := byVersion[v]
+		rel, ok := l.byVersion[v]
 		if !ok {
 			if refetch {
 				a.logf("%s: the version list no longer has %s %s; left as it is", id, name, v)
 			}
 			continue
 		}
-		if refetch || ps.Versions[v].Fingerprint != fingerprint(rel) || !fsutil.Exists(ps.Versions[v].Path) {
+		expanded, err := l.expand(rel)
+		if err != nil {
+			a.logf("%s: %s %s cannot be built again (%v); left as it is", id, name, v, err)
+			continue
+		}
+		if refetch || ps.Versions[v].Fingerprint != l.fingerprint(rel, expanded) || !fsutil.Exists(ps.Versions[v].Path) {
 			selected = appendRelease(selected, rel)
 		}
 	}
@@ -673,38 +761,38 @@ func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pu
 	built := 0
 	for _, rel := range selected {
 		v := rel.Version.String()
-		fp := fingerprint(rel)
-		dir := a.Layout.PackageDir(name, v)
+		expanded, err := l.expand(rel)
+		if err != nil {
+			return built, fmt.Errorf("%s: %w", v, err)
+		}
+		fp := l.fingerprint(rel, expanded)
+		dir := a.Layout.PackageDir(id, name, v)
 		if vs, ok := ps.Versions[v]; ok && !refetch && vs.Fingerprint == fp && fsutil.Exists(vs.Path) {
 			continue
 		}
 		if refetch && !fresh[rel.CacheKey] {
 			fresh[rel.CacheKey] = true
 			if err := os.Remove(filepath.Join(a.Layout.Cache(), filepath.FromSlash(rel.CacheKey))); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return err
+				return built, err
 			}
 		}
 		a.logf("%s: converting %s %s (%s)", id, name, v, rel.Origin)
-		if err := a.build(ctx, r, rel, dir); err != nil {
-			return fmt.Errorf("%s %s: %w", name, v, err)
+		if err := a.build(ctx, name, rel, expanded, dir); err != nil {
+			return built, fmt.Errorf("%s: %w", v, err)
 		}
 		a.noteUnwrittenDependencies(name, rel, dir)
-		unity := r.Unity(rel.Version, rel.Unity)
+		unity := l.pkg.Unity(rel.Version, rel.Unity)
 		ps.Versions[v] = &state.VersionState{Path: dir, Fingerprint: fp, Unity: unity}
 		// Recorded before saving: the folder is built, and pull registers it
 		// even when saving fails.
-		dependency := !req.choose && slices.Contains(req.extra, v)
+		dependency := !byUser && slices.Contains(extra, v)
 		res.Built = append(res.Built, Built{Recipe: id, Package: name, Version: v, Unity: unity, Path: dir, Origin: rel.Origin, Dependency: dependency})
 		if err := st.Save(a.Layout.State()); err != nil {
-			return err
+			return built, err
 		}
 		built++
 	}
-	if built == 0 && req.choose && chooseErr == nil {
-		a.logf("%s: up to date (%d versions available; version list of %s)", id, len(ps.Versions), idx.Updated.Local().Format("2006-01-02 15:04"))
-		res.UpToDate = append(res.UpToDate, id)
-	}
-	return chooseErr
+	return built, chooseErr
 }
 
 // noteUnwrittenDependencies tells the user about the upstream UPM
@@ -740,31 +828,36 @@ func (a *App) addDependencies(ctx context.Context, st *state.State, managed prov
 	// A dependency made available may need its own dependencies, so this
 	// goes on until nothing new is needed.
 	for {
-		needs := map[string][]string{}
+		needs := map[string][]pkgVersion{}
 		var order []string
 		for _, n := range a.unmetDependencies(st, managed) {
-			key := n.dependent + " " + n.dep + " " + n.rng.String()
+			key := n.recipe + " " + n.dependent + " " + n.dep + " " + n.rng.String()
 			if tried[key] {
 				continue
 			}
 			tried[key] = true
-			v, err := a.dependencyVersion(n.id, n.rng)
+			id, v, err := a.dependencyProvider(n, managed)
 			if err != nil {
 				failed[key] = failure{err: fmt.Errorf("%s needs %s %s: %w", n.dependent, n.dep, n.rng, err)}
 				continue
 			}
-			if _, ok := needs[n.id]; !ok {
-				order = append(order, n.id)
+			if _, ok := needs[id]; !ok {
+				order = append(order, id)
 			}
-			if !slices.Contains(needs[n.id], v) {
-				needs[n.id] = append(needs[n.id], v)
+			want := pkgVersion{name: n.dep, version: v}
+			if !slices.Contains(needs[id], want) {
+				needs[id] = append(needs[id], want)
 			}
 		}
 		if len(order) == 0 {
 			break
 		}
 		for _, id := range order {
-			a.logf("%s: adding %s, which available versions depend on", id, strings.Join(needs[id], ", "))
+			var names []string
+			for _, pv := range needs[id] {
+				names = append(names, pv.name+" "+pv.version)
+			}
+			a.logf("%s: adding %s, which available versions depend on", id, strings.Join(names, ", "))
 			if err := a.pullRecipe(ctx, st, id, pullRequest{extra: needs[id]}, nil, res); err != nil {
 				failed["pull "+id] = failure{recipe: id, err: err}
 			}
@@ -777,15 +870,16 @@ func (a *App) addDependencies(ctx context.Context, st *state.State, managed prov
 
 // unmet is one vpmDependencies entry no available version satisfies.
 type unmet struct {
+	recipe    string // the recipe of the available version
 	dependent string // "<name> <version>" of the available version
 	dep       string
-	id        string // the recipe that provides dep
 	rng       semver.Range
 }
 
 // unmetDependencies reads the vpmDependencies of every available version,
 // as ALCOM will, and returns the entries on packages a recipe provides that
-// no available version satisfies.
+// no available version satisfies, from whichever recipe: ALCOM resolves
+// them among everything registered.
 func (a *App) unmetDependencies(st *state.State, managed providers) []unmet {
 	var out []unmet
 	for _, id := range state.SortedKeys(st.Recipes) {
@@ -798,15 +892,14 @@ func (a *App) unmetDependencies(st *state.State, managed providers) []unmet {
 					continue // doctor reports a broken folder
 				}
 				for _, dep := range state.SortedKeys(deps) {
-					depID, ok := managed[dep]
-					if !ok {
+					if len(managed[dep]) == 0 {
 						continue
 					}
 					rng, err := semver.ParseRange(deps[dep])
-					if err != nil || satisfied(st, depID, dep, rng) {
+					if err != nil || satisfied(st, dep, rng) {
 						continue
 					}
-					out = append(out, unmet{dependent: name + " " + v, dep: dep, id: depID, rng: rng})
+					out = append(out, unmet{recipe: id, dependent: name + " " + v, dep: dep, rng: rng})
 				}
 			}
 		}
@@ -814,45 +907,81 @@ func (a *App) unmetDependencies(st *state.State, managed providers) []unmet {
 	return out
 }
 
-func satisfied(st *state.State, id, name string, rng semver.Range) bool {
-	for v := range st.AvailableVersions(id, name) {
-		if pv, err := semver.Parse(v); err == nil && rng.Contains(pv) {
-			return true
+func satisfied(st *state.State, name string, rng semver.Range) bool {
+	for _, rs := range st.Recipes {
+		ps, ok := rs.Packages[name]
+		if !ok {
+			continue
+		}
+		for v := range ps.Versions {
+			if pv, err := semver.Parse(v); err == nil && rng.Contains(pv) {
+				return true
+			}
 		}
 	}
 	return false
 }
 
-// dependencyVersion picks the version of recipe id to add for rng: the
-// version its lower bound names when the version list has it, which keeps
-// packages released in lockstep (UniVRM's) together, or else the newest
-// version that satisfies it.
-func (a *App) dependencyVersion(id string, rng semver.Range) (string, error) {
+// dependencyProvider picks the recipe and the version to add for n: the
+// dependent's own recipe first, and then the others that provide the
+// package in id order, the first whose version list has a version that
+// satisfies it (kaikoga 2026-11-19). A recipe whose version list cannot be
+// used is passed over, and the user is told.
+func (a *App) dependencyProvider(n unmet, managed providers) (string, string, error) {
+	candidates := managed[n.dep]
+	if slices.Contains(candidates, n.recipe) {
+		candidates = append([]string{n.recipe}, slices.DeleteFunc(slices.Clone(candidates), func(id string) bool { return id == n.recipe })...)
+	}
+	var errs []error
+	for _, id := range candidates {
+		v, err := a.dependencyVersion(id, n.dep, n.rng)
+		if err == nil {
+			return id, v, nil
+		}
+		if errors.Is(err, errNoList) {
+			a.logf("%s: passed over for %s %s: %v", id, n.dep, n.rng, err)
+		}
+		errs = append(errs, fmt.Errorf("%s: %w", id, err))
+	}
+	return "", "", errors.Join(errs...)
+}
+
+// dependencyVersion picks the version of package name of recipe id to add
+// for rng: the version its lower bound names when the version list has it,
+// which keeps packages released in lockstep (UniVRM's) together, or else
+// the newest version that satisfies it.
+func (a *App) dependencyVersion(id, name string, rng semver.Range) (string, error) {
 	r, err := a.loadRecipe(id)
 	if err != nil {
 		return "", err
 	}
-	idx, err := a.loadIndex(r)
-	if err != nil {
-		return "", err
+	lists, listErr := a.loadLists(r)
+	l := find(lists, name)
+	if l == nil {
+		if listErr != nil {
+			return "", listErr
+		}
+		return "", fmt.Errorf("the recipe has no package %s", name)
 	}
-	releases, err := idx.SourceReleases()
-	if err != nil {
-		return "", err
+	var usable []source.Release
+	for _, rel := range l.releases {
+		if l.usable(rel) {
+			usable = append(usable, rel)
+		}
 	}
 	if lower, ok := strings.CutPrefix(strings.TrimSpace(rng.String()), ">="); ok {
-		for _, rel := range releases {
+		for _, rel := range usable {
 			if rel.Version.String() == strings.TrimSpace(lower) {
 				return rel.Version.String(), nil
 			}
 		}
 	}
-	for i := len(releases) - 1; i >= 0; i-- {
-		if rng.Contains(releases[i].Version) {
-			return releases[i].Version.String(), nil
+	for i := len(usable) - 1; i >= 0; i-- {
+		if rng.Contains(usable[i].Version) {
+			return usable[i].Version.String(), nil
 		}
 	}
-	return "", fmt.Errorf("the version list of %s has no version that satisfies it (`vpmify update %s` reads it again)", id, id)
+	return "", fmt.Errorf("the version list of %s has no version that satisfies it (`vpmify update %s` reads it again)", name, id)
 }
 
 // readVPMDependencies returns the vpmDependencies of the package in dir.
@@ -879,50 +1008,11 @@ func appendRelease(list []source.Release, rel source.Release) []source.Release {
 	return append(list, rel)
 }
 
-// acceptedReleases returns the releases the recipe takes, in order.
-func acceptedReleases(r *recipe.Recipe, releases []source.Release) []source.Release {
-	var out []source.Release
-	for _, rel := range releases {
-		if r.Accepts(rel.Version) {
-			out = append(out, rel)
-		}
-	}
-	return out
-}
-
-// newestPerUnity picks the newest release for each value of the "unity"
-// field after overrides. vrc-get reads "unity" as the oldest Unity a
-// version supports (vrc-get-vpm/src/lib.rs, unity_compatible), so the
-// newest version a project on any Unity can use is among these.
-func newestPerUnity(r *recipe.Recipe, accepted []source.Release) []source.Release {
-	newest := map[string]source.Release{}
-	var groups []string
-	for _, rel := range accepted {
-		unity := r.Unity(rel.Version, rel.Unity)
-		cur, ok := newest[unity]
-		if !ok {
-			groups = append(groups, unity)
-		}
-		if !ok || semver.Compare(rel.Version, cur.Version) > 0 {
-			newest[unity] = rel
-		}
-	}
-	var out []source.Release
-	for _, g := range groups {
-		out = append(out, newest[g])
-	}
-	return out
-}
-
-// build converts one version in a work folder and renames it into the
-// store. A version already in the store is swapped out only after the new
-// one is complete, so ALCOM never sees a half-built folder at the
-// registered path.
-func (a *App) build(ctx context.Context, r *recipe.Recipe, rel source.Release, dir string) error {
-	overrides, err := r.ExpandedOverridesFor(rel.Version, rel.Dependencies)
-	if err != nil {
-		return err
-	}
+// build converts one version of package name in a work folder, with the
+// overrides as expanded for it, and renames it into the store. A version
+// already in the store is swapped out only after the new one is complete,
+// so ALCOM never sees a half-built folder at the registered path.
+func (a *App) build(ctx context.Context, name string, rel source.Release, overrides []map[string]json.RawMessage, dir string) error {
 	archive := filepath.Join(a.Layout.Cache(), filepath.FromSlash(rel.CacheKey))
 	if fsutil.Exists(archive) {
 		if err := rel.Digests.CheckFile(archive); err != nil {
@@ -957,7 +1047,7 @@ func (a *App) build(ctx context.Context, r *recipe.Recipe, rel source.Release, d
 	for _, s := range res.Skipped {
 		a.logf("  skipped %s (not a regular file)", s)
 	}
-	if err := convert.CheckManifest(pkg, r.Source.Name, rel.Version.String()); err != nil {
+	if err := convert.CheckManifest(pkg, name, rel.Version.String()); err != nil {
 		return err
 	}
 	if err := convert.ApplyOverrides(pkg, overrides); err != nil {
@@ -1036,12 +1126,20 @@ type RemoveResult struct {
 	Unregistered []string `json:"unregistered"`
 }
 
-// Remove unregisters and deletes one version of a recipe's packages, or the
-// whole recipe when version is empty. Copies already in projects stay. The
-// result is nil when Remove stopped before forgetting any version.
-func (a *App) Remove(ctx context.Context, id, version string) (*RemoveResult, error) {
+// Remove unregisters and deletes versions. ref is "<id>" or "<id>/<name>":
+// with a version it removes that version of every package of the recipe
+// that has it, or of the named package; without one it removes the named
+// package's versions, or the whole recipe, which removes the recipe file and
+// its version lists too. A package the recipe no longer provides can still
+// be removed by name. Copies already in projects stay. The result is nil
+// when Remove stopped before forgetting any version.
+func (a *App) Remove(ctx context.Context, ref, version string) (*RemoveResult, error) {
+	id, only, err := parseRef(ref)
+	if err != nil {
+		return nil, err
+	}
 	var res *RemoveResult
-	err := a.withLock(func() error {
+	err = a.withLock(func() error {
 		st, err := state.Load(a.Layout.State())
 		if err != nil {
 			return err
@@ -1049,13 +1147,21 @@ func (a *App) Remove(ctx context.Context, id, version string) (*RemoveResult, er
 		rs, ok := st.Recipes[id]
 		// A recipe whose file is gone can still be removed by its record, and
 		// one whose record is gone by its file.
-		if !ok && (version != "" || !fsutil.Exists(a.recipePath(id))) {
+		if !ok && (version != "" || only != "" || !fsutil.Exists(a.recipePath(id))) {
 			return fmt.Errorf("no recipe %q", id)
+		}
+		if only != "" {
+			if _, ok := rs.Packages[only]; !ok {
+				return fmt.Errorf("%s: no version of %s is available", id, only)
+			}
 		}
 		var dirs []string
 		removed := []Entry{}
 		if rs != nil {
 			for _, name := range state.SortedKeys(rs.Packages) {
+				if only != "" && name != only {
+					continue
+				}
 				ps := rs.Packages[name]
 				for _, v := range ps.SortedVersions() {
 					if version != "" && v != version {
@@ -1066,12 +1172,16 @@ func (a *App) Remove(ctx context.Context, id, version string) (*RemoveResult, er
 					removed = append(removed, Entry{Recipe: id, Package: name, Version: v, Unity: vs.Unity, Path: vs.Path})
 					delete(ps.Versions, v)
 				}
+				if version == "" {
+					delete(rs.Packages, name)
+				}
 			}
 		}
 		if version != "" && len(dirs) == 0 {
-			return fmt.Errorf("%s: version %s is not available", id, version)
+			return fmt.Errorf("%s: version %s is not available", ref, version)
 		}
-		if version == "" {
+		whole := version == "" && only == ""
+		if whole {
 			delete(st.Recipes, id)
 		}
 		change, saved, err := a.forget(st, dirs)
@@ -1081,7 +1191,7 @@ func (a *App) Remove(ctx context.Context, id, version string) (*RemoveResult, er
 		if err != nil {
 			return err
 		}
-		if version == "" {
+		if whole {
 			for _, p := range []string{a.recipePath(id), a.Layout.Index(id)} {
 				if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
 					return err
@@ -1154,11 +1264,11 @@ func (a *App) List() (*ListResult, error) {
 
 // RecipeInfo is one of the user's recipes.
 type RecipeInfo struct {
-	ID      string `json:"id"`
-	Package string `json:"package,omitempty"`
+	ID       string   `json:"id"`
+	Packages []string `json:"packages"`
 	// Origin is the file path or URL the recipe was added from.
 	Origin string `json:"origin,omitempty"`
-	// Problem says why the recipe or its version list cannot be used, such
+	// Problem says why the recipe or its version lists cannot be used, such
 	// as a recipe in a form Vpmify no longer reads.
 	Problem string `json:"problem,omitempty"`
 }
@@ -1176,14 +1286,14 @@ func (a *App) Recipes() ([]RecipeInfo, error) {
 	}
 	out := []RecipeInfo{}
 	for _, id := range ids {
-		info := RecipeInfo{ID: id}
+		info := RecipeInfo{ID: id, Packages: []string{}}
 		if rs, ok := st.Recipes[id]; ok {
 			info.Origin = rs.Origin
 		}
 		r, err := a.loadRecipe(id)
 		if err == nil {
-			info.Package = r.Source.Name
-			_, err = a.loadIndex(r)
+			info.Packages = r.Names()
+			_, err = a.loadLists(r)
 		}
 		if err != nil {
 			info.Problem = err.Error()
@@ -1193,7 +1303,7 @@ func (a *App) Recipes() ([]RecipeInfo, error) {
 	return out, nil
 }
 
-// VersionInfo is one version in a recipe's version list, as `vpmify
+// VersionInfo is one version in a package's version list, as `vpmify
 // versions` shows it.
 type VersionInfo struct {
 	Version string `json:"version"`
@@ -1206,12 +1316,21 @@ type VersionInfo struct {
 	Newest bool `json:"newest"`
 	// Available means Vpmify has converted it and registered it with ALCOM.
 	Available bool `json:"available"`
+	// Unusable says why the version cannot be converted, such as {sameTag}
+	// naming a package whose version in the same tag is not in its list.
+	Unusable string `json:"unusable,omitempty"`
 }
 
 // VersionList is what `vpmify versions` shows for one recipe.
 type VersionList struct {
-	Recipe  string `json:"recipe"`
+	Recipe   string            `json:"recipe"`
+	Packages []PackageVersions `json:"packages"`
+}
+
+// PackageVersions is the version list of one package.
+type PackageVersions struct {
 	Package string `json:"package"`
+	Source  string `json:"source"`
 	// Updated is when the version list was read from upstream.
 	Updated  time.Time     `json:"updated"`
 	Versions []VersionInfo `json:"versions"`
@@ -1231,9 +1350,14 @@ type VersionsOptions struct {
 	Unity string
 }
 
-// Versions lists the versions in recipe id's version list, newest first.
-// It does not go to the network.
-func (a *App) Versions(id string, opt VersionsOptions) (*VersionList, error) {
+// Versions lists the versions in the version lists of ref, "<id>" or
+// "<id>/<name>", newest first, package by package. It does not go to the
+// network.
+func (a *App) Versions(ref string, opt VersionsOptions) (*VersionList, error) {
+	id, only, err := parseRef(ref)
+	if err != nil {
+		return nil, err
+	}
 	var project unityVersion
 	if opt.Unity != "" {
 		var ok bool
@@ -1245,45 +1369,60 @@ func (a *App) Versions(id string, opt VersionsOptions) (*VersionList, error) {
 	if err != nil {
 		return nil, err
 	}
-	idx, err := a.loadIndex(r)
-	if err != nil {
-		return nil, err
+	if only != "" {
+		if src, _ := r.Package(only); src == nil {
+			return nil, fmt.Errorf("recipe %q has no package %s", id, only)
+		}
 	}
-	releases, err := idx.SourceReleases()
-	if err != nil {
-		return nil, err
+	lists, listErr := a.loadLists(r)
+	if only != "" {
+		if l := find(lists, only); l != nil {
+			lists, listErr = []*pkgList{l}, nil
+		}
+	}
+	if listErr != nil {
+		return nil, listErr
 	}
 	st, err := state.Load(a.Layout.State())
 	if err != nil {
 		return nil, err
 	}
-	available := st.AvailableVersions(id, r.Source.Name)
-	newest := map[string]bool{}
-	for _, rel := range newestPerUnity(r, acceptedReleases(r, releases)) {
-		newest[rel.Version.String()] = true
-	}
-	out := &VersionList{Recipe: id, Package: r.Source.Name, Updated: idx.Updated, Versions: []VersionInfo{}}
-	for i := len(releases) - 1; i >= 0; i-- {
-		rel := releases[i]
-		v := rel.Version.String()
-		_, isAvailable := available[v]
-		unity := r.Unity(rel.Version, rel.Unity)
-		switch {
-		case rel.Version.IsPrerelease() && !opt.All:
-			continue
-		case opt.Available && !isAvailable:
-			continue
-		case opt.Unity != "" && !project.canUse(unity):
-			continue
+	out := &VersionList{Recipe: id, Packages: []PackageVersions{}}
+	for _, l := range lists {
+		name := l.pkg.Name
+		available := st.AvailableVersions(id, name)
+		newest := map[string]bool{}
+		for _, rel := range l.newestPerUnity(l.accepted()) {
+			newest[rel.Version.String()] = true
 		}
-		out.Versions = append(out.Versions, VersionInfo{
-			Version:    v,
-			Unity:      unity,
-			Origin:     rel.Origin,
-			Prerelease: rel.Version.IsPrerelease(),
-			Newest:     newest[v],
-			Available:  isAvailable,
-		})
+		pv := PackageVersions{Package: name, Source: l.src.Describe(), Updated: l.updated, Versions: []VersionInfo{}}
+		for i := len(l.releases) - 1; i >= 0; i-- {
+			rel := l.releases[i]
+			v := rel.Version.String()
+			_, isAvailable := available[v]
+			unity := l.pkg.Unity(rel.Version, rel.Unity)
+			switch {
+			case rel.Version.IsPrerelease() && !opt.All:
+				continue
+			case opt.Available && !isAvailable:
+				continue
+			case opt.Unity != "" && !project.canUse(unity):
+				continue
+			}
+			info := VersionInfo{
+				Version:    v,
+				Unity:      unity,
+				Origin:     rel.Origin,
+				Prerelease: rel.Version.IsPrerelease(),
+				Newest:     newest[v],
+				Available:  isAvailable,
+			}
+			if _, err := l.expand(rel); err != nil {
+				info.Unusable = err.Error()
+			}
+			pv.Versions = append(pv.Versions, info)
+		}
+		out.Packages = append(out.Packages, pv)
 	}
 	return out, nil
 }

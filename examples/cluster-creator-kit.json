@@ -1,15 +1,21 @@
 {
   "id": "cluster-creator-kit",
-  "source": {
-    "type": "npm",
-    "registry": "https://registry.npmjs.com",
-    "name": "mu.cluster.cluster-creator-kit"
-  },
-  "versions": ">=2.0.0",
-  "overrides": [
+  "sources": [
     {
-      "versions": ">=3.4.0",
-      "set": { "unity": "6000.2", "unityRelease": "6f2" }
+      "type": "npm",
+      "registry": "https://registry.npmjs.com",
+      "packages": [
+        {
+          "name": "mu.cluster.cluster-creator-kit",
+          "versions": ">=2.0.0",
+          "overrides": [
+            {
+              "versions": ">=3.4.0",
+              "set": { "unity": "6000.2", "unityRelease": "6f2" }
+            }
+          ]
+        }
+      ]
     }
   ]
 }

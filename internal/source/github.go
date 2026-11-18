@@ -22,7 +22,7 @@ import (
 	"github.com/kaikoga/vpmify/internal/semver"
 )
 
-// GitHub is a package in a GitHub repository, versioned by tags.
+// GitHub is packages in a GitHub repository, versioned by tags.
 //
 // Tags come from Git's smart HTTP ref advertisement, which needs neither a
 // git binary nor the REST API and its 60-requests-an-hour limit for
@@ -30,14 +30,10 @@ import (
 // archives from codeload.github.com, both addressed by commit.
 type GitHub struct {
 	Owner, Repo string
-	// Package is the name package.json must have.
-	Package string
-	// PathFor returns the folder of the package in a tag, from the version
-	// in the tag's name; false means the tag is not read.
-	PathFor    func(semver.Version) (string, bool)
-	TagPattern string
-	AcceptTag  func(semver.Version) bool
-	Client     *fetch.Client
+	Packages    []GitHubPackage
+	TagPattern  string
+	AcceptTag   func(semver.Version) bool
+	Client      *fetch.Client
 	// CacheDir keeps each commit's package.json, which never changes.
 	CacheDir string
 
@@ -45,22 +41,34 @@ type GitHub struct {
 	GitBase, RawBase, CodeloadBase string
 }
 
-// NewGitHub returns the source for a github recipe.
-func NewGitHub(r *recipe.Recipe, client *fetch.Client, cacheDir string) (*GitHub, error) {
-	owner, repo, err := parseGitHubURL(r.Source.URL)
+// GitHubPackage is one package of the repository.
+type GitHubPackage struct {
+	// Name is the name package.json must have.
+	Name string
+	// PathFor returns the folder of the package in a tag, from the version
+	// in the tag's name; false means the tag is not read.
+	PathFor func(semver.Version) (string, bool)
+}
+
+// NewGitHub returns the upstream of a github recipe source.
+func NewGitHub(s *recipe.Source, client *fetch.Client, cacheDir string) (*GitHub, error) {
+	owner, repo, err := parseGitHubURL(s.URL)
 	if err != nil {
 		return nil, err
 	}
-	pattern := r.Source.TagPattern
+	pattern := s.TagPattern
 	if pattern == "" {
 		pattern = "*"
 	}
+	var pkgs []GitHubPackage
+	for _, p := range s.Packages {
+		pkgs = append(pkgs, GitHubPackage{Name: p.Name, PathFor: p.PathFor})
+	}
 	return &GitHub{
 		Owner: owner, Repo: repo,
-		Package:      r.Source.Name,
-		PathFor:      r.PathFor,
+		Packages:     pkgs,
 		TagPattern:   pattern,
-		AcceptTag:    r.AcceptsTag,
+		AcceptTag:    s.AcceptsTag,
 		Client:       client,
 		CacheDir:     cacheDir,
 		GitBase:      "https://github.com",
@@ -90,43 +98,71 @@ type tag struct {
 	commit  string
 }
 
-// Releases reads package.json of the package in every tag the recipe
-// accepts, and lists one release per package version. When a version
-// appears in several tags, the oldest tag wins: that is where the version
-// was first published, and what Vpmify converts never changes when newer
-// tags keep the same version (kaikoga 2026-11-18).
-func (g *GitHub) Releases(ctx context.Context) ([]Release, error) {
+// Releases reads package.json of each package in every tag the source
+// accepts, from one listing of the tags, and lists one release per package
+// version. When a version appears in several tags, the oldest tag wins:
+// that is where the version was first published, and what Vpmify converts
+// never changes when newer tags keep the same version (kaikoga 2026-11-18).
+// Each release keeps the versions the other packages have in its tag.
+func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, error) {
 	tags, err := g.tags(ctx)
 	if err != nil {
 		return nil, err
 	}
-	found := make([]*Release, len(tags))
-	errs := make([]error, len(tags))
+	n := len(g.Packages)
+	found := make([]*Release, len(tags)*n)
+	errs := make([]error, len(tags)*n)
 	sem := make(chan struct{}, 8)
 	var wg sync.WaitGroup
 	for i, t := range tags {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			found[i], errs[i] = g.release(ctx, t)
-		}()
+		for j, p := range g.Packages {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				found[i*n+j], errs[i*n+j] = g.release(ctx, t, p)
+			}()
+		}
 	}
 	wg.Wait()
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
-	seen := map[string]bool{}
-	var out []Release
-	for _, rel := range found { // tags are oldest first
-		if rel == nil || seen[rel.Version.String()] {
-			continue
-		}
-		seen[rel.Version.String()] = true
-		out = append(out, *rel)
+	out := map[string][]Release{}
+	seen := map[string]map[string]bool{}
+	for _, p := range g.Packages {
+		out[p.Name] = []Release{}
+		seen[p.Name] = map[string]bool{}
 	}
-	sort.SliceStable(out, func(i, j int) bool { return semver.Compare(out[i].Version, out[j].Version) < 0 })
+	for i := range tags { // oldest first
+		inTag := map[string]string{}
+		for j, p := range g.Packages {
+			if rel := found[i*n+j]; rel != nil {
+				inTag[p.Name] = rel.Version.String()
+			}
+		}
+		for j, p := range g.Packages {
+			rel := found[i*n+j]
+			if rel == nil || seen[p.Name][rel.Version.String()] {
+				continue
+			}
+			seen[p.Name][rel.Version.String()] = true
+			for name, v := range inTag {
+				if name == p.Name {
+					continue
+				}
+				if rel.SameTag == nil {
+					rel.SameTag = map[string]string{}
+				}
+				rel.SameTag[name] = v
+			}
+			out[p.Name] = append(out[p.Name], *rel)
+		}
+	}
+	for _, rels := range out {
+		sort.SliceStable(rels, func(i, j int) bool { return semver.Compare(rels[i].Version, rels[j].Version) < 0 })
+	}
 	return out, nil
 }
 
@@ -214,13 +250,13 @@ func parseRefAdvertisement(data []byte) (map[string]string, error) {
 	return refs, nil
 }
 
-// release returns the package's release in tag t, or nil when the tag's
+// release returns package p's release in tag t, or nil when the tag's
 // folder for the package does not have it.
-func (g *GitHub) release(ctx context.Context, t tag) (*Release, error) {
+func (g *GitHub) release(ctx context.Context, t tag, p GitHubPackage) (*Release, error) {
 	dir := ""
-	if g.PathFor != nil {
+	if p.PathFor != nil {
 		var ok bool
-		if dir, ok = g.PathFor(t.version); !ok {
+		if dir, ok = p.PathFor(t.version); !ok {
 			return nil, nil
 		}
 	}
@@ -237,7 +273,7 @@ func (g *GitHub) release(ctx context.Context, t tag) (*Release, error) {
 		Unity        any               `json:"unity"`
 		Dependencies map[string]string `json:"dependencies"`
 	}
-	if err := json.Unmarshal(data, &m); err != nil || m.Name != g.Package {
+	if err := json.Unmarshal(data, &m); err != nil || m.Name != p.Name {
 		return nil, nil
 	}
 	v, err := semver.Parse(m.Version)

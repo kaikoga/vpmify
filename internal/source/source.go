@@ -11,13 +11,16 @@ import (
 	"github.com/kaikoga/vpmify/internal/semver"
 )
 
-// Release is one version of the package an upstream offers.
+// Release is one version of a package an upstream offers.
 type Release struct {
 	Version semver.Version
 	// Unity is the upstream "unity" field of the version, before overrides.
 	Unity string
 	// Dependencies are the upstream UPM "dependencies" of the version.
 	Dependencies map[string]string
+	// SameTag are the versions the source's other packages have in the tag
+	// this version was taken from (Git sources), for {sameTag}.
+	SameTag map[string]string
 	// Dir is the folder of the package inside the archive, after the
 	// archive's top folder is dropped. Empty means the top.
 	Dir string
@@ -34,21 +37,23 @@ type Release struct {
 	Origin string
 }
 
-// Source is an upstream of one package.
+// Source is an upstream of the packages of one recipe source.
 type Source interface {
-	// Releases lists the versions the upstream offers, oldest first.
-	Releases(ctx context.Context) ([]Release, error)
+	// Releases lists the versions the upstream offers for each package, by
+	// package name, oldest first. It fails as a whole: a source's versions
+	// are kept together, so that {sameTag} sees one reading of the tags.
+	Releases(ctx context.Context) (map[string][]Release, error)
 }
 
-// New returns the source a recipe names. cacheDir keeps what the source
-// reads per version and never changes (a Git commit's package.json).
-func New(r *recipe.Recipe, client *fetch.Client, cacheDir string) (Source, error) {
-	switch r.Source.Type {
+// New returns the upstream of a recipe source. cacheDir keeps what the
+// source reads per version and never changes (a Git commit's package.json).
+func New(s *recipe.Source, client *fetch.Client, cacheDir string) (Source, error) {
+	switch s.Type {
 	case recipe.SourceNPM:
-		return &NPM{Registry: r.Source.Registry, Package: r.Source.Name, Client: client}, nil
+		return &NPM{Registry: s.Registry, Packages: s.Names(), Client: client}, nil
 	case recipe.SourceGitHub:
-		return NewGitHub(r, client, cacheDir)
+		return NewGitHub(s, client, cacheDir)
 	default:
-		return nil, fmt.Errorf("source type %q is not supported", r.Source.Type)
+		return nil, fmt.Errorf("source type %q is not supported", s.Type)
 	}
 }

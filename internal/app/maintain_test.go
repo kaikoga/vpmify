@@ -47,13 +47,13 @@ func TestDoctorFixes(t *testing.T) {
 	// 1.0.0's folder is gone, 1.1.0's package.json says another version,
 	// a stray folder sits in the store, a build was left unfinished, and
 	// ALCOM lost 2.0.0 and lists a store folder state.json does not have.
-	if err := os.RemoveAll(layout.PackageDir(pkgName, "1.0.0")); err != nil {
+	if err := os.RemoveAll(layout.PackageDir("kit", pkgName, "1.0.0")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(layout.PackageDir(pkgName, "1.1.0"), "package.json"), []byte(`{"name": "`+pkgName+`", "version": "9.9.9"}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(layout.PackageDir("kit", pkgName, "1.1.0"), "package.json"), []byte(`{"name": "`+pkgName+`", "version": "9.9.9"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	stray := layout.PackageDir("com.example.stray", "0.1.0")
+	stray := layout.PackageDir("kit", "com.example.stray", "0.1.0")
 	if err := os.MkdirAll(stray, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestDoctorFixes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetUserPackageFolders([]string{f.foreign, layout.PackageDir(pkgName, "1.0.0"), layout.PackageDir(pkgName, "1.1.0"), stray}); err != nil {
+	if err := s.SetUserPackageFolders([]string{f.foreign, layout.PackageDir("kit", pkgName, "1.0.0"), layout.PackageDir("kit", pkgName, "1.1.0"), stray}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Save(); err != nil {
@@ -115,12 +115,12 @@ func TestDoctorFixes(t *testing.T) {
 	if got, want := f.available(), []string{"2.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed = %v, want %v", got, want)
 	}
-	wantFolders := []string{f.foreign, layout.PackageDir(pkgName, "2.0.0")}
+	wantFolders := []string{f.foreign, layout.PackageDir("kit", pkgName, "2.0.0")}
 	sort.Strings(wantFolders)
 	if got := f.registered(); !reflect.DeepEqual(got, wantFolders) {
 		t.Errorf("registered = %v, want %v", got, wantFolders)
 	}
-	for _, gone := range []string{layout.PackageDir(pkgName, "1.1.0"), filepath.Dir(stray), leftover} {
+	for _, gone := range []string{layout.PackageDir("kit", pkgName, "1.1.0"), filepath.Dir(stray), leftover} {
 		if _, err := os.Stat(gone); !os.IsNotExist(err) {
 			t.Errorf("%s is still there: %v", gone, err)
 		}
@@ -183,10 +183,7 @@ func (f *fixture) editState(fn func(st *state.State)) {
 
 func (f *fixture) writeStoredRecipe(id, extra string) {
 	f.t.Helper()
-	content := `{
-  "id": "` + id + `",
-  "source": {"type": "npm", "registry": "` + registryURL + `", "name": "` + pkgName + `"}` + extra + `
-}`
+	content := npmRecipe(id, registryURL, pkgName, extra)
 	if err := os.WriteFile(f.app.recipePath(id), []byte(content), 0o644); err != nil {
 		f.t.Fatal(err)
 	}
@@ -202,7 +199,7 @@ func exists(p string) bool {
 func (f *fixture) moveRecord(v string) string {
 	f.t.Helper()
 	outside := filepath.Join(f.t.TempDir(), "old", pkgName, v)
-	if err := os.CopyFS(outside, os.DirFS(f.app.Layout.PackageDir(pkgName, v))); err != nil {
+	if err := os.CopyFS(outside, os.DirFS(f.app.Layout.PackageDir("kit", pkgName, v))); err != nil {
 		f.t.Fatal(err)
 	}
 	f.editState(func(st *state.State) {
@@ -236,9 +233,10 @@ func TestRemoveLeavesAFolderAnotherRecipeUses(t *testing.T) {
 	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
-	// A second recipe for the same package, made by hand: add refuses it.
+	// A second recipe whose record points at kit's folder, made by hand:
+	// each recipe has its own folders otherwise.
 	f.writeStoredRecipe("kit2", "")
-	dir := f.app.Layout.PackageDir(pkgName, "1.0.0")
+	dir := f.app.Layout.PackageDir("kit", pkgName, "1.0.0")
 	f.editState(func(st *state.State) {
 		st.Recipe("kit2").Package(pkgName).Versions["1.0.0"] = &state.VersionState{Path: dir}
 	})
@@ -248,8 +246,8 @@ func TestRemoveLeavesAFolderAnotherRecipeUses(t *testing.T) {
 	}
 	// kit2, made by hand, has no version list either.
 	if msgs := problemMessages(problems); len(msgs) != 2 ||
-		!strings.Contains(msgs[0], "kit2: no version list yet; run `vpmify update kit2`") ||
-		!strings.Contains(msgs[1], "all provide "+pkgName) {
+		!strings.Contains(msgs[0], "kit2: no usable version list: none yet; run `vpmify update kit2`") ||
+		!strings.Contains(msgs[1], "kit2: "+pkgName+" 1.0.0 is recorded at "+dir) {
 		t.Errorf("problems = %v", msgs)
 	}
 
@@ -273,8 +271,10 @@ func TestRemoveDeletesTheEmptyPackageFolder(t *testing.T) {
 	if _, err := f.app.Remove(context.Background(), "kit", "1.0.0"); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if p := filepath.Join(f.app.Layout.Packages(), pkgName); exists(p) {
-		t.Errorf("%s is left", p)
+	for _, p := range []string{filepath.Join(f.app.Layout.Packages(), "kit", pkgName), filepath.Join(f.app.Layout.Packages(), "kit")} {
+		if exists(p) {
+			t.Errorf("%s is left", p)
+		}
 	}
 	if problems, err := f.app.Doctor(false); err != nil || len(problems) != 0 {
 		t.Errorf("problems = %v, err = %v", problemMessages(problems), err)
@@ -300,7 +300,7 @@ func TestRemoveWithoutSettingsChangesNothing(t *testing.T) {
 	if len(st.Recipes["kit"].Packages[pkgName].Versions) != 1 {
 		t.Errorf("state changed: %+v", st.Recipes["kit"])
 	}
-	if !exists(f.app.Layout.PackageDir(pkgName, "1.0.0")) {
+	if !exists(f.app.Layout.PackageDir("kit", pkgName, "1.0.0")) {
 		t.Error("the folder was deleted")
 	}
 }
@@ -326,7 +326,7 @@ func TestRemoveReportsWhatItDidBeforeFailing(t *testing.T) {
 	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
-	dir := f.app.Layout.PackageDir(pkgName, "1.0.0")
+	dir := f.app.Layout.PackageDir("kit", pkgName, "1.0.0")
 	lockFolder(t, dir)
 	res, err := f.app.Remove(context.Background(), "kit", "1.0.0")
 	if err == nil {
@@ -355,7 +355,7 @@ func TestCleanReportsChangesBeforeFailing(t *testing.T) {
 	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
-	lockFolder(t, f.app.Layout.PackageDir(pkgName, "1.0.0"))
+	lockFolder(t, f.app.Layout.PackageDir("kit", pkgName, "1.0.0"))
 	_, changed, err := f.app.Clean(true)
 	if err == nil || !changed {
 		t.Errorf("clean = %v, %v; want changed and an error", changed, err)
@@ -451,7 +451,7 @@ func TestRefetchBuildsEveryPlacedVersionAgain(t *testing.T) {
 		t.Fatal(err, f.log)
 	}
 	before := f.registered()
-	broken := filepath.Join(f.app.Layout.PackageDir(pkgName, "1.0.0"), "Runtime", "Kit.cs")
+	broken := filepath.Join(f.app.Layout.PackageDir("kit", pkgName, "1.0.0"), "Runtime", "Kit.cs")
 	if err := os.Remove(broken); err != nil {
 		t.Fatal(err)
 	}
@@ -511,7 +511,7 @@ func TestDoctorRecordsTheStoreCopyOfAMovedRecord(t *testing.T) {
 	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
-	dir := f.app.Layout.PackageDir(pkgName, "1.0.0")
+	dir := f.app.Layout.PackageDir("kit", pkgName, "1.0.0")
 	outside := f.moveRecord("1.0.0")
 
 	problems, err := f.app.Doctor(true)
@@ -538,7 +538,7 @@ func TestDoctorFixWithoutSettingsChangesNothing(t *testing.T) {
 	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
-	dir := f.app.Layout.PackageDir(pkgName, "1.0.0")
+	dir := f.app.Layout.PackageDir("kit", pkgName, "1.0.0")
 	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -574,7 +574,8 @@ func TestDoctorIgnoresFileBrowserClutter(t *testing.T) {
 	}
 	for _, p := range []string{
 		filepath.Join(f.app.Layout.Packages(), ".DS_Store"),
-		filepath.Join(f.app.Layout.Packages(), pkgName, ".DS_Store"),
+		filepath.Join(f.app.Layout.Packages(), "kit", ".DS_Store"),
+		filepath.Join(f.app.Layout.Packages(), "kit", pkgName, ".DS_Store"),
 	} {
 		if err := os.WriteFile(p, nil, 0o644); err != nil {
 			t.Fatal(err)
@@ -585,7 +586,9 @@ func TestDoctorIgnoresFileBrowserClutter(t *testing.T) {
 	}
 }
 
-func TestAddRefusesASecondRecipeForOnePackage(t *testing.T) {
+// A second recipe for one package has its own folders, and ALCOM gets both
+// (kaikoga 2026-11-19).
+func TestASecondRecipeForOnePackageHasItsOwnFolders(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
 	ctx := context.Background()
@@ -593,17 +596,25 @@ func TestAddRefusesASecondRecipeForOnePackage(t *testing.T) {
 		t.Fatal(err, f.log)
 	}
 	other := filepath.Join(t.TempDir(), "kit2.json")
-	if err := os.WriteFile(other, []byte(`{"id": "kit2", "source": {"type": "npm", "registry": "`+registryURL+`", "name": "`+pkgName+`"}}`), 0o644); err != nil {
+	if err := os.WriteFile(other, []byte(npmRecipe("kit2", registryURL, pkgName, "")), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.app.Add(ctx, other); err == nil || !strings.Contains(err.Error(), "already provides") {
-		t.Errorf("err = %v", err)
+	if err := f.addAndPull(PullOptions{}, other); err != nil {
+		t.Fatal(err, f.log)
 	}
-	if exists(f.app.recipePath("kit2")) {
-		t.Error("kit2 was saved")
+	want := []string{f.foreign, f.app.Layout.PackageDir("kit", pkgName, "1.0.0"), f.app.Layout.PackageDir("kit2", pkgName, "1.0.0")}
+	sort.Strings(want)
+	if got := f.registered(); !reflect.DeepEqual(got, want) {
+		t.Errorf("registered = %v, want %v", got, want)
 	}
-	// Replacing the recipe that provides the package is fine.
-	if _, err := f.app.Add(ctx, f.writeRecipe(`, "versions": ">=1.0.0"`)); err != nil {
-		t.Error(err)
+	// The same package.json from both is no problem.
+	if problems, err := f.app.Doctor(false); err != nil || len(problems) != 0 {
+		t.Errorf("problems = %v, err = %v", problemMessages(problems), err)
+	}
+	if _, err := f.app.Remove(ctx, "kit", ""); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if !exists(f.app.Layout.PackageDir("kit2", pkgName, "1.0.0")) {
+		t.Error("removing kit deleted kit2's folder")
 	}
 }
