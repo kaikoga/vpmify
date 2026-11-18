@@ -206,12 +206,13 @@ tasks:
       - wails3 generate icons -input appicon.png -macfilename darwin/icons.icns -windowsfilename "" -iconcomposerinput appicon.icon -macassetdir darwin
 
   render:icons:
-    summary: Renders appicon.png and windows/icon.ico from the SVG sources (needs rsvg-convert and ImageMagick). Run by hand after editing the SVGs; the outputs are committed.
+    summary: Renders appicon.png and windows/icon.ico from the SVG sources (needs rsvg-convert and icotool from icoutils). Run by hand after editing the SVGs; the outputs are committed.
     desc: |
       appicon.svg is used for appicon.png and the 256, 128 and 64 px icons in windows/icon.ico.
       appicon-small.svg is used for the 48, 32 and 16 px icons, where the torn tape end and
       the rounded plate of appicon.svg do not survive downscaling.
       appicon.icon/Assets/vpmify.svg (the macOS 26 layer) is appicon.svg without the plate.
+      The 256 px icon is stored as PNG and the others as BMP, as Windows icon guidelines recommend.
     dir: build
     cmds:
       - |
@@ -220,7 +221,7 @@ tasks:
         rsvg-convert -w 1024 -h 1024 appicon.svg -o appicon.png
         for s in 256 128 64; do rsvg-convert -w $s -h $s appicon.svg -o "$tmp/$s.png"; done
         for s in 48 32 16; do rsvg-convert -w $s -h $s appicon-small.svg -o "$tmp/$s.png"; done
-        convert "$tmp/256.png" "$tmp/128.png" "$tmp/64.png" "$tmp/48.png" "$tmp/32.png" "$tmp/16.png" windows/icon.ico
+        icotool -c -o windows/icon.ico --raw="$tmp/256.png" "$tmp/128.png" "$tmp/64.png" "$tmp/48.png" "$tmp/32.png" "$tmp/16.png"
         rm -r "$tmp"
 
   dev:frontend:
