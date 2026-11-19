@@ -5,6 +5,8 @@
 #   - the GUI as a universal .dmg for macOS and as NSIS installers for Windows
 #     (vpmify-gui_<version>_...),
 #   - SHA256SUMS of them.
+# The CLI's archives carry LICENSE and THIRD_PARTY_NOTICES.txt; the GUI shows
+# them in its About dialog.
 #
 # Usage: scripts/release.sh [--snapshot] [--cli-only]
 #
@@ -12,9 +14,12 @@
 # be clean, and gui/build/config.yml must have the same version: the GUI's
 # Info.plist and Windows resources are generated from it, by changing the
 # version there and running `wails3 task common:update:build-assets` in gui/.
+# THIRD_PARTY_NOTICES.txt must match what scripts/third_party_notices.sh
+# prints now (it reads GO_LICENSE, as that script says).
 #
 #   --snapshot  build HEAD without a tag, as <config.yml version>-snapshot+<commit>,
-#               to try the build; the working tree may have changes
+#               to try the build; the working tree may have changes, and
+#               outdated notices only warn
 #   --cli-only  skip the GUI, whose build takes npm and longer
 #
 # Run it on macOS, outside a sandbox: the GUI build fetches npm and Go modules,
@@ -82,6 +87,21 @@ rm -rf "$out"
 mkdir -p "$work"
 echo "building Vpmify $version into dist/$version"
 
+# The notices read the front end's npm packages.
+if [ ! -d gui/frontend/node_modules ]; then
+  (cd gui/frontend && npm ci)
+fi
+scripts/third_party_notices.sh >"$work/THIRD_PARTY_NOTICES.txt"
+if ! cmp -s "$work/THIRD_PARTY_NOTICES.txt" THIRD_PARTY_NOTICES.txt; then
+  message="THIRD_PARTY_NOTICES.txt is not what scripts/third_party_notices.sh prints now; make it again and commit it"
+  if $snapshot; then
+    echo "warning: $message" >&2
+  else
+    echo "$message" >&2
+    exit 1
+  fi
+fi
+
 # Keep macOS's extended attributes and ._ files out of the archives.
 export COPYFILE_DISABLE=1
 
@@ -97,9 +117,7 @@ for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 wi
   mkdir -p "$work/$name"
   CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -buildvcs=false \
     -ldflags "-s -w -X main.version=$version" -o "$work/$name/$exe" ./cmd/vpmify
-  if [ -f LICENSE ]; then
-    cp LICENSE "$work/$name/"
-  fi
+  cp LICENSE THIRD_PARTY_NOTICES.txt "$work/$name/"
   if [ "$os" = windows ]; then
     (cd "$work" && zip -qrX "$out/$name.zip" "$name")
   else
