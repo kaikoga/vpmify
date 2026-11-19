@@ -2,5 +2,8 @@
 /vpmify
 /vpmify.exe
 
+# The release files that scripts/release.sh builds.
+/dist/
+
 # Work notes kept out of the repository (named *_Private by convention).
 /**/*_Private*
