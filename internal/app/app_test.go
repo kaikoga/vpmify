@@ -132,6 +132,7 @@ func jsonString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
+
 // npmRecipe returns a recipe with one npm source whose one package has the
 // fields in extra (each starting with ", ").
 func npmRecipe(id, registry, name, extra string) string {
