@@ -90,6 +90,15 @@ tr.selected {
     margin-bottom: 0.75rem;
 }
 
+#confirm {
+    border-color: color-mix(in srgb, #d33 60%, transparent);
+}
+
+#confirm h3 {
+    font-size: 1rem;
+    margin: 0.25rem 0 0.5rem;
+}
+
 .card .actions {
     justify-content: flex-end;
     margin-top: 0.5rem;

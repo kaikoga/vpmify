@@ -18,6 +18,10 @@
     <p class="hint">Recipe files dropped on this window are added too, after you confirm.</p>
     <p id="error" class="error" hidden></p>
 
+    <section id="confirm-section" hidden>
+        <div id="confirm" class="card"></div>
+    </section>
+
     <section id="pending-section" hidden>
         <h2>Waiting to add</h2>
         <div id="pending"></div>
@@ -44,6 +48,7 @@
                 <label><input id="prereleases" type="checkbox"/> Prereleases</label>
                 <button id="update" type="button">Update</button>
                 <button id="pull-newest" type="button">Make newest available</button>
+                <button id="remove-recipe" type="button">Remove recipe…</button>
             </div>
         </header>
         <p id="versions-updated" class="note"></p>

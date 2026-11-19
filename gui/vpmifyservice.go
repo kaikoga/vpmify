@@ -142,6 +142,41 @@ func (s *VpmifyService) Pull(ctx context.Context, targets []string) error {
 	})
 }
 
+// RemoveVersions unregisters and deletes available versions as `vpmify
+// package remove` does: ref is "<id>" or "<id>/<package>", and version is
+// one version, or "" for every version. The front end asks the user first
+// (kaikoga 2026-11-19).
+func (s *VpmifyService) RemoveVersions(ref, version string) error {
+	return s.run(func() error {
+		_, err := s.core.RemoveVersions(ref, version)
+		return err
+	})
+}
+
+// RecipeRemoval returns what removing recipe id would remove, for the user
+// to confirm.
+func (s *VpmifyService) RecipeRemoval(id string) (vpmify.RemoveResult, error) {
+	var res *vpmify.RemoveResult
+	err := s.run(func() error {
+		var err error
+		res, err = s.core.RemoveRecipe(id, false)
+		return err
+	})
+	if res == nil {
+		return vpmify.RemoveResult{}, err
+	}
+	return *res, err
+}
+
+// RemoveRecipe removes recipe id with its available versions, as `vpmify
+// recipe remove` does, after the user confirmed what RecipeRemoval showed.
+func (s *VpmifyService) RemoveRecipe(id string) error {
+	return s.run(func() error {
+		_, err := s.core.RemoveRecipe(id, true)
+		return err
+	})
+}
+
 // PendingAdd is a set of recipes read from one link or one choice of files,
 // waiting for the user to add them or not.
 type PendingAdd struct {
