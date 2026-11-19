@@ -44,9 +44,11 @@ type Release struct {
 // Source is an upstream of the packages of one recipe source.
 type Source interface {
 	// Releases lists the versions the upstream offers for each package, by
-	// package name, oldest first. It fails as a whole: a source's versions
-	// are kept together, so that {sameTag} sees one reading of the tags.
-	Releases(ctx context.Context) (map[string][]Release, error)
+	// package name, oldest first, and warnings for whoever keeps the recipe
+	// (Git tags that read as one version). It fails as a whole: a source's
+	// versions are kept together, so that {sameTag} sees one reading of the
+	// tags.
+	Releases(ctx context.Context) (map[string][]Release, []string, error)
 }
 
 // New returns the upstream of a recipe source. cacheDir keeps what the

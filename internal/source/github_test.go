@@ -57,7 +57,7 @@ func warudoRecipe(version, pkg string) string {
 func TestGitHubTagVersion(t *testing.T) {
 	gh := warudoRepo()
 	src := newSource(t, gh, warudoRecipe("{1}.{2}.{3}{4:03}", `, "versionFromTag": true`))
-	all, err := src.Releases(context.Background())
+	all, _, err := src.Releases(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestGitHubTagVersion(t *testing.T) {
 	// Without versionFromTag the tags are read by the rule, and the
 	// versions are package.json's, the oldest tag winning as ever.
 	src = newSource(t, gh, warudoRecipe("{1}.{2}.{3}{4:03}", ""))
-	all, err = src.Releases(context.Background())
+	all, _, err = src.Releases(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,10 +90,30 @@ func TestGitHubTagVersion(t *testing.T) {
 		t.Errorf("releases = %q, want %q", summary, want)
 	}
 
-	// A rule that reads two tags as one version is an error.
-	src = newSource(t, gh, warudoRecipe("{1}.{2}.{3}", `, "versionFromTag": true`))
-	if _, err := src.Releases(context.Background()); err == nil || !strings.Contains(err.Error(), "tags 0.15.2.1 and 0.15.2.2 both read as version 0.15.2") {
-		t.Errorf("colliding rule: err = %v", err)
+	// A rule that reads two tags as one version warns, and the older tag is
+	// used (kaikoga 2026-11-19): the recipe needs updating, but a tag the
+	// repository adds must not stop it. Names order the tags, numbers by
+	// value: 0.15.2.9 is older than 0.15.2.10.
+	gh.Tag("0.15.2.9", map[string]string{"package.json": manifest("com.example.pkg", "0.15.2")})
+	gh.Tag("0.15.2.10", map[string]string{"package.json": manifest("com.example.pkg", "0.15.2")})
+	src = newSource(t, gh, `{"id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
+  "tagVersion": {"match": "(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "version": "{1}.{2}.{3}"},
+  "tags": ">=0.15.0",
+  "packages": [{"name": "com.example.pkg", "versionFromTag": true}]}]}`)
+	all, warnings, err := src.Releases(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary = nil
+	for _, r := range all["com.example.pkg"] {
+		summary = append(summary, r.Version.String()+" "+r.Origin)
+	}
+	if want := []string{"0.15.2 tag 0.15.2.1"}; !reflect.DeepEqual(summary, want) {
+		t.Errorf("releases = %q, want %q", summary, want)
+	}
+	if len(warnings) != 3 || !strings.Contains(warnings[0], "tags 0.15.2.1 and 0.15.2.2 both read as version 0.15.2, and 0.15.2.1 is used") ||
+		!strings.Contains(warnings[2], "tags 0.15.2.9 and 0.15.2.10") {
+		t.Errorf("warnings = %q", warnings)
 	}
 }
 
@@ -117,7 +137,7 @@ func TestGitHubReleases(t *testing.T) {
     "packages": [{"name": "com.example.pkg",
       "paths": [{"tags": ">=1.1.0", "path": "Packages/Pkg"}, {"tags": "<1.1.0", "path": "Assets/Pkg"}]}]}]
 }`)
-	all, err := src.Releases(context.Background())
+	all, _, err := src.Releases(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +167,7 @@ func TestGitHubReleases(t *testing.T) {
 
 	// package.json of each commit is cached, missing ones too.
 	before := gh.Requests["raw"]
-	if _, err := src.Releases(context.Background()); err != nil {
+	if _, _, err := src.Releases(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if after := gh.Requests["raw"]; after != before {
@@ -172,7 +192,7 @@ func TestGitHubSameTag(t *testing.T) {
 	gh.Tag("v1.1.0", map[string]string{"Pkg/package.json": manifest("com.example.pkg", "1.1.0")})
 	src := newSource(t, gh, `{"id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
   "packages": [{"name": "com.example.base", "path": "Base"}, {"name": "com.example.pkg", "path": "Pkg"}]}]}`)
-	all, err := src.Releases(context.Background())
+	all, _, err := src.Releases(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +235,7 @@ func TestGitHubStableVersionComesFromAStableTag(t *testing.T) {
 	})
 	src := newSource(t, gh, `{"id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
   "packages": [{"name": "com.example.base", "path": "Base"}, {"name": "com.example.pkg", "path": "Pkg"}]}]}`)
-	all, err := src.Releases(context.Background())
+	all, _, err := src.Releases(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +258,7 @@ func TestGitHubTagsRangeLimitsReads(t *testing.T) {
   "id": "pkg",
   "sources": [{"type": "github", "url": "https://github.com/owner/repo", "tags": ">=1.1.0", "packages": [{"name": "com.example.pkg"}]}]
 }`)
-	all, err := src.Releases(context.Background())
+	all, _, err := src.Releases(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

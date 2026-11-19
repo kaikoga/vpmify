@@ -335,7 +335,7 @@ func TestResults(t *testing.T) {
 		t.Errorf("added = %+v", added.Added)
 	}
 	// The first list has nothing to call new.
-	if want := []RecipeUpdate{{ID: "kit", Packages: []PackageUpdate{{Package: pkgName, Versions: 2, Upstream: 2, New: []string{}}}}}; !reflect.DeepEqual(added.Recipes, want) {
+	if want := []RecipeUpdate{{ID: "kit", Packages: []PackageUpdate{{Package: pkgName, Versions: 2, Upstream: 2, New: []string{}}}, Warnings: []string{}}}; !reflect.DeepEqual(added.Recipes, want) {
 		t.Errorf("add read %+v, want %+v", added.Recipes, want)
 	}
 
@@ -357,7 +357,7 @@ func TestResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err, f.log)
 	}
-	if want := []RecipeUpdate{{ID: "kit", Packages: []PackageUpdate{{Package: pkgName, Versions: 3, Upstream: 3, New: []string{"1.2.0"}}}}}; !reflect.DeepEqual(updated.Recipes, want) {
+	if want := []RecipeUpdate{{ID: "kit", Packages: []PackageUpdate{{Package: pkgName, Versions: 3, Upstream: 3, New: []string{"1.2.0"}}}, Warnings: []string{}}}; !reflect.DeepEqual(updated.Recipes, want) {
 		t.Errorf("update read %+v, want %+v", updated.Recipes, want)
 	}
 

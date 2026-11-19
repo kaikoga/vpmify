@@ -686,3 +686,37 @@ func TestVersionFromTagIsWrittenIntoPackageJSON(t *testing.T) {
 		}
 	}
 }
+
+// Tags that a recipe's rule reads as one version are a warning for whoever
+// keeps the recipe, in the log and the result, and the version list is
+// still read, from the older tag (kaikoga 2026-11-19).
+func TestTagsOfOneVersionWarn(t *testing.T) {
+	f := newFixture(t)
+	gh := testutil.NewFakeGitHub("owner", "mono")
+	gh.Tag("0.15.2.1", monoTag("1.0.0", "0.15.2"))
+	gh.Tag("0.15.2.2", monoTag("1.0.0", "0.15.2"))
+	f.app.Client.HTTP.Transport = gh
+	recipe := fmt.Sprintf(`{
+  "id": "mono",
+  "sources": [{"type": "github", "url": %q,
+    "tagVersion": {"match": "(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "version": "{1}.{2}.{3}"},
+    "packages": [{"name": "com.example.pkg", "path": "Packages/Pkg"}]}]
+}`, monoURL)
+	res, err := f.app.Add(context.Background(), f.writeFile("mono.json", recipe))
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	if len(res.Recipes) != 1 || len(res.Recipes[0].Warnings) != 1 || !strings.Contains(res.Recipes[0].Warnings[0], "0.15.2.1 is used") {
+		t.Errorf("result = %+v", res.Recipes)
+	}
+	if !strings.Contains(f.log.String(), "mono: warning: tags 0.15.2.1 and 0.15.2.2") {
+		t.Errorf("log = %s", f.log)
+	}
+	list, err := f.app.Versions("mono", VersionsOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := list.Packages[0].Versions; len(v) != 1 || v[0].Version != "0.15.2" {
+		t.Errorf("versions = %+v", v)
+	}
+}

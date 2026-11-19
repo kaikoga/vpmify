@@ -283,6 +283,9 @@ type UpdateResult struct {
 type RecipeUpdate struct {
 	ID       string          `json:"id"`
 	Packages []PackageUpdate `json:"packages"`
+	// Warnings say what the recipe needs updating for, though the version
+	// lists were read (Git tags that its tagVersion reads as one version).
+	Warnings []string `json:"warnings"`
 }
 
 // PackageUpdate is the version list of one package.
@@ -341,7 +344,7 @@ func (a *App) update(ctx context.Context, ids []string) (*UpdateResult, error) {
 // source that fails keeps the list it had, if it is still for what the
 // source is, and the others go on (kaikoga 2026-11-19).
 func (a *App) updateRecipe(ctx context.Context, id string) (RecipeUpdate, error) {
-	u := RecipeUpdate{ID: id, Packages: []PackageUpdate{}}
+	u := RecipeUpdate{ID: id, Packages: []PackageUpdate{}, Warnings: []string{}}
 	r, err := a.loadRecipe(id)
 	if err != nil {
 		return u, err
@@ -354,7 +357,7 @@ func (a *App) updateRecipe(ctx context.Context, id string) (RecipeUpdate, error)
 	for _, s := range r.Sources {
 		key := s.ListingKey()
 		old := prev.List(key)
-		l, ups, err := a.readSource(ctx, id, s, old)
+		l, ups, warnings, err := a.readSource(ctx, id, s, old)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", s.Describe(), err))
 			if old != nil {
@@ -364,6 +367,7 @@ func (a *App) updateRecipe(ctx context.Context, id string) (RecipeUpdate, error)
 		}
 		idx.Sources = append(idx.Sources, l)
 		u.Packages = append(u.Packages, ups...)
+		u.Warnings = append(u.Warnings, warnings...)
 	}
 	if err := idx.Save(a.Layout.Index(id)); err != nil {
 		errs = append(errs, err)
@@ -373,14 +377,20 @@ func (a *App) updateRecipe(ctx context.Context, id string) (RecipeUpdate, error)
 
 // readSource reads the version list of source s from upstream. old is the
 // list the last update kept for it, if any.
-func (a *App) readSource(ctx context.Context, id string, s *recipe.Source, old *index.List) (*index.List, []PackageUpdate, error) {
+func (a *App) readSource(ctx context.Context, id string, s *recipe.Source, old *index.List) (*index.List, []PackageUpdate, []string, error) {
 	src, err := source.New(s, a.Client, a.Layout.Cache())
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	upstream, err := src.Releases(ctx)
+	upstream, warnings, err := src.Releases(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
+	}
+	for _, w := range warnings {
+		a.logf("%s: warning: %s", id, w)
+	}
+	if warnings == nil {
+		warnings = []string{}
 	}
 	kept := map[string][]source.Release{}
 	var ups []PackageUpdate
@@ -416,7 +426,7 @@ func (a *App) readSource(ctx context.Context, id string, s *recipe.Source, old *
 		a.logf("%s", msg)
 		ups = append(ups, PackageUpdate{Package: p.Name, Versions: len(releases), Upstream: len(upstream[p.Name]), New: fresh})
 	}
-	return index.NewList(s.ListingKey(), kept, time.Now()), ups, nil
+	return index.NewList(s.ListingKey(), kept, time.Now()), ups, warnings, nil
 }
 
 // target is one argument of pull: "<id>", "<id>/<name>", and either with

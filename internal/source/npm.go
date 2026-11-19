@@ -50,16 +50,16 @@ func registryKey(registry string) string {
 
 // Releases lists the versions of each package in the registry, oldest
 // first. Versions whose number is not SemVer are left out.
-func (n *NPM) Releases(ctx context.Context) (map[string][]Release, error) {
+func (n *NPM) Releases(ctx context.Context) (map[string][]Release, []string, error) {
 	out := map[string][]Release{}
 	for _, name := range n.Packages {
 		rels, err := n.releases(ctx, name)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", name, err)
+			return nil, nil, fmt.Errorf("%s: %w", name, err)
 		}
 		out[name] = rels
 	}
-	return out, nil
+	return out, nil, nil
 }
 
 func (n *NPM) releases(ctx context.Context, name string) ([]Release, error) {

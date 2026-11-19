@@ -35,11 +35,14 @@ type GitHub struct {
 	// TagVersion reads the version of a tag from its name; false means the
 	// tag is not read.
 	TagVersion func(name string) (semver.Version, bool)
-	// UniqueTagVersions makes two tags that read as one version an error,
-	// for a recipe's own tagVersion rule, which should tell its tags apart.
-	UniqueTagVersions bool
-	AcceptTag         func(semver.Version) bool
-	Client            *fetch.Client
+	// WarnSameTagVersion warns of two tags that read as one version, for a
+	// recipe's own tagVersion rule, which should tell its tags apart. The
+	// older tag is used, as for package versions that come in several tags;
+	// a repository whose owner did not write the recipe may add such tags,
+	// and they must not stop the recipe (kaikoga 2026-11-19).
+	WarnSameTagVersion bool
+	AcceptTag          func(semver.Version) bool
+	Client             *fetch.Client
 	// CacheDir keeps each commit's package.json, which never changes.
 	CacheDir string
 
@@ -75,16 +78,16 @@ func NewGitHub(s *recipe.Source, client *fetch.Client, cacheDir string) (*GitHub
 	}
 	return &GitHub{
 		Owner: owner, Repo: repo,
-		Packages:          pkgs,
-		TagPattern:        pattern,
-		TagVersion:        s.TagVersionOf,
-		UniqueTagVersions: s.HasTagVersionRule(),
-		AcceptTag:         s.AcceptsTag,
-		Client:            client,
-		CacheDir:          cacheDir,
-		GitBase:           "https://github.com",
-		RawBase:           "https://raw.githubusercontent.com",
-		CodeloadBase:      "https://codeload.github.com",
+		Packages:           pkgs,
+		TagPattern:         pattern,
+		TagVersion:         s.TagVersionOf,
+		WarnSameTagVersion: s.HasTagVersionRule(),
+		AcceptTag:          s.AcceptsTag,
+		Client:             client,
+		CacheDir:           cacheDir,
+		GitBase:            "https://github.com",
+		RawBase:            "https://raw.githubusercontent.com",
+		CodeloadBase:       "https://codeload.github.com",
 	}, nil
 }
 
@@ -119,10 +122,10 @@ type tag struct {
 // names the release's packages, not a release candidate's prereleases
 // (kaikoga 2026-11-19). Each release keeps the versions the other packages
 // have in its tag.
-func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, error) {
-	tags, err := g.tags(ctx)
+func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, []string, error) {
+	tags, warnings, err := g.tags(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	n := len(g.Packages)
 	found := make([]*Release, len(tags)*n)
@@ -142,7 +145,7 @@ func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, error) {
 	}
 	wg.Wait()
 	if err := errors.Join(errs...); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	out := map[string][]Release{}
 	for j, p := range g.Packages {
@@ -184,12 +187,13 @@ func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, error) {
 	for _, rels := range out {
 		sort.SliceStable(rels, func(i, j int) bool { return semver.Compare(rels[i].Version, rels[j].Version) < 0 })
 	}
-	return out, nil
+	return out, warnings, nil
 }
 
 // tags lists the tags that match the pattern and whose name reads as a
-// version the recipe accepts, oldest first.
-func (g *GitHub) tags(ctx context.Context) ([]tag, error) {
+// version the recipe accepts, oldest first, and warns of tags that read as
+// one version.
+func (g *GitHub) tags(ctx context.Context) ([]tag, []string, error) {
 	readVersion := g.TagVersion
 	if readVersion == nil {
 		readVersion = func(name string) (semver.Version, bool) {
@@ -200,11 +204,11 @@ func (g *GitHub) tags(ctx context.Context) ([]tag, error) {
 	u := fmt.Sprintf("%s/%s/%s.git/info/refs?service=git-upload-pack", g.GitBase, g.Owner, g.Repo)
 	data, err := g.Client.GetBytes(ctx, u)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	refs, err := parseRefAdvertisement(data)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", u, err)
+		return nil, nil, fmt.Errorf("%s: %w", u, err)
 	}
 	var out []tag
 	for name, commit := range refs {
@@ -224,20 +228,55 @@ func (g *GitHub) tags(ctx context.Context) ([]tag, error) {
 		}
 		out = append(out, tag{name: tagName, version: v, commit: commit})
 	}
+	// Tags of one version are in name order, numbers by value, which stands
+	// for their age: the ref advertisement has no dates.
 	sort.Slice(out, func(i, j int) bool {
 		if c := semver.Compare(out[i].version, out[j].version); c != 0 {
 			return c < 0
 		}
-		return out[i].name < out[j].name
+		return naturalLess(out[i].name, out[j].name)
 	})
-	if g.UniqueTagVersions {
+	var warnings []string
+	if g.WarnSameTagVersion {
 		for i := 1; i < len(out); i++ {
 			if semver.Compare(out[i-1].version, out[i].version) == 0 {
-				return nil, fmt.Errorf("tags %s and %s both read as version %s; change tagVersion to tell them apart", out[i-1].name, out[i].name, out[i].version)
+				warnings = append(warnings, fmt.Sprintf("tags %s and %s both read as version %s, and %s is used; the recipe's tagVersion needs updating to tell them apart", out[i-1].name, out[i].name, out[i].version, out[i-1].name))
 			}
 		}
 	}
-	return out, nil
+	return out, warnings, nil
+}
+
+// naturalLess orders names with their runs of digits compared by value, so
+// that 0.15.2.9 comes before 0.15.2.10.
+func naturalLess(a, b string) bool {
+	for a != "" && b != "" {
+		da, db := digitRun(a), digitRun(b)
+		if da > 0 && db > 0 {
+			na, nb := strings.TrimLeft(a[:da], "0"), strings.TrimLeft(b[:db], "0")
+			if len(na) != len(nb) {
+				return len(na) < len(nb)
+			}
+			if na != nb {
+				return na < nb
+			}
+			a, b = a[da:], b[db:]
+			continue
+		}
+		if a[0] != b[0] {
+			return a[0] < b[0]
+		}
+		a, b = a[1:], b[1:]
+	}
+	return len(a) < len(b)
+}
+
+func digitRun(s string) int {
+	n := 0
+	for n < len(s) && s[n] >= '0' && s[n] <= '9' {
+		n++
+	}
+	return n
 }
 
 // parseRefAdvertisement reads the pkt-line ref list of Git's smart HTTP
