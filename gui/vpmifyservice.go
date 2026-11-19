@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	about "github.com/kaikoga/vpmify"
 	vpmify "github.com/kaikoga/vpmify/internal/app"
 	"github.com/kaikoga/vpmify/internal/fetch"
 	"github.com/kaikoga/vpmify/internal/paths"
@@ -61,6 +62,25 @@ func NewVpmifyService() (*VpmifyService, error) {
 		VerifyDelay: 2 * time.Second,
 	}
 	return s, nil
+}
+
+// AboutResult is what the About dialog shows. The release files are
+// distributed under the license with the third-party notices, which the GUI
+// shows here instead of as files beside it (kaikoga 2026-11-20).
+type AboutResult struct {
+	Version string `json:"version"`
+	Source  string `json:"source"`
+	License string `json:"license"`
+	Notices string `json:"notices"`
+}
+
+func (s *VpmifyService) About() AboutResult {
+	return AboutResult{
+		Version: version,
+		Source:  about.SourceURL,
+		License: about.License,
+		Notices: about.ThirdPartyNotices,
+	}
 }
 
 func (s *VpmifyService) send(name string, data any) {

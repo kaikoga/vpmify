@@ -6,6 +6,12 @@ const en = {
     "app.addFiles": "Add recipe files…",
     "app.dropHint": "Recipe files dropped on this window are added too, after you confirm.",
     "app.language": "Language",
+    "app.about": "About",
+
+    "about.close": "Close",
+    "about.source": "Source code:",
+    "about.license": "License",
+    "about.notices": "Third-party software",
 
     "pending.title": "Waiting to add",
     "pending.from": "From {from}",
@@ -78,6 +84,12 @@ const ja: Record<Key, string> = {
     "app.addFiles": "レシピのファイルを追加…",
     "app.dropHint": "この窓にドロップしたレシピのファイルも、確認してから追加します。",
     "app.language": "言語",
+    "app.about": "このアプリについて",
+
+    "about.close": "閉じる",
+    "about.source": "ソースコード:",
+    "about.license": "ライセンス",
+    "about.notices": "サードパーティのソフトウェア",
 
     "pending.title": "追加の確認",
     "pending.from": "{from} から",

@@ -1,4 +1,4 @@
-import {Events} from "@wailsio/runtime";
+import {Browser, Events} from "@wailsio/runtime";
 import {VpmifyService} from "../bindings/github.com/kaikoga/vpmify/gui";
 import type {Entry} from "../bindings/github.com/kaikoga/vpmify/internal/app";
 import {Busy, Log, Pending} from "../bindings/events";
@@ -27,6 +27,8 @@ const entriesElement = byId<HTMLTableSectionElement>("entries");
 const emptyElement = byId<HTMLParagraphElement>("empty");
 const settingsErrorElement = byId<HTMLParagraphElement>("settings-error");
 const logElement = byId<HTMLPreElement>("log");
+const aboutDialog = byId<HTMLDialogElement>("about-dialog");
+const aboutSource = byId<HTMLAnchorElement>("about-source");
 
 // selected is the recipe whose versions are shown.
 let selected: string | null = null;
@@ -396,6 +398,22 @@ byId("remove-recipe").addEventListener("click", () => {
     }
 });
 byId("reload").addEventListener("click", () => act(async () => {}));
+byId("about").addEventListener("click", async () => {
+    const a = await VpmifyService.About();
+    byId("about-version").textContent = a.version;
+    aboutSource.textContent = a.source;
+    aboutSource.href = a.source;
+    byId("about-license").textContent = a.license;
+    byId("about-notices").textContent = a.notices;
+    aboutDialog.showModal();
+});
+byId("about-close").addEventListener("click", () => aboutDialog.close());
+// The webview does not navigate away from the app; the link opens in the
+// user's browser.
+aboutSource.addEventListener("click", (event) => {
+    event.preventDefault();
+    Browser.OpenURL(aboutSource.href).catch(showError);
+});
 prereleasesElement.addEventListener("change", () => showVersions());
 languageElement.addEventListener("change", () => {
     setLang(languageElement.value as Lang);

@@ -123,6 +123,21 @@ pre {
     word-break: break-all;
 }
 
+dialog {
+    width: min(48rem, 90vw);
+    max-height: 85vh;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+}
+
+dialog h2 {
+    margin: 0;
+}
+
+pre.tall {
+    max-height: 20rem;
+}
+
 .spinner {
     width: 16px;
     height: 16px;

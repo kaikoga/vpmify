@@ -17,6 +17,7 @@
                 <option value="ja">日本語</option>
             </select>
             <button id="choose" type="button" data-i18n="app.addFiles"></button>
+            <button id="about" type="button" data-i18n="app.about"></button>
         </div>
     </header>
     <p class="hint" data-i18n="app.dropHint"></p>
@@ -85,6 +86,17 @@
         <pre id="log"></pre>
     </section>
 </main>
+<dialog id="about-dialog">
+    <header>
+        <h2>Vpmify <span id="about-version"></span></h2>
+        <button id="about-close" type="button" data-i18n="about.close"></button>
+    </header>
+    <p><span data-i18n="about.source"></span> <a id="about-source" href="#"></a></p>
+    <h3 data-i18n="about.license"></h3>
+    <pre id="about-license"></pre>
+    <h3 data-i18n="about.notices"></h3>
+    <pre id="about-notices" class="tall"></pre>
+</dialog>
 <script type="module" src="/src/main.ts"></script>
 </body>
 </html>
