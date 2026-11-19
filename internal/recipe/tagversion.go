@@ -18,7 +18,8 @@ import (
 // match is not read. Version builds the version from the groups: {N} is
 // group N, and {N:0W} is group N padded with zeros to W digits, so that
 // "{1}.{2}.{3}{4:03}" reads 0.15.2.2 as 0.15.2002. A group that took no part
-// in the match is 0. Leading zeros of the numbers in the version proper and
+// in the match, or matched nothing, is 0; a group longer than its padding is
+// an error, because it would read out of order. Leading zeros of the numbers in the version proper and
 // its prerelease are dropped, which SemVer forbids there; build metadata
 // keeps them.
 type TagVersion struct {
@@ -39,6 +40,10 @@ type templatePart struct {
 }
 
 var placeholderBody = regexp.MustCompile(`^(\d+)(?::0(\d+))?$`)
+
+// maxWidth is the widest padding: the digits of a version number, which
+// is a uint64.
+const maxWidth = 18
 
 func parseTagVersion(tv *TagVersion) (*tagVersionRule, error) {
 	if tv.Match == "" || tv.Version == "" {
@@ -77,7 +82,10 @@ func parseTagVersion(tv *TagVersion) (*tagVersionRule, error) {
 		}
 		width := 0
 		if m[2] != "" {
-			width, _ = strconv.Atoi(m[2])
+			var err error
+			if width, err = strconv.Atoi(m[2]); err != nil || width > maxWidth {
+				return nil, fmt.Errorf("version: {%s} pads to at most %d digits", body, maxWidth)
+			}
 		}
 		parts = append(parts, templatePart{group: group, width: width})
 		rest = rest[open+end+1:]
@@ -100,8 +108,13 @@ func (r *tagVersionRule) read(name string) (semver.Version, bool, error) {
 			continue
 		}
 		s := "0"
-		if start := idx[2*p.group]; start >= 0 {
-			s = name[start:idx[2*p.group+1]]
+		if start, end := idx[2*p.group], idx[2*p.group+1]; start >= 0 && end > start {
+			s = name[start:end]
+		}
+		if p.width > 0 && len(s) > p.width {
+			// Unpadded, it would read out of order: 0.15.2.1000 after
+			// 0.15.3.0 with {3}{4:03}.
+			return semver.Version{}, false, fmt.Errorf("tag %s: group %d %q is longer than %d", name, p.group, s, p.width)
 		}
 		for i := len(s); i < p.width; i++ {
 			b.WriteByte('0')

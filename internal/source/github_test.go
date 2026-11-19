@@ -41,6 +41,9 @@ func warudoRepo() *testutil.FakeGitHub {
 	gh.Tag("0.15.2.1", map[string]string{"package.json": manifest("com.example.pkg", "0.15.2")})
 	gh.Tag("0.15.2.2", map[string]string{"package.json": manifest("com.example.pkg", "0.15.2")})
 	gh.Tag("upm/latest", map[string]string{"package.json": manifest("com.example.pkg", "0.15.2")})
+	// No version: not read, as without versionFromTag, so that the index
+	// holds no version the conversion cannot check.
+	gh.Tag("0.15.3.1", map[string]string{"package.json": `{"name": "com.example.pkg"}`})
 	return gh
 }
 

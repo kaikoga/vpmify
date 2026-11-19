@@ -68,8 +68,8 @@ type Package struct {
 	// Paths give the folder by tag instead, for a package that moved (UniVRM
 	// moved Assets/VRM to Packages/VRM in v0.131.0). The ranges are on the
 	// tag's version, not the package's: the package's version is in the
-	// package.json that the folder holds. A tag that no range takes is not
-	// read.
+	// package.json that the folder holds (unless VersionFromTag). A tag that
+	// no range takes is not read.
 	Paths []PathRule `json:"paths,omitempty"`
 	// Versions and Prerelease say which versions the recipe can convert.
 	Versions   string `json:"versions,omitempty"`
@@ -363,14 +363,14 @@ func (r *Recipe) Package(name string) (*Source, *Package) {
 	return nil, nil
 }
 
-// AcceptsTag reports whether the source reads a tag whose name holds
-// version v (Git sources).
+// AcceptsTag reports whether the source reads a tag whose version, as
+// TagVersionOf reads it, is v (Git sources).
 func (s *Source) AcceptsTag(v semver.Version) bool {
 	return s.tags.Contains(v)
 }
 
-// PathFor returns the folder of the package in the tag whose name holds
-// version v, and false when no folder is given for the tag (Git sources).
+// PathFor returns the folder of the package in the tag whose version is v,
+// and false when no folder is given for the tag (Git sources).
 func (p *Package) PathFor(v semver.Version) (string, bool) {
 	if len(p.paths) == 0 {
 		return p.Path, true
@@ -400,8 +400,8 @@ func (s *Source) fields() sourceFields {
 }
 
 // ListingKey identifies what decides the versions the source's version list
-// holds: the source, and each package's name, folders and range (Versions),
-// which `update` applies when it reads upstream (kaikoga 2026-11-18). A
+// holds: the source, and each package's name, folders, range (Versions) and
+// VersionFromTag, which `update` applies when it reads upstream (kaikoga 2026-11-18). A
 // version list kept from an update whose key differs is stale. Prerelease
 // and Overrides are not in it, because they are applied to the list when it
 // is read; {sameTag} is too, from the versions the list keeps for each tag.

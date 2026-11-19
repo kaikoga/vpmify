@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// warudoTags reads Warudo-Mod-Tool's tags: 0.15.2.2, and 0.14.3 before it
+// warudoMatch reads Warudo-Mod-Tool's tags: 0.15.2.2, and 0.14.3 before it
 // had a fourth number.
 const warudoMatch = `(\\d+)\\.(\\d+)\\.(\\d+)(?:\\.(\\d+))?`
 
@@ -57,6 +57,21 @@ func TestTagVersionOf(t *testing.T) {
 		t.Errorf("two numbers: err = %v", err)
 	}
 
+	// So is a group longer than its padding: 0.15.2.1000 would read as
+	// 0.15.21000, after 0.15.3.0's 0.15.3000.
+	s, _ = onlyPackage(t, tagRecipe("{1}.{2}.{3}{4:03}"))
+	if _, _, err := s.TagVersionOf("0.15.2.1000"); err == nil || !strings.Contains(err.Error(), "longer than 3") {
+		t.Errorf("group beyond its padding: err = %v", err)
+	}
+
+	// An empty group is 0, as is one that took no part in the match.
+	s, _ = onlyPackage(t, `{"id": "pkg", "sources": [{`+gitSourceHead+`,
+  "tagVersion": {"match": "(\\d+)\\.(\\d+)\\.(\\d+)\\.?(\\d*)", "version": "{1}.{2}.{3}{4}"},
+  "packages": [{"name": "com.example.pkg"}]}]}`)
+	if v, _, err := s.TagVersionOf("0.14.3"); err != nil || v.String() != "0.14.30" {
+		t.Errorf("empty group: %v %v, want 0.14.30", v, err)
+	}
+
 	// Without a rule, a leading "v" is dropped and other names are not read.
 	s, _ = onlyPackage(t, gitRecipe(""))
 	for tag, want := range map[string]bool{"v1.2.3": true, "1.2.3": true, "0.15.2.2": false} {
@@ -71,6 +86,7 @@ func TestTagVersionRejects(t *testing.T) {
 		{"group beyond the match", tagRecipe("{1}.{2}.{5}"), "names group 5"},
 		{"not a placeholder", tagRecipe("{1}.{x}"), "{x} is not"},
 		{"padding without zero", tagRecipe("{1}.{2}.{3:3}"), "{3:3} is not"},
+		{"padding too wide", tagRecipe("{1}.{2}.{3}{4:09999999999}"), "at most 18"},
 		{"open brace", tagRecipe("{1}.{2"), "without '}'"},
 		{"close brace", tagRecipe("1}.2"), "without '{'"},
 		{"bad match", `{"id": "pkg", "sources": [{` + gitSourceHead + `, "tagVersion": {"match": "(", "version": "1.0.0"}, "packages": [{"name": "p"}]}]}`, "match:"},

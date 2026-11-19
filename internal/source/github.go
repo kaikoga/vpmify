@@ -51,8 +51,8 @@ type GitHub struct {
 type GitHubPackage struct {
 	// Name is the name package.json must have.
 	Name string
-	// PathFor returns the folder of the package in a tag, from the version
-	// in the tag's name; false means the tag is not read.
+	// PathFor returns the folder of the package in a tag, from the tag's
+	// version; false means the tag is not read.
 	PathFor func(semver.Version) (string, bool)
 	// VersionFromTag gives the package the version of the tag, in place of
 	// the one in its package.json.
@@ -312,6 +312,12 @@ func (g *GitHub) release(ctx context.Context, t tag, p GitHubPackage) (*Release,
 		Dependencies map[string]string `json:"dependencies"`
 	}
 	if err := json.Unmarshal(data, &m); err != nil || m.Name != p.Name {
+		return nil, nil
+	}
+	if m.Version == "" {
+		// Not read with versionFromTag either: the conversion checks the
+		// package.json version against UpstreamVersion, whose "" means the
+		// same as Version.
 		return nil, nil
 	}
 	v, upstream := t.version, m.Version
