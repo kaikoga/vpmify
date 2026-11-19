@@ -77,7 +77,7 @@ func (a *App) Clean(apply bool) (entries []Entry, changed bool, err error) {
 				ps := rs.Packages[name]
 				for _, v := range ps.SortedVersions() {
 					vs := ps.Versions[v]
-					out = append(out, Entry{Recipe: id, Package: name, Version: v, Unity: vs.Unity, Path: vs.Path})
+					out = append(out, newEntry(id, name, v, vs))
 				}
 			}
 		}

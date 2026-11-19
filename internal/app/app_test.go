@@ -644,6 +644,43 @@ func TestRemove(t *testing.T) {
 	}
 }
 
+// The display name comes from the converted package.json, with the
+// recipe's overrides, wherever available versions are shown.
+func TestDisplayName(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	f.reg.add("1.1.0", "2021.3")
+	extra := `, "overrides": [{"versions": ">=1.1.0", "set": {"displayName": "Kit"}}]`
+	if err := f.addAndPull(PullOptions{All: true}, f.writeRecipe(extra)); err != nil {
+		t.Fatal(err, f.log)
+	}
+	res, err := f.app.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range res.Entries {
+		names = append(names, e.Version+"="+e.DisplayName)
+	}
+	if want := []string{"1.0.0=", "1.1.0=Kit"}; !reflect.DeepEqual(names, want) {
+		t.Errorf("list = %v, want %v", names, want)
+	}
+	list, err := f.app.Versions("kit", VersionsOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := list.Packages[0].DisplayName; got != "Kit" {
+		t.Errorf("versions: display name = %q", got)
+	}
+	removed, err := f.app.RemoveVersions("kit", "1.1.0")
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	if got := removed.Removed[0].DisplayName; got != "Kit" {
+		t.Errorf("remove: display name = %q", got)
+	}
+}
+
 func TestListOfRecipes(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")

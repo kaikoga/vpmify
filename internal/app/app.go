@@ -1266,7 +1266,7 @@ func takeVersions(rs *state.RecipeState, id, only, version string) (dirs []strin
 			}
 			vs := ps.Versions[v]
 			dirs = append(dirs, vs.Path)
-			removed = append(removed, Entry{Recipe: id, Package: name, Version: v, Unity: vs.Unity, Path: vs.Path})
+			removed = append(removed, newEntry(id, name, v, vs))
 			delete(ps.Versions, v)
 		}
 		if version == "" {
@@ -1286,12 +1286,40 @@ func nonNil[T any](s []T) []T {
 
 // Entry is one available version, as `vpmify package list` shows it.
 type Entry struct {
-	Recipe     string `json:"recipe"`
-	Package    string `json:"package"`
-	Version    string `json:"version"`
-	Unity      string `json:"unity,omitempty"`
-	Path       string `json:"path"`
-	Registered bool   `json:"registered"`
+	Recipe  string `json:"recipe"`
+	Package string `json:"package"`
+	// DisplayName is the "displayName" of the version as converted, which
+	// the GUI shows with the package's name, as ALCOM does (kaikoga
+	// 2026-11-19). It is empty when the version has none, or its folder
+	// cannot be read.
+	DisplayName string `json:"displayName,omitempty"`
+	Version     string `json:"version"`
+	Unity       string `json:"unity,omitempty"`
+	Path        string `json:"path"`
+	Registered  bool   `json:"registered"`
+}
+
+// newEntry returns the entry of available version v of package name of
+// recipe id, unregistered.
+func newEntry(id, name, v string, vs *state.VersionState) Entry {
+	return Entry{Recipe: id, Package: name, DisplayName: readDisplayName(vs.Path), Version: v, Unity: vs.Unity, Path: vs.Path}
+}
+
+// readDisplayName returns the "displayName" in the package.json of the
+// package in dir, or "" when there is none or it cannot be read: the name
+// is only shown, so a broken folder is left to doctor.
+func readDisplayName(dir string) string {
+	data, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil {
+		return ""
+	}
+	var m struct {
+		DisplayName string `json:"displayName"`
+	}
+	if json.Unmarshal(data, &m) != nil {
+		return ""
+	}
+	return m.DisplayName
 }
 
 // ListResult is what List returns.
@@ -1339,14 +1367,9 @@ func (a *App) List(ids ...string) (*ListResult, error) {
 			ps := rs.Packages[name]
 			for _, v := range ps.SortedVersions() {
 				vs := ps.Versions[v]
-				res.Entries = append(res.Entries, Entry{
-					Recipe:     id,
-					Package:    name,
-					Version:    v,
-					Unity:      vs.Unity,
-					Path:       vs.Path,
-					Registered: registered[filepath.Clean(vs.Path)],
-				})
+				e := newEntry(id, name, v, vs)
+				e.Registered = registered[filepath.Clean(vs.Path)]
+				res.Entries = append(res.Entries, e)
 			}
 		}
 	}
@@ -1418,7 +1441,11 @@ type VersionList struct {
 // PackageVersions is the version list of one package.
 type PackageVersions struct {
 	Package string `json:"package"`
-	Source  string `json:"source"`
+	// DisplayName is the "displayName" of the newest available version that
+	// has one. The version lists do not keep it, so it is empty while no
+	// version is available.
+	DisplayName string `json:"displayName,omitempty"`
+	Source      string `json:"source"`
 	// Updated is when the version list was read from upstream.
 	Updated  time.Time     `json:"updated"`
 	Versions []VersionInfo `json:"versions"`
@@ -1488,6 +1515,10 @@ func (a *App) Versions(ref string, opt VersionsOptions) (*VersionList, error) {
 			v := rel.Version.String()
 			_, isAvailable := available[v]
 			unity := l.pkg.Unity(rel.Version, rel.Unity)
+			// The name comes from any available version, shown or not.
+			if isAvailable && pv.DisplayName == "" {
+				pv.DisplayName = readDisplayName(available[v].Path)
+			}
 			switch {
 			case rel.Version.IsPrerelease() && !opt.All:
 				continue
