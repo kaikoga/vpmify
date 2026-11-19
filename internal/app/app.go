@@ -1074,8 +1074,19 @@ func (a *App) build(ctx context.Context, name string, rel source.Release, overri
 	for _, s := range res.Skipped {
 		a.logf("  skipped %s (not a regular file)", s)
 	}
-	if err := convert.CheckManifest(pkg, name, rel.Version.String()); err != nil {
+	upstream := rel.Version.String()
+	if rel.UpstreamVersion != "" {
+		upstream = rel.UpstreamVersion
+	}
+	if err := convert.CheckManifest(pkg, name, upstream); err != nil {
 		return err
+	}
+	if rel.UpstreamVersion != "" {
+		version, err := json.Marshal(rel.Version.String())
+		if err != nil {
+			return err
+		}
+		overrides = append([]map[string]json.RawMessage{{"version": version}}, overrides...)
 	}
 	if err := convert.ApplyOverrides(pkg, overrides); err != nil {
 		return err

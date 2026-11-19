@@ -46,17 +46,18 @@ type List struct {
 
 // Entry is one version upstream offers, as source.Release has it.
 type Entry struct {
-	Version      string            `json:"version"`
-	Unity        string            `json:"unity,omitempty"`
-	Dependencies map[string]string `json:"dependencies,omitempty"`
-	SameTag      map[string]string `json:"sameTag,omitempty"`
-	Dir          string            `json:"dir,omitempty"`
-	ArchiveURL   string            `json:"archiveUrl"`
-	Integrity    string            `json:"integrity,omitempty"`
-	Shasum       string            `json:"shasum,omitempty"`
-	Pinned       bool              `json:"pinned,omitempty"`
-	CacheKey     string            `json:"cacheKey"`
-	Origin       string            `json:"origin"`
+	Version         string            `json:"version"`
+	UpstreamVersion string            `json:"upstreamVersion,omitempty"`
+	Unity           string            `json:"unity,omitempty"`
+	Dependencies    map[string]string `json:"dependencies,omitempty"`
+	SameTag         map[string]string `json:"sameTag,omitempty"`
+	Dir             string            `json:"dir,omitempty"`
+	ArchiveURL      string            `json:"archiveUrl"`
+	Integrity       string            `json:"integrity,omitempty"`
+	Shasum          string            `json:"shasum,omitempty"`
+	Pinned          bool              `json:"pinned,omitempty"`
+	CacheKey        string            `json:"cacheKey"`
+	Origin          string            `json:"origin"`
 }
 
 // NewList makes the list of releases, by package name, read now for a
@@ -67,17 +68,18 @@ func NewList(key string, releases map[string][]source.Release, now time.Time) *L
 		entries := []Entry{}
 		for _, r := range rels {
 			entries = append(entries, Entry{
-				Version:      r.Version.String(),
-				Unity:        r.Unity,
-				Dependencies: r.Dependencies,
-				SameTag:      r.SameTag,
-				Dir:          r.Dir,
-				ArchiveURL:   r.ArchiveURL,
-				Integrity:    r.Digests.Integrity,
-				Shasum:       r.Digests.Shasum,
-				Pinned:       r.Pinned,
-				CacheKey:     r.CacheKey,
-				Origin:       r.Origin,
+				Version:         r.Version.String(),
+				UpstreamVersion: r.UpstreamVersion,
+				Unity:           r.Unity,
+				Dependencies:    r.Dependencies,
+				SameTag:         r.SameTag,
+				Dir:             r.Dir,
+				ArchiveURL:      r.ArchiveURL,
+				Integrity:       r.Digests.Integrity,
+				Shasum:          r.Digests.Shasum,
+				Pinned:          r.Pinned,
+				CacheKey:        r.CacheKey,
+				Origin:          r.Origin,
 			})
 		}
 		l.Packages[name] = entries
@@ -138,16 +140,17 @@ func (l *List) Releases(name string) ([]source.Release, error) {
 			return nil, err
 		}
 		out = append(out, source.Release{
-			Version:      v,
-			Unity:        e.Unity,
-			Dependencies: e.Dependencies,
-			SameTag:      e.SameTag,
-			Dir:          e.Dir,
-			ArchiveURL:   e.ArchiveURL,
-			Digests:      fetch.Digests{Integrity: e.Integrity, Shasum: e.Shasum},
-			Pinned:       e.Pinned,
-			CacheKey:     e.CacheKey,
-			Origin:       e.Origin,
+			Version:         v,
+			UpstreamVersion: e.UpstreamVersion,
+			Unity:           e.Unity,
+			Dependencies:    e.Dependencies,
+			SameTag:         e.SameTag,
+			Dir:             e.Dir,
+			ArchiveURL:      e.ArchiveURL,
+			Digests:         fetch.Digests{Integrity: e.Integrity, Shasum: e.Shasum},
+			Pinned:          e.Pinned,
+			CacheKey:        e.CacheKey,
+			Origin:          e.Origin,
 		})
 	}
 	return out, nil

@@ -32,8 +32,14 @@ type GitHub struct {
 	Owner, Repo string
 	Packages    []GitHubPackage
 	TagPattern  string
-	AcceptTag   func(semver.Version) bool
-	Client      *fetch.Client
+	// TagVersion reads the version of a tag from its name; false means the
+	// tag is not read.
+	TagVersion func(name string) (semver.Version, bool, error)
+	// UniqueTagVersions makes two tags that read as one version an error,
+	// for a recipe's own tagVersion rule, which should tell its tags apart.
+	UniqueTagVersions bool
+	AcceptTag         func(semver.Version) bool
+	Client            *fetch.Client
 	// CacheDir keeps each commit's package.json, which never changes.
 	CacheDir string
 
@@ -48,6 +54,9 @@ type GitHubPackage struct {
 	// PathFor returns the folder of the package in a tag, from the version
 	// in the tag's name; false means the tag is not read.
 	PathFor func(semver.Version) (string, bool)
+	// VersionFromTag gives the package the version of the tag, in place of
+	// the one in its package.json.
+	VersionFromTag bool
 }
 
 // NewGitHub returns the upstream of a github recipe source.
@@ -62,18 +71,20 @@ func NewGitHub(s *recipe.Source, client *fetch.Client, cacheDir string) (*GitHub
 	}
 	var pkgs []GitHubPackage
 	for _, p := range s.Packages {
-		pkgs = append(pkgs, GitHubPackage{Name: p.Name, PathFor: p.PathFor})
+		pkgs = append(pkgs, GitHubPackage{Name: p.Name, PathFor: p.PathFor, VersionFromTag: p.VersionFromTag})
 	}
 	return &GitHub{
 		Owner: owner, Repo: repo,
-		Packages:     pkgs,
-		TagPattern:   pattern,
-		AcceptTag:    s.AcceptsTag,
-		Client:       client,
-		CacheDir:     cacheDir,
-		GitBase:      "https://github.com",
-		RawBase:      "https://raw.githubusercontent.com",
-		CodeloadBase: "https://codeload.github.com",
+		Packages:          pkgs,
+		TagPattern:        pattern,
+		TagVersion:        s.TagVersionOf,
+		UniqueTagVersions: s.HasTagVersionRule(),
+		AcceptTag:         s.AcceptsTag,
+		Client:            client,
+		CacheDir:          cacheDir,
+		GitBase:           "https://github.com",
+		RawBase:           "https://raw.githubusercontent.com",
+		CodeloadBase:      "https://codeload.github.com",
 	}, nil
 }
 
@@ -176,9 +187,16 @@ func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, error) {
 	return out, nil
 }
 
-// tags lists the tags that match the pattern and whose name, without a
-// leading "v", is a SemVer version the recipe accepts, oldest first.
+// tags lists the tags that match the pattern and whose name reads as a
+// version the recipe accepts, oldest first.
 func (g *GitHub) tags(ctx context.Context) ([]tag, error) {
+	readVersion := g.TagVersion
+	if readVersion == nil {
+		readVersion = func(name string) (semver.Version, bool, error) {
+			v, err := semver.Parse(strings.TrimPrefix(strings.TrimPrefix(name, "v"), "V"))
+			return v, err == nil, nil
+		}
+	}
 	u := fmt.Sprintf("%s/%s/%s.git/info/refs?service=git-upload-pack", g.GitBase, g.Owner, g.Repo)
 	data, err := g.Client.GetBytes(ctx, u)
 	if err != nil {
@@ -197,8 +215,11 @@ func (g *GitHub) tags(ctx context.Context) ([]tag, error) {
 		if ok, _ := path.Match(g.TagPattern, tagName); !ok {
 			continue
 		}
-		v, err := semver.Parse(strings.TrimPrefix(strings.TrimPrefix(tagName, "v"), "V"))
+		v, ok, err := readVersion(tagName)
 		if err != nil {
+			return nil, err
+		}
+		if !ok {
 			continue
 		}
 		if g.AcceptTag != nil && !g.AcceptTag(v) {
@@ -212,6 +233,13 @@ func (g *GitHub) tags(ctx context.Context) ([]tag, error) {
 		}
 		return out[i].name < out[j].name
 	})
+	if g.UniqueTagVersions {
+		for i := 1; i < len(out); i++ {
+			if semver.Compare(out[i-1].version, out[i].version) == 0 {
+				return nil, fmt.Errorf("tags %s and %s both read as version %s; change tagVersion to tell them apart", out[i-1].name, out[i].name, out[i].version)
+			}
+		}
+	}
 	return out, nil
 }
 
@@ -286,20 +314,24 @@ func (g *GitHub) release(ctx context.Context, t tag, p GitHubPackage) (*Release,
 	if err := json.Unmarshal(data, &m); err != nil || m.Name != p.Name {
 		return nil, nil
 	}
-	v, err := semver.Parse(m.Version)
-	if err != nil {
-		return nil, nil
+	v, upstream := t.version, m.Version
+	if !p.VersionFromTag {
+		if v, err = semver.Parse(m.Version); err != nil {
+			return nil, nil
+		}
+		upstream = ""
 	}
 	unity, _ := m.Unity.(string)
 	return &Release{
-		Version:      v,
-		Unity:        unity,
-		Dependencies: m.Dependencies,
-		Dir:          dir,
-		ArchiveURL:   fmt.Sprintf("%s/%s/%s/tar.gz/%s", g.CodeloadBase, g.Owner, g.Repo, t.commit),
-		Pinned:       true,
-		CacheKey:     path.Join("git", "github.com", g.Owner, g.Repo, t.commit+".tar.gz"),
-		Origin:       "tag " + t.name,
+		Version:         v,
+		UpstreamVersion: upstream,
+		Unity:           unity,
+		Dependencies:    m.Dependencies,
+		Dir:             dir,
+		ArchiveURL:      fmt.Sprintf("%s/%s/%s/tar.gz/%s", g.CodeloadBase, g.Owner, g.Repo, t.commit),
+		Pinned:          true,
+		CacheKey:        path.Join("git", "github.com", g.Owner, g.Repo, t.commit+".tar.gz"),
+		Origin:          "tag " + t.name,
 	}, nil
 }
 

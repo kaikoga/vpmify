@@ -14,6 +14,10 @@ import (
 // Release is one version of a package an upstream offers.
 type Release struct {
 	Version semver.Version
+	// UpstreamVersion is the version the upstream package.json has, when
+	// Vpmify gives the package another (a recipe's versionFromTag). Empty
+	// means package.json has Version.
+	UpstreamVersion string
 	// Unity is the upstream "unity" field of the version, before overrides.
 	Unity string
 	// Dependencies are the upstream UPM "dependencies" of the version.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/kaikoga/vpmify/internal/fetch"
@@ -29,6 +30,68 @@ func newSource(t *testing.T, gh *testutil.FakeGitHub, recipeJSON string) *GitHub
 		t.Fatal(err)
 	}
 	return g
+}
+
+// warudoRepo has tags like Warudo-Mod-Tool's: four numbers, and a
+// package.json version that does not tell them apart or runs behind.
+func warudoRepo() *testutil.FakeGitHub {
+	gh := testutil.NewFakeGitHub("owner", "repo")
+	gh.Tag("0.14.3", map[string]string{"package.json": manifest("com.example.pkg", "0.14.3")})
+	gh.Tag("0.14.4.2", map[string]string{"package.json": manifest("com.example.pkg", "0.14.3")})
+	gh.Tag("0.15.2.1", map[string]string{"package.json": manifest("com.example.pkg", "0.15.2")})
+	gh.Tag("0.15.2.2", map[string]string{"package.json": manifest("com.example.pkg", "0.15.2")})
+	gh.Tag("upm/latest", map[string]string{"package.json": manifest("com.example.pkg", "0.15.2")})
+	return gh
+}
+
+func warudoRecipe(version, pkg string) string {
+	return `{"id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
+  "tagVersion": {"match": "(\\d+)\\.(\\d+)\\.(\\d+)(?:\\.(\\d+))?", "version": "` + version + `"},
+  "tags": ">=0.14.4000",
+  "packages": [{"name": "com.example.pkg"` + pkg + `}]}]}`
+}
+
+func TestGitHubTagVersion(t *testing.T) {
+	gh := warudoRepo()
+	src := newSource(t, gh, warudoRecipe("{1}.{2}.{3}{4:03}", `, "versionFromTag": true`))
+	all, err := src.Releases(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var summary []string
+	for _, r := range all["com.example.pkg"] {
+		summary = append(summary, r.Version.String()+" "+r.UpstreamVersion+" "+r.Origin)
+	}
+	// Each tag is a version of its own; 0.14.3 is out of the tags range.
+	want := []string{
+		"0.14.4002 0.14.3 tag 0.14.4.2",
+		"0.15.2001 0.15.2 tag 0.15.2.1",
+		"0.15.2002 0.15.2 tag 0.15.2.2",
+	}
+	if !reflect.DeepEqual(summary, want) {
+		t.Errorf("releases = %q, want %q", summary, want)
+	}
+
+	// Without versionFromTag the tags are read by the rule, and the
+	// versions are package.json's, the oldest tag winning as ever.
+	src = newSource(t, gh, warudoRecipe("{1}.{2}.{3}{4:03}", ""))
+	all, err = src.Releases(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary = nil
+	for _, r := range all["com.example.pkg"] {
+		summary = append(summary, r.Version.String()+" ["+r.UpstreamVersion+"] "+r.Origin)
+	}
+	if want := []string{"0.14.3 [] tag 0.14.4.2", "0.15.2 [] tag 0.15.2.1"}; !reflect.DeepEqual(summary, want) {
+		t.Errorf("releases = %q, want %q", summary, want)
+	}
+
+	// A rule that reads two tags as one version is an error.
+	src = newSource(t, gh, warudoRecipe("{1}.{2}.{3}", `, "versionFromTag": true`))
+	if _, err := src.Releases(context.Background()); err == nil || !strings.Contains(err.Error(), "tags 0.15.2.1 and 0.15.2.2 both read as version 0.15.2") {
+		t.Errorf("colliding rule: err = %v", err)
+	}
 }
 
 func TestGitHubReleases(t *testing.T) {

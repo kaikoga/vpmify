@@ -42,17 +42,20 @@ type Source struct {
 	Type string `json:"type"`
 	// Registry is for npm-compatible registries.
 	Registry string `json:"registry,omitempty"`
-	// URL, TagPattern and Tags are for Git repositories. TagPattern is a
-	// glob on tag names (default "*"). Tags is a range on the version in the
-	// tag name (a leading "v" dropped), which limits the tags Vpmify reads;
-	// it differs from Package.Versions, the range on the package's version,
-	// because a repository's tags need not follow its packages' versions.
-	URL        string     `json:"url,omitempty"`
-	TagPattern string     `json:"tagPattern,omitempty"`
-	Tags       string     `json:"tags,omitempty"`
-	Packages   []*Package `json:"packages"`
+	// URL, TagPattern, TagVersion and Tags are for Git repositories.
+	// TagPattern is a glob on tag names (default "*"). Tags is a range on the
+	// version of the tag (its name with a leading "v" dropped, or as
+	// TagVersion reads it), which limits the tags Vpmify reads; it differs
+	// from Package.Versions, the range on the package's version, because a
+	// repository's tags need not follow its packages' versions.
+	URL        string      `json:"url,omitempty"`
+	TagPattern string      `json:"tagPattern,omitempty"`
+	TagVersion *TagVersion `json:"tagVersion,omitempty"`
+	Tags       string      `json:"tags,omitempty"`
+	Packages   []*Package  `json:"packages"`
 
-	tags semver.Range
+	tags       semver.Range
+	tagVersion *tagVersionRule
 }
 
 // Package is one package a source provides, and how to convert it.
@@ -69,9 +72,15 @@ type Package struct {
 	// read.
 	Paths []PathRule `json:"paths,omitempty"`
 	// Versions and Prerelease say which versions the recipe can convert.
-	Versions   string     `json:"versions,omitempty"`
-	Prerelease bool       `json:"prerelease,omitempty"`
-	Overrides  []Override `json:"overrides,omitempty"`
+	Versions   string `json:"versions,omitempty"`
+	Prerelease bool   `json:"prerelease,omitempty"`
+	// VersionFromTag makes the version of the tag the package's version, in
+	// place of the one its package.json has, for a repository whose
+	// package.json does not tell its releases apart (Warudo-Mod-Tool keeps
+	// 0.15.2 for tags 0.15.2.1 and 0.15.2.2). Vpmify writes it into
+	// package.json.
+	VersionFromTag bool       `json:"versionFromTag,omitempty"`
+	Overrides      []Override `json:"overrides,omitempty"`
 
 	versions  semver.Range
 	paths     []parsedPathRule
@@ -181,8 +190,8 @@ func (s *Source) check() error {
 		if s.Registry == "" {
 			return fmt.Errorf("npm source needs registry")
 		}
-		if s.URL != "" || s.TagPattern != "" || s.Tags != "" {
-			return fmt.Errorf("npm source takes no url, tagPattern or tags")
+		if s.URL != "" || s.TagPattern != "" || s.TagVersion != nil || s.Tags != "" {
+			return fmt.Errorf("npm source takes no url, tagPattern, tagVersion or tags")
 		}
 	case SourceGitHub:
 		if s.URL == "" {
@@ -193,6 +202,13 @@ func (s *Source) check() error {
 		}
 		if _, err := path.Match(s.TagPattern, ""); err != nil {
 			return fmt.Errorf("tagPattern: %w", err)
+		}
+		if s.TagVersion != nil {
+			rule, err := parseTagVersion(s.TagVersion)
+			if err != nil {
+				return fmt.Errorf("tagVersion: %w", err)
+			}
+			s.tagVersion = rule
 		}
 		tags, err := semver.ParseRange(s.Tags)
 		if err != nil {
@@ -232,8 +248,8 @@ func (p *Package) check(s *Source, siblings map[string]bool) error {
 	}
 	switch s.Type {
 	case SourceNPM:
-		if p.Path != "" || len(p.Paths) > 0 {
-			return fmt.Errorf("an npm source's packages take no path or paths")
+		if p.Path != "" || len(p.Paths) > 0 || p.VersionFromTag {
+			return fmt.Errorf("an npm source's packages take no path, paths or versionFromTag")
 		}
 	case SourceGitHub:
 		if err := p.checkPaths(); err != nil {
@@ -368,16 +384,19 @@ func (p *Package) PathFor(v semver.Version) (string, bool) {
 }
 
 // sourceFields are the fields of a source without its packages.
+// TagVersion is omitted when empty, so that the keys and fingerprints of
+// recipes without it stay what they were before it came.
 type sourceFields struct {
-	Type       string `json:"type"`
-	Registry   string `json:"registry"`
-	URL        string `json:"url"`
-	TagPattern string `json:"tagPattern"`
-	Tags       string `json:"tags"`
+	Type       string      `json:"type"`
+	Registry   string      `json:"registry"`
+	URL        string      `json:"url"`
+	TagPattern string      `json:"tagPattern"`
+	Tags       string      `json:"tags"`
+	TagVersion *TagVersion `json:"tagVersion,omitempty"`
 }
 
 func (s *Source) fields() sourceFields {
-	return sourceFields{s.Type, s.Registry, s.URL, s.TagPattern, s.Tags}
+	return sourceFields{s.Type, s.Registry, s.URL, s.TagPattern, s.Tags, s.TagVersion}
 }
 
 // ListingKey identifies what decides the versions the source's version list
@@ -388,14 +407,15 @@ func (s *Source) fields() sourceFields {
 // is read; {sameTag} is too, from the versions the list keeps for each tag.
 func (s *Source) ListingKey() string {
 	type pkg struct {
-		Name     string     `json:"name"`
-		Path     string     `json:"path"`
-		Paths    []PathRule `json:"paths"`
-		Versions string     `json:"versions"`
+		Name           string     `json:"name"`
+		Path           string     `json:"path"`
+		Paths          []PathRule `json:"paths"`
+		Versions       string     `json:"versions"`
+		VersionFromTag bool       `json:"versionFromTag,omitempty"`
 	}
 	var pkgs []pkg
 	for _, p := range s.Packages {
-		pkgs = append(pkgs, pkg{p.Name, p.Path, p.Paths, p.Versions})
+		pkgs = append(pkgs, pkg{p.Name, p.Path, p.Paths, p.Versions, p.VersionFromTag})
 	}
 	data, _ := json.Marshal(struct {
 		Source   sourceFields `json:"source"`

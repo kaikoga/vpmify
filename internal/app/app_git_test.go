@@ -648,3 +648,41 @@ func TestPullOfAVersionSkipsPackagesThatCannotConvertIt(t *testing.T) {
 		t.Errorf("pkg@1.2.0 named: err = %v", err)
 	}
 }
+
+// A package whose package.json does not tell its tags apart takes the
+// version of the tag, which Vpmify writes into package.json (kaikoga
+// 2026-11-19, for Warudo-Mod-Tool).
+func TestVersionFromTagIsWrittenIntoPackageJSON(t *testing.T) {
+	f := newFixture(t)
+	gh := testutil.NewFakeGitHub("owner", "mono")
+	gh.Tag("0.15.2.1", monoTag("1.0.0", "0.15.2"))
+	gh.Tag("0.15.2.2", monoTag("1.0.0", "0.15.2"))
+	f.app.Client.HTTP.Transport = gh
+	ctx := context.Background()
+	recipe := fmt.Sprintf(`{
+  "id": "mono",
+  "sources": [{"type": "github", "url": %q,
+    "tagVersion": {"match": "(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "version": "{1}.{2}.{3}{4:03}"},
+    "packages": [{"name": "com.example.pkg", "path": "Packages/Pkg", "versionFromTag": true}]}]
+}`, monoURL)
+	if _, err := f.app.Add(ctx, f.writeFile("mono.json", recipe)); err != nil {
+		t.Fatal(err, f.log)
+	}
+	res, err := f.app.Pull(ctx, []string{"mono/com.example.pkg@0.15.2001"}, PullOptions{})
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	var built []string
+	for _, b := range res.Built {
+		built = append(built, b.Version)
+	}
+	if want := []string{"0.15.2002", "0.15.2001"}; !reflect.DeepEqual(built, want) {
+		t.Errorf("built = %v, want %v", built, want)
+	}
+	for _, v := range built {
+		m := readManifest(t, f.app.Layout.PackageDir("mono", "com.example.pkg", v))
+		if m["version"] != v {
+			t.Errorf("%s: package.json version = %v", v, m["version"])
+		}
+	}
+}
