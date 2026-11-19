@@ -382,7 +382,8 @@ type doctorResult struct {
 }
 
 // splitFlags takes the boolean flags names out of args, wherever they are,
-// so that `pull kit --refetch` works as well as `pull --refetch kit`.
+// so that `package pull kit --refetch` works as well as
+// `package pull --refetch kit`.
 func splitFlags(args []string, names ...string) (rest []string, set map[string]bool, err error) {
 	set = map[string]bool{}
 	for _, arg := range args {

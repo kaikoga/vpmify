@@ -1311,7 +1311,10 @@ func (a *App) List(ids ...string) (*ListResult, error) {
 		return nil, err
 	}
 	for _, id := range ids {
-		if _, ok := st.Recipes[id]; !ok && !fsutil.Exists(a.recipePath(id)) {
+		// An id that is not one is refused before it names a file, such as
+		// "../state" naming state.json.
+		_, ok := st.Recipes[id]
+		if !ok && (!recipe.ValidID(id) || !fsutil.Exists(a.recipePath(id))) {
 			return nil, fmt.Errorf("no recipe %q", id)
 		}
 	}
@@ -1392,7 +1395,7 @@ func (a *App) Recipes() ([]RecipeInfo, error) {
 }
 
 // VersionInfo is one version in a package's version list, as `vpmify
-// versions` shows it.
+// recipe versions` shows it.
 type VersionInfo struct {
 	Version string `json:"version"`
 	// Unity is the "unity" field after the recipe's overrides.

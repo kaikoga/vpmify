@@ -191,7 +191,17 @@ func (a *App) Doctor(fix bool) ([]Problem, error) {
 		for _, id := range state.SortedKeys(st.Recipes) {
 			rs := st.Recipes[id]
 			if !hasRecipe[id] {
-				add(&Problem{Message: fmt.Sprintf("%s: versions are available but the recipe is gone; `vpmify recipe remove %s` deletes them", id, id)})
+				// package remove --all leaves the record of a gone recipe,
+				// as it leaves every recipe it removes versions from.
+				available := 0
+				for _, ps := range rs.Packages {
+					available += len(ps.Versions)
+				}
+				if available > 0 {
+					add(&Problem{Message: fmt.Sprintf("%s: versions are available but the recipe is gone; `vpmify recipe remove %s` deletes them", id, id)})
+				} else {
+					add(&Problem{Message: fmt.Sprintf("%s: the recipe is gone but its record stays; `vpmify recipe remove %s --yes` forgets it", id, id)})
+				}
 			}
 			for _, name := range state.SortedKeys(rs.Packages) {
 				ps := rs.Packages[name]

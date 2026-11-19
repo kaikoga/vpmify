@@ -105,6 +105,12 @@ type parsedOverride struct {
 
 var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
+// ValidID reports whether id can be a recipe's id. Such an id names no
+// folder above the recipe files.
+func ValidID(id string) bool {
+	return idPattern.MatchString(id)
+}
+
 // Fields that decide where a version lives in the store and how ALCOM
 // identifies it, so a recipe must not change them.
 var protectedFields = map[string]bool{"name": true, "version": true}
@@ -140,7 +146,7 @@ func Parse(data []byte) (*Recipe, error) {
 }
 
 func (r *Recipe) check() error {
-	if !idPattern.MatchString(r.ID) {
+	if !ValidID(r.ID) {
 		return fmt.Errorf("id %q must be lowercase letters, digits, '.', '_' or '-'", r.ID)
 	}
 	if len(r.Sources) == 0 {

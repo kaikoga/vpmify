@@ -88,6 +88,8 @@ func TestJSONErrors(t *testing.T) {
 		{[]string{"recipe", "--json"}, 2},
 		{[]string{"recipe", "nope", "--json"}, 2},
 		{[]string{"package", "list", "--json", "nope"}, 1},
+		// An id that is not one names no file, such as state.json.
+		{[]string{"package", "list", "--json", "../state"}, 1},
 		// package remove always names a version or --all.
 		{[]string{"package", "remove", "--json", "nope"}, 2},
 		{[]string{"package", "remove", "--json", "nope@"}, 2},

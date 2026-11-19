@@ -138,6 +138,36 @@ func TestDoctorFixes(t *testing.T) {
 	}
 }
 
+// A gone recipe whose versions were all removed is reported as a record
+// left behind, not as one with available versions.
+func TestDoctorTellsAGoneRecipeWithoutVersions(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if err := os.Remove(f.app.recipePath("kit")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.app.RemoveVersions("kit", ""); err != nil {
+		t.Fatal(err, f.log)
+	}
+	problems, err := f.app.Doctor(false)
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	msgs := problemMessages(problems)
+	if len(msgs) != 1 || strings.Contains(msgs[0], "versions are available") || !strings.Contains(msgs[0], "`vpmify recipe remove kit --yes` forgets it") {
+		t.Errorf("problems = %v", msgs)
+	}
+	if _, err := f.app.RemoveRecipe("kit", true); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if problems, err := f.app.Doctor(false); err != nil || len(problems) != 0 {
+		t.Errorf("after recipe remove: problems = %v, err = %v", problemMessages(problems), err)
+	}
+}
+
 func TestDoctorReportsWhatItCannotFix(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")

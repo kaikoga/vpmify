@@ -643,6 +643,24 @@ func TestRemove(t *testing.T) {
 	}
 }
 
+func TestListOfRecipes(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	res, err := f.app.List("kit", "kit")
+	if err != nil || len(res.Entries) != 1 {
+		t.Errorf("list kit kit = %+v, %v", res, err)
+	}
+	// state.json is there, but "../state" is not a recipe id.
+	for _, id := range []string{"nope", "../state"} {
+		if _, err := f.app.List(id); err == nil || !strings.Contains(err.Error(), "no recipe") {
+			t.Errorf("list %s: err = %v", id, err)
+		}
+	}
+}
+
 func TestRegistersEvenWhenARecipeFails(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
