@@ -40,8 +40,8 @@ commands:
   pull [--all] [--refetch] [<id>[/<package>][@<version>]...]
                                convert versions from the version lists and
                                register them with ALCOM, which makes them
-                               available: the newest for each Unity of each
-                               package (of the one named after "/"), every
+                               available: the newest version of each package
+                               (of the one named after "/"), every
                                version with --all, and each @<version> named
                                (of every package that has it, without "/");
                                --refetch also downloads and builds every
@@ -345,21 +345,19 @@ func printVersions(stdout io.Writer, list *app.VersionList) error {
 			continue
 		}
 		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "VERSION\tUNITY\tFROM\tNEWEST\tAVAILABLE")
+		fmt.Fprintln(tw, "VERSION\tUNITY\tFROM\tAVAILABLE")
 		var unusable []app.VersionInfo
 		for _, v := range p.Versions {
-			newest, available := "", ""
-			if v.Newest {
-				newest = "yes"
+			available := ""
+			if v.Unusable != "" {
+				// "-": it cannot be made available; why follows the table.
+				available = "-"
+				unusable = append(unusable, v)
 			}
 			if v.Available {
 				available = "yes"
 			}
-			if v.Unusable != "" {
-				newest = "-"
-				unusable = append(unusable, v)
-			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", v.Version, v.Unity, v.Origin, newest, available)
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", v.Version, v.Unity, v.Origin, available)
 		}
 		if err := tw.Flush(); err != nil {
 			return err
@@ -368,7 +366,7 @@ func printVersions(stdout io.Writer, list *app.VersionList) error {
 			fmt.Fprintf(stdout, "%s cannot be converted: %s\n", v.Version, v.Unusable)
 		}
 	}
-	fmt.Fprintf(stdout, "\n`vpmify pull` makes the NEWEST ones available; `vpmify pull %s/<package>@<version>` adds another.\n", list.Recipe)
+	fmt.Fprintf(stdout, "\n`vpmify pull` makes the newest version of each package available; `vpmify pull %s/<package>@<version>` adds another.\n", list.Recipe)
 	return nil
 }
 

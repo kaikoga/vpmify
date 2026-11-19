@@ -184,7 +184,7 @@ async function showVersions() {
         const heading = versionsElement.insertRow();
         heading.className = "group";
         const th = document.createElement("th");
-        th.colSpan = 6;
+        th.colSpan = 5;
         th.textContent = `${p.package} (${p.source}), version list read ${new Date(p.updated).toLocaleString()}`;
         heading.appendChild(th);
         for (const v of p.versions ?? []) {
@@ -192,7 +192,6 @@ async function showVersions() {
             cell(row, v.version + (v.prerelease ? " (prerelease)" : ""));
             cell(row, v.unity ?? "");
             cell(row, v.origin);
-            cell(row, v.unusable ? "-" : v.newest ? "yes" : "");
             cell(row, v.available ? "yes" : "");
             const td = row.insertCell();
             if (v.unusable) {

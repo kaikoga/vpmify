@@ -286,9 +286,9 @@ func TestSameTag(t *testing.T) {
 	}
 	var shown []string
 	for _, v := range list.Packages[0].Versions {
-		shown = append(shown, fmt.Sprintf("%s newest=%v unusable=%v", v.Version, v.Newest, v.Unusable != ""))
+		shown = append(shown, fmt.Sprintf("%s unusable=%v", v.Version, v.Unusable != ""))
 	}
-	if want := []string{"1.2.0 newest=false unusable=true", "1.1.0 newest=true unusable=false", "1.0.0 newest=false unusable=false"}; !reflect.DeepEqual(shown, want) {
+	if want := []string{"1.2.0 unusable=true", "1.1.0 unusable=false", "1.0.0 unusable=false"}; !reflect.DeepEqual(shown, want) {
 		t.Errorf("versions = %v, want %v", shown, want)
 	}
 	if _, err := f.app.Pull(ctx, []string{"mono/com.example.pkg@1.2.0"}, PullOptions{}); err == nil || !strings.Contains(err.Error(), "same tag has no version of com.example.base") {

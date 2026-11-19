@@ -467,8 +467,8 @@ type PullOptions struct {
 // Pull converts versions of the named recipes (all recipes when args is
 // empty) from their version lists into the store, and registers every
 // available version with ALCOM, which makes them available. It adds the
-// newest version for each value of the "unity" field of each package (of
-// the package "<id>/<name>" names), every version with opt.All, and
+// newest version of each package (of the package "<id>/<name>" names),
+// whatever Unity it needs, every version with opt.All, and
 // "<id>@<version>" names one more of every package that has it
 // ("<id>/<name>@<version>" of that package). The named recipes' available
 // versions that the recipe now builds differently are built again; other
@@ -619,8 +619,8 @@ type pkgVersion struct {
 // pullRequest says which versions pullRecipe adds. The zero value adds
 // none, and only builds available versions again when they need it.
 type pullRequest struct {
-	// choose adds the newest version for each value of "unity", or every
-	// version with all, of every package when whole is true and of the
+	// choose adds the newest version, or every version with all, of every
+	// package when whole is true and of the
 	// packages in only otherwise.
 	choose, all bool
 	whole       bool
@@ -732,8 +732,8 @@ func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pu
 	return errors.Join(errs...)
 }
 
-// pullPackage makes the versions of one package available: the newest for
-// each value of "unity" when choose is true (every version with all), the
+// pullPackage makes the versions of one package available: the newest when
+// choose is true (every version with all), the
 // versions in extra, and the available versions the recipe now builds
 // differently. byUser says the request came from the user rather than from
 // a dependency. It returns how many versions it converted.
@@ -750,7 +750,7 @@ func (a *App) pullPackage(ctx context.Context, st *state.State, id string, l *pk
 		case len(accepted) > 0 && all:
 			selected = accepted
 		case len(accepted) > 0:
-			selected = l.newestPerUnity(accepted)
+			selected = []source.Release{newest(accepted)}
 		case len(extra) == 0:
 			chooseErr = fmt.Errorf("no version in the version list matches the recipe")
 		}
@@ -1343,9 +1343,6 @@ type VersionInfo struct {
 	Unity      string `json:"unity,omitempty"`
 	Origin     string `json:"origin"`
 	Prerelease bool   `json:"prerelease,omitempty"`
-	// Newest means `vpmify pull` makes it available without being told: it
-	// is the newest version for its value of "unity".
-	Newest bool `json:"newest"`
 	// Available means Vpmify has converted it and registered it with ALCOM.
 	Available bool `json:"available"`
 	// Unusable says why the version cannot be converted, such as {sameTag}
@@ -1428,10 +1425,6 @@ func (a *App) Versions(ref string, opt VersionsOptions) (*VersionList, error) {
 	for _, l := range lists {
 		name := l.pkg.Name
 		available := st.AvailableVersions(id, name)
-		newest := map[string]bool{}
-		for _, rel := range l.newestPerUnity(l.accepted()) {
-			newest[rel.Version.String()] = true
-		}
 		pv := PackageVersions{Package: name, Source: l.src.Describe(), Updated: l.updated, Versions: []VersionInfo{}}
 		for i := len(l.releases) - 1; i >= 0; i-- {
 			rel := l.releases[i]
@@ -1451,7 +1444,6 @@ func (a *App) Versions(ref string, opt VersionsOptions) (*VersionList, error) {
 				Unity:      unity,
 				Origin:     rel.Origin,
 				Prerelease: rel.Version.IsPrerelease(),
-				Newest:     newest[v],
 				Available:  isAvailable,
 			}
 			if _, err := l.expand(rel); err != nil {

@@ -214,7 +214,7 @@ func (f *fixture) manifest(version string) map[string]any {
 const overrideNewUnity = `,
   "overrides": [{"versions": ">=2.0.0", "set": {"unity": "6000.2", "unityRelease": "6f2"}}]`
 
-func TestPullPlacesLatestPerUnityAndRegisters(t *testing.T) {
+func TestPullPlacesNewestAndRegisters(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
 	f.reg.add("1.1.0", "2021.3")
@@ -233,14 +233,15 @@ func TestPullPlacesLatestPerUnityAndRegisters(t *testing.T) {
 		t.Errorf("add downloaded %v", f.reg.downloads)
 	}
 
+	// The newest stable version only, though the newest for Unity 2021.3 is
+	// another.
 	if _, err := f.app.Pull(ctx, nil, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if got, want := f.available(), []string{"1.1.0@2021.3", "2.0.0@6000.2"}; !reflect.DeepEqual(got, want) {
+	if got, want := f.available(), []string{"2.0.0@6000.2"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed = %v, want %v", got, want)
 	}
 	wantFolders := []string{
-		f.app.Layout.PackageDir("kit", pkgName, "1.1.0"),
 		f.app.Layout.PackageDir("kit", pkgName, "2.0.0"),
 		f.foreign,
 	}
@@ -250,6 +251,10 @@ func TestPullPlacesLatestPerUnityAndRegisters(t *testing.T) {
 	}
 	if m := f.manifest("2.0.0"); m["unity"] != "6000.2" || m["unityRelease"] != "6f2" {
 		t.Errorf("2.0.0 manifest = %v", m)
+	}
+	// A project on Unity 2021.3 needs a version named.
+	if _, err := f.app.Pull(ctx, []string{"kit@1.1.0"}, PullOptions{}); err != nil {
+		t.Fatal(err, f.log)
 	}
 	if m := f.manifest("1.1.0"); m["unity"] != "2021.3" || m["unityRelease"] != nil {
 		t.Errorf("1.1.0 manifest = %v", m)
@@ -409,9 +414,6 @@ func TestVersions(t *testing.T) {
 	if _, err := f.app.Pull(ctx, []string{"kit@1.0.0"}, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if _, err := f.app.Remove(ctx, "kit", "1.1.0"); err != nil {
-		t.Fatal(err, f.log)
-	}
 	// The version list keeps only the recipe's range, so 0.9.0 is not taken.
 	if _, err := f.app.Pull(ctx, []string{"kit@0.9.0"}, PullOptions{}); err == nil || !strings.Contains(err.Error(), "outside the packages' versions") {
 		t.Errorf("pull kit@0.9.0: err = %v", err)
@@ -429,7 +431,7 @@ func TestVersions(t *testing.T) {
 		}
 		var out []string
 		for _, v := range list.Packages[0].Versions {
-			out = append(out, fmt.Sprintf("%s %s newest=%v available=%v", v.Version, v.Unity, v.Newest, v.Available))
+			out = append(out, fmt.Sprintf("%s %s available=%v", v.Version, v.Unity, v.Available))
 		}
 		return out
 	}
@@ -439,24 +441,24 @@ func TestVersions(t *testing.T) {
 		want []string
 	}{
 		{"stable", VersionsOptions{}, []string{
-			"2.0.0 6000.2 newest=true available=true",
-			"1.1.0 2021.3 newest=true available=false",
-			"1.0.0 2021.3 newest=false available=true",
+			"2.0.0 6000.2 available=true",
+			"1.1.0 2021.3 available=false",
+			"1.0.0 2021.3 available=true",
 		}},
 		{"all", VersionsOptions{All: true}, []string{
-			"2.1.0-beta.1 6000.2 newest=false available=false",
-			"2.0.0 6000.2 newest=true available=true",
-			"1.1.0 2021.3 newest=true available=false",
-			"1.0.0 2021.3 newest=false available=true",
+			"2.1.0-beta.1 6000.2 available=false",
+			"2.0.0 6000.2 available=true",
+			"1.1.0 2021.3 available=false",
+			"1.0.0 2021.3 available=true",
 		}},
 		{"available", VersionsOptions{Available: true}, []string{
-			"2.0.0 6000.2 newest=true available=true",
-			"1.0.0 2021.3 newest=false available=true",
+			"2.0.0 6000.2 available=true",
+			"1.0.0 2021.3 available=true",
 		}},
 		// unity is the oldest Unity a version supports.
 		{"unity 2022.3", VersionsOptions{Unity: "2022.3.22f1"}, []string{
-			"1.1.0 2021.3 newest=true available=false",
-			"1.0.0 2021.3 newest=false available=true",
+			"1.1.0 2021.3 available=false",
+			"1.0.0 2021.3 available=true",
 		}},
 	}
 	for _, c := range cases {
@@ -581,6 +583,9 @@ func TestRemove(t *testing.T) {
 	f.reg.add("2.0.0", "2021.3")
 	ctx := context.Background()
 	if err := f.addAndPull(PullOptions{}, f.writeRecipe(overrideNewUnity)); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if _, err := f.app.Pull(ctx, []string{"kit@1.0.0"}, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
 

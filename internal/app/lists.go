@@ -120,26 +120,18 @@ func (l *pkgList) accepted() []source.Release {
 	return out
 }
 
-// newestPerUnity picks the newest release for each value of the "unity"
-// field after overrides. vrc-get reads "unity" as the oldest Unity a
-// version supports (vrc-get-vpm/src/lib.rs, unity_compatible), so the
-// newest version a project on any Unity can use is among these.
-func (l *pkgList) newestPerUnity(accepted []source.Release) []source.Release {
-	newest := map[string]source.Release{}
-	var groups []string
-	for _, rel := range accepted {
-		unity := l.pkg.Unity(rel.Version, rel.Unity)
-		cur, ok := newest[unity]
-		if !ok {
-			groups = append(groups, unity)
+// newest returns the newest of the accepted releases, which must not be
+// empty: the one version pull makes available without being told, whatever
+// Unity it needs (kaikoga 2026-11-19). Before, pull took the newest for each
+// value of "unity", which also built versions for Unity versions nobody had.
+// A project on an older Unity sees the newest among the versions ALCOM marks
+// incompatible, and the user names an older version to pull.
+func newest(accepted []source.Release) source.Release {
+	out := accepted[0]
+	for _, rel := range accepted[1:] {
+		if semver.Compare(rel.Version, out.Version) > 0 {
+			out = rel
 		}
-		if !ok || semver.Compare(rel.Version, cur.Version) > 0 {
-			newest[unity] = rel
-		}
-	}
-	var out []source.Release
-	for _, g := range groups {
-		out = append(out, newest[g])
 	}
 	return out
 }
