@@ -5,12 +5,18 @@
       "type": "github",
       "url": "https://github.com/vrm-c/UniVRM.git",
       "tagPattern": "v*",
-      "tags": ">=0.66.0",
+      "tags": ">=0.56.0",
       "packages": [
         {
           "name": "com.vrmc.vrmshaders",
           "paths": [
             { "tags": "<0.125.0", "path": "Assets/VRMShaders" }
+          ]
+        },
+        {
+          "name": "com.vrmc.meshutility",
+          "paths": [
+            { "tags": ">=0.59.0 <0.63.1", "path": "Assets/MeshUtility" }
           ]
         },
         {
@@ -39,9 +45,22 @@
             { "tags": "<0.131.0", "path": "Assets/VRM" }
           ],
           "overrides": [
-            { "versions": "<0.81.0", "set": { "vpmDependencies": { "com.vrmc.unigltf": ">={sameTag}", "com.vrmc.vrmshaders": ">={sameTag}" } } },
+            { "versions": "<0.59.0", "set": { "vpmDependencies": { "com.vrmc.vrmshaders": ">={sameTag}" } } },
+            { "versions": ">=0.59.0 <0.63.0", "set": { "vpmDependencies": { "com.vrmc.meshutility": ">={sameTag}", "com.vrmc.vrmshaders": ">={sameTag}" } } },
+            { "versions": ">=0.63.0 <0.63.1", "set": { "vpmDependencies": { "com.vrmc.meshutility": ">={sameTag}", "com.vrmc.unigltf": ">={sameTag}", "com.vrmc.vrmshaders": ">={sameTag}" } } },
+            { "versions": ">=0.63.1 <0.81.0", "set": { "vpmDependencies": { "com.vrmc.unigltf": ">={sameTag}", "com.vrmc.vrmshaders": ">={sameTag}" } } },
             { "versions": ">=0.81.0 <0.125.0", "set": { "vpmDependencies": { "com.vrmc.gltf": ">={sameTag}", "com.vrmc.vrmshaders": ">={sameTag}" } } },
             { "versions": ">=0.125.0", "set": { "vpmDependencies": { "com.vrmc.gltf": ">={sameTag}" } } }
+          ]
+        },
+        {
+          "name": "com.vrmc.univrm1",
+          "versionFromTag": true,
+          "paths": [
+            { "tags": ">=0.64.0 <0.81.0", "path": "Assets/VRM10" }
+          ],
+          "overrides": [
+            { "set": { "vpmDependencies": { "com.vrmc.unigltf": ">={sameTag}", "com.vrmc.vrmshaders": ">={sameTag}" } } }
           ]
         },
         {
