@@ -18,10 +18,16 @@ import (
 // match is not read. Version builds the version from the groups: {N} is
 // group N, and {N:0W} is group N padded with zeros to W digits, so that
 // "{1}.{2}.{3}{4:03}" reads 0.15.2.2 as 0.15.2002. A group that took no part
-// in the match, or matched nothing, is 0; a group longer than its padding is
-// an error, because it would read out of order. Leading zeros of the numbers in the version proper and
-// its prerelease are dropped, which SemVer forbids there; build metadata
-// keeps them.
+// in the match, or matched nothing, is 0. Leading zeros of the numbers in
+// the version proper and its prerelease are dropped, which SemVer forbids
+// there; build metadata keeps them.
+//
+// A tag the rule matches but cannot read is not read, as a tag that is not
+// SemVer is not read without a rule: a version that does not build as
+// SemVer, or a group longer than its padding, which would read out of order.
+// Whoever writes a recipe may not own the repository, and its users cannot
+// fix its tags, so a stray tag must not stop the recipe (kaikoga
+// 2026-11-19).
 type TagVersion struct {
 	Match   string `json:"match"`
 	Version string `json:"version"`
@@ -94,12 +100,11 @@ func parseTagVersion(tv *TagVersion) (*tagVersionRule, error) {
 }
 
 // read returns the version of tag name, and false when the rule does not
-// match it. A tag that matches but makes no SemVer version is an error: the
-// recipe meant to read it.
-func (r *tagVersionRule) read(name string) (semver.Version, bool, error) {
+// read it.
+func (r *tagVersionRule) read(name string) (semver.Version, bool) {
 	idx := r.match.FindStringSubmatchIndex(name)
 	if idx == nil {
-		return semver.Version{}, false, nil
+		return semver.Version{}, false
 	}
 	var b strings.Builder
 	for _, p := range r.parts {
@@ -114,19 +119,18 @@ func (r *tagVersionRule) read(name string) (semver.Version, bool, error) {
 		if p.width > 0 && len(s) > p.width {
 			// Unpadded, it would read out of order: 0.15.2.1000 after
 			// 0.15.3.0 with {3}{4:03}.
-			return semver.Version{}, false, fmt.Errorf("tag %s: group %d %q is longer than %d", name, p.group, s, p.width)
+			return semver.Version{}, false
 		}
 		for i := len(s); i < p.width; i++ {
 			b.WriteByte('0')
 		}
 		b.WriteString(s)
 	}
-	built := dropLeadingZeros(b.String())
-	v, err := semver.Parse(built)
+	v, err := semver.Parse(dropLeadingZeros(b.String()))
 	if err != nil {
-		return semver.Version{}, false, fmt.Errorf("tag %s reads as %q: %w", name, built, err)
+		return semver.Version{}, false
 	}
-	return v, true, nil
+	return v, true
 }
 
 // dropLeadingZeros drops the leading zeros of the numeric identifiers of
@@ -166,15 +170,15 @@ func trimIdentifiers(s string) string {
 // TagVersionOf returns the version of tag name, and false when the source
 // does not read the tag. Without a tagVersion rule, the name is the version
 // with a leading "v" dropped, and a name that is not SemVer is not read.
-func (s *Source) TagVersionOf(name string) (semver.Version, bool, error) {
+func (s *Source) TagVersionOf(name string) (semver.Version, bool) {
 	if s.tagVersion != nil {
 		return s.tagVersion.read(name)
 	}
 	v, err := semver.Parse(strings.TrimPrefix(strings.TrimPrefix(name, "v"), "V"))
 	if err != nil {
-		return semver.Version{}, false, nil
+		return semver.Version{}, false
 	}
-	return v, true, nil
+	return v, true
 }
 
 // HasTagVersionRule reports whether the source reads tags by a tagVersion

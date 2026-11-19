@@ -34,7 +34,7 @@ type GitHub struct {
 	TagPattern  string
 	// TagVersion reads the version of a tag from its name; false means the
 	// tag is not read.
-	TagVersion func(name string) (semver.Version, bool, error)
+	TagVersion func(name string) (semver.Version, bool)
 	// UniqueTagVersions makes two tags that read as one version an error,
 	// for a recipe's own tagVersion rule, which should tell its tags apart.
 	UniqueTagVersions bool
@@ -192,9 +192,9 @@ func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, error) {
 func (g *GitHub) tags(ctx context.Context) ([]tag, error) {
 	readVersion := g.TagVersion
 	if readVersion == nil {
-		readVersion = func(name string) (semver.Version, bool, error) {
+		readVersion = func(name string) (semver.Version, bool) {
 			v, err := semver.Parse(strings.TrimPrefix(strings.TrimPrefix(name, "v"), "V"))
-			return v, err == nil, nil
+			return v, err == nil
 		}
 	}
 	u := fmt.Sprintf("%s/%s/%s.git/info/refs?service=git-upload-pack", g.GitBase, g.Owner, g.Repo)
@@ -215,10 +215,7 @@ func (g *GitHub) tags(ctx context.Context) ([]tag, error) {
 		if ok, _ := path.Match(g.TagPattern, tagName); !ok {
 			continue
 		}
-		v, ok, err := readVersion(tagName)
-		if err != nil {
-			return nil, err
-		}
+		v, ok := readVersion(tagName)
 		if !ok {
 			continue
 		}
