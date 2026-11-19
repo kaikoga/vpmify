@@ -85,6 +85,8 @@ func TestJSONErrors(t *testing.T) {
 		{[]string{"recipe", "remove", "--json"}, 2},
 		{[]string{"recipe", "remove", "--json", "nope"}, 1},
 		{[]string{"recipe", "remove", "--json", "nope/com.example.pkg"}, 1},
+		// recipe remove removes without asking, so it takes no --yes.
+		{[]string{"recipe", "remove", "--json", "--yes", "nope"}, 2},
 		{[]string{"recipe", "--json"}, 2},
 		{[]string{"recipe", "nope", "--json"}, 2},
 		{[]string{"package", "list", "--json", "nope"}, 1},

@@ -200,7 +200,7 @@ func (a *App) Doctor(fix bool) ([]Problem, error) {
 				if available > 0 {
 					add(&Problem{Message: fmt.Sprintf("%s: versions are available but the recipe is gone; `vpmify recipe remove %s` deletes them", id, id)})
 				} else {
-					add(&Problem{Message: fmt.Sprintf("%s: the recipe is gone but its record stays; `vpmify recipe remove %s --yes` forgets it", id, id)})
+					add(&Problem{Message: fmt.Sprintf("%s: the recipe is gone but its record stays; `vpmify recipe remove %s` forgets it", id, id)})
 				}
 			}
 			for _, name := range state.SortedKeys(rs.Packages) {

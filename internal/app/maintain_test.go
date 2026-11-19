@@ -157,7 +157,7 @@ func TestDoctorTellsAGoneRecipeWithoutVersions(t *testing.T) {
 		t.Fatal(err, f.log)
 	}
 	msgs := problemMessages(problems)
-	if len(msgs) != 1 || strings.Contains(msgs[0], "versions are available") || !strings.Contains(msgs[0], "`vpmify recipe remove kit --yes` forgets it") {
+	if len(msgs) != 1 || strings.Contains(msgs[0], "versions are available") || !strings.Contains(msgs[0], "`vpmify recipe remove kit` forgets it") {
 		t.Errorf("problems = %v", msgs)
 	}
 	if _, err := f.app.RemoveRecipe("kit", true); err != nil {

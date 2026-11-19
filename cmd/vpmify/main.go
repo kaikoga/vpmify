@@ -38,9 +38,9 @@ recipes and their version lists:
                                with prereleases, --unity only those a project
                                on that Unity can use
   recipe list                  show the recipes
-  recipe remove [--yes] <id>   show what removing the recipe deletes; --yes
-                               unregisters and deletes its available versions,
-                               and deletes the recipe and its version lists
+  recipe remove <id>           unregister and delete the recipe's available
+                               versions, and delete the recipe and its version
+                               lists
 
 available versions, which ALCOM lists as user packages:
   package list [<id>...]       show the available versions, of every recipe or
@@ -229,12 +229,13 @@ func runRecipe(ctx context.Context, a *app.App, out output, args []string) int {
 		}
 		return out.result(recipeListResult{Recipes: nonNil(recipes)}, err)
 	case "remove":
-		ids, flags, perr := splitFlags(rest, "--yes", "-y")
+		// Removing without asking, as vrc-get removes a repository
+		// (kaikoga 2026-11-19); the GUI asks.
+		ids, _, perr := splitFlags(rest)
 		if perr != nil || len(ids) != 1 {
-			return out.usageError("recipe remove takes one recipe id, and --yes")
+			return out.usageError("recipe remove takes one recipe id")
 		}
-		yes := flags["--yes"] || flags["-y"]
-		res, err := a.RemoveRecipe(ids[0], yes)
+		res, err := a.RemoveRecipe(ids[0], true)
 		if res != nil && !out.json {
 			if perr := printRemoveRecipe(out.stdout, ids[0], res, err == nil); perr != nil && err == nil {
 				err = perr
@@ -481,8 +482,8 @@ func printRecipes(stdout io.Writer, recipes []app.RecipeInfo) error {
 	return nil
 }
 
-// printRemoveRecipe prints the versions removing recipe id deletes, and,
-// without --yes, how to go on.
+// printRemoveRecipe prints the versions removing recipe id deleted, and
+// what that means for projects.
 func printRemoveRecipe(stdout io.Writer, id string, res *app.RemoveResult, succeeded bool) error {
 	if err := printEntries(stdout, res.Removed); err != nil {
 		return err
@@ -490,13 +491,11 @@ func printRemoveRecipe(stdout io.Writer, id string, res *app.RemoveResult, succe
 	if !succeeded {
 		return nil
 	}
-	if !res.Applied {
-		fmt.Fprintf(stdout, "removing %s deletes these %d versions, the recipe and its version lists.\n", id, len(res.Removed))
-		fmt.Fprintln(stdout, "a project that locks one of them cannot resolve it, and using the recipe again takes `vpmify recipe add`.")
-		fmt.Fprintf(stdout, "run `vpmify recipe remove %s --yes` to remove it.\n", id)
-		return nil
-	}
 	fmt.Fprintf(stdout, "removed %s and its %d versions.\n", id, len(res.Removed))
+	if len(res.Removed) > 0 {
+		fmt.Fprintln(stdout, "projects keep the copies they have, but ALCOM can no longer update or install these again.")
+	}
+	fmt.Fprintln(stdout, "`vpmify recipe add` takes the recipe back.")
 	return nil
 }
 
