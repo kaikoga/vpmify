@@ -74,14 +74,14 @@ function appendLog(line: string) {
 }
 
 async function showPending() {
-    const pending = await VpmifyService.Pending();
+    const pending = (await VpmifyService.Pending()) ?? [];
     pendingElement.replaceChildren();
     for (const p of pending) {
         const card = document.createElement("div");
         card.className = "card";
         const from = document.createElement("p");
         from.className = "note";
-        from.textContent = "From " + p.from.join(", ");
+        from.textContent = "From " + (p.from ?? []).join(", ");
         card.appendChild(from);
         if (p.error) {
             const e = document.createElement("p");
@@ -99,7 +99,7 @@ async function showPending() {
             const body = table.createTBody();
             // One row per package; the recipe's id and whether it is new go
             // on its first row.
-            for (const r of p.recipes) {
+            for (const r of p.recipes ?? []) {
                 (r.packages ?? []).forEach((pkg, i) => {
                     const row = body.insertRow();
                     row.title = r.origin;
@@ -115,7 +115,7 @@ async function showPending() {
         const actions = document.createElement("div");
         actions.className = "actions";
         if (!p.error) {
-            const first = p.recipes[0]?.id ?? null;
+            const first = p.recipes?.[0]?.id ?? null;
             actions.appendChild(button("Add", () => act(async () => {
                 await VpmifyService.ConfirmAdd(p.token);
                 selected = first;
@@ -129,7 +129,7 @@ async function showPending() {
 }
 
 async function showRecipes() {
-    const recipes = await VpmifyService.Recipes();
+    const recipes = (await VpmifyService.Recipes()) ?? [];
     recipesElement.replaceChildren();
     for (const r of recipes) {
         const row = recipesElement.insertRow();

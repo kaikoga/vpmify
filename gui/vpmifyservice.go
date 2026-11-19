@@ -154,11 +154,13 @@ type PendingAdd struct {
 	Error string `json:"error,omitempty"`
 }
 
-// Pending returns the recipes waiting for the user, oldest first.
+// Pending returns the recipes waiting for the user, oldest first. It is
+// never nil, which the front end would get as null: slices.Clone keeps a nil
+// slice nil, and s.pending is nil until something waits.
 func (s *VpmifyService) Pending() []PendingAdd {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return slices.Clone(s.pending)
+	return append([]PendingAdd{}, s.pending...)
 }
 
 // ConfirmAdd adds the recipes of a pending set, as they were read when they
