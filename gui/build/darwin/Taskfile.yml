@@ -6,6 +6,12 @@ includes:
 vars:
   # Docker image for cross-compilation (used when building on non-macOS)
   CROSS_IMAGE: wails-cross
+  # The oldest macOS the app runs on: the oldest that the Go toolchain supports
+  # (Go 1.27's linker marks its objects for macOS 13.0). The Wails template's
+  # 12.0 made the linker warn. build/darwin/Info.plist keeps the template's
+  # LSMinimumSystemVersion, as `wails3 update build-assets` writes it back over
+  # any edit; create:app:bundle sets it in the bundle instead.
+  MACOS_MIN: "13.0"
 
 tasks:
   build:
@@ -54,9 +60,9 @@ tasks:
       GOOS: darwin
       CGO_ENABLED: '{{if (has "purego" (splitList "," (.EXTRA_TAGS | default "")))}}0{{else}}1{{end}}'
       GOARCH: '{{.ARCH | default ARCH}}'
-      CGO_CFLAGS: "-mmacosx-version-min=12.0"
-      CGO_LDFLAGS: "-mmacosx-version-min=12.0"
-      MACOSX_DEPLOYMENT_TARGET: "12.0"
+      CGO_CFLAGS: "-mmacosx-version-min={{.MACOS_MIN}}"
+      CGO_LDFLAGS: "-mmacosx-version-min={{.MACOS_MIN}}"
+      MACOSX_DEPLOYMENT_TARGET: "{{.MACOS_MIN}}"
 
   build:docker:
     summary: Cross-compiles for macOS using Docker (for Linux/Windows hosts)
@@ -177,6 +183,8 @@ tasks:
         fi
       - cp "{{.BIN_DIR}}/{{.APP_NAME}}" "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/MacOS"
       - cp build/darwin/Info.plist "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents"
+      - cmd: plutil -replace LSMinimumSystemVersion -string "{{.MACOS_MIN}}.0" "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/Info.plist"
+        platforms: [darwin]
       - task: '{{if eq OS "darwin"}}codesign:adhoc{{else}}codesign:skip{{end}}'
 
   codesign:adhoc:
