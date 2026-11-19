@@ -117,6 +117,51 @@ func TestGitHubTagVersion(t *testing.T) {
 	}
 }
 
+// A package that keeps one version through tags whose contents differ, and
+// tells its releases apart from some tag on (UniVRM's com.vrmc.unigltf is
+// 2.0.0 from v0.63.0 to v0.65.2): versionFromTag with a range of tags gives
+// the tags in the range their own versions, and leaves the others to
+// package.json.
+func TestGitHubVersionFromTagInARangeOfTags(t *testing.T) {
+	gh := testutil.NewFakeGitHub("owner", "repo")
+	for _, v := range []struct{ tag, base string }{
+		{"0.63.0", "2.0.0"}, {"0.64.0", "2.0.0"}, {"0.65.2", "2.0.0"}, {"0.65.3", "2.1.3"},
+	} {
+		gh.Tag("v"+v.tag, map[string]string{
+			"Base/package.json": manifest("com.example.base", v.base),
+			"Pkg/package.json":  manifest("com.example.pkg", v.tag),
+		})
+	}
+	src := newSource(t, gh, `{"id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
+  "packages": [{"name": "com.example.base", "path": "Base", "versionFromTag": {"tags": "<0.65.2"}},
+    {"name": "com.example.pkg", "path": "Pkg"}]}]}`)
+	all, _, err := src.Releases(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var summary []string
+	for _, r := range all["com.example.base"] {
+		summary = append(summary, r.Version.String()+" ["+r.UpstreamVersion+"] "+r.Origin)
+	}
+	want := []string{
+		"0.63.0 [2.0.0] tag v0.63.0",
+		"0.64.0 [2.0.0] tag v0.64.0",
+		"2.0.0 [] tag v0.65.2",
+		"2.1.3 [] tag v0.65.3",
+	}
+	if !reflect.DeepEqual(summary, want) {
+		t.Errorf("releases = %q, want %q", summary, want)
+	}
+	// The other package of each tag names the version the tag's base got.
+	summary = nil
+	for _, r := range all["com.example.pkg"] {
+		summary = append(summary, r.Version.String()+" "+r.SameTag["com.example.base"])
+	}
+	if want := []string{"0.63.0 0.63.0", "0.64.0 0.64.0", "0.65.2 2.0.0", "0.65.3 2.1.3"}; !reflect.DeepEqual(summary, want) {
+		t.Errorf("sameTag = %q, want %q", summary, want)
+	}
+}
+
 func TestGitHubReleases(t *testing.T) {
 	gh := testutil.NewFakeGitHub("owner", "repo")
 	gh.Tag("v0.9.0", map[string]string{"Assets/Other/package.json": manifest("com.example.other", "0.9.0")})

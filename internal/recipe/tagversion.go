@@ -1,6 +1,8 @@
 package recipe
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -185,4 +187,56 @@ func (s *Source) TagVersionOf(name string) (semver.Version, bool) {
 // rule.
 func (s *Source) HasTagVersionRule() bool {
 	return s.tagVersion != nil
+}
+
+// VersionFromTag says in which tags a package takes the version of the tag
+// in place of the one its package.json has. A recipe writes true, for every
+// tag, or {"tags": "<range>"}, a range on the version of the tag as
+// Source.Tags is: a repository may tell its releases apart in package.json
+// from some tag on only (UniVRM's com.vrmc.unigltf stays 2.0.0 from v0.63.0
+// to v0.65.2, with contents that do not work with each other's packages,
+// and counts up from v0.65.3).
+type VersionFromTag struct {
+	All  bool
+	Tags string
+
+	tags semver.Range
+}
+
+func (v *VersionFromTag) UnmarshalJSON(data []byte) error {
+	*v = VersionFromTag{}
+	if json.Unmarshal(data, &v.All) == nil {
+		return nil
+	}
+	var obj struct {
+		Tags string `json:"tags"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&obj); err != nil {
+		return fmt.Errorf(`versionFromTag: want true or {"tags": "<range>"}: %w`, err)
+	}
+	if obj.Tags == "" {
+		return fmt.Errorf(`versionFromTag: needs tags (true is for every tag)`)
+	}
+	v.Tags = obj.Tags
+	return nil
+}
+
+// MarshalJSON writes what a recipe writes, so that the listing key of a
+// recipe with true stays what it was when the field was a bool.
+func (v VersionFromTag) MarshalJSON() ([]byte, error) {
+	if v.All || v.Tags == "" {
+		return json.Marshal(v.All)
+	}
+	return json.Marshal(struct {
+		Tags string `json:"tags"`
+	}{v.Tags})
+}
+
+// TakesTagVersion reports whether the package takes the version of the tag
+// whose version is v as its own (Git sources).
+func (p *Package) TakesTagVersion(v semver.Version) bool {
+	f := p.VersionFromTag
+	return f != nil && (f.All || f.tags.Contains(v))
 }

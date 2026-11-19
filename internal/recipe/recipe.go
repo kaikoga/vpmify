@@ -78,9 +78,9 @@ type Package struct {
 	// place of the one its package.json has, for a repository whose
 	// package.json does not tell its releases apart (Warudo-Mod-Tool keeps
 	// 0.15.2 for tags 0.15.2.1 and 0.15.2.2). Vpmify writes it into
-	// package.json.
-	VersionFromTag bool       `json:"versionFromTag,omitempty"`
-	Overrides      []Override `json:"overrides,omitempty"`
+	// package.json. It is nil when the recipe writes false or nothing.
+	VersionFromTag *VersionFromTag `json:"versionFromTag,omitempty"`
+	Overrides      []Override      `json:"overrides,omitempty"`
 
 	versions  semver.Range
 	paths     []parsedPathRule
@@ -246,14 +246,24 @@ func (p *Package) check(s *Source, siblings map[string]bool) error {
 	if strings.ContainsAny(p.Name, `/\`) || p.Name == "." || p.Name == ".." {
 		return fmt.Errorf("package name %q must not be a path", p.Name)
 	}
+	if f := p.VersionFromTag; f != nil && !f.All && f.Tags == "" {
+		p.VersionFromTag = nil
+	}
 	switch s.Type {
 	case SourceNPM:
-		if p.Path != "" || len(p.Paths) > 0 || p.VersionFromTag {
+		if p.Path != "" || len(p.Paths) > 0 || p.VersionFromTag != nil {
 			return fmt.Errorf("an npm source's packages take no path, paths or versionFromTag")
 		}
 	case SourceGitHub:
 		if err := p.checkPaths(); err != nil {
 			return err
+		}
+		if f := p.VersionFromTag; f != nil && !f.All {
+			tags, err := semver.ParseRange(f.Tags)
+			if err != nil {
+				return fmt.Errorf("versionFromTag.tags: %w", err)
+			}
+			f.tags = tags
 		}
 	}
 	rng, err := semver.ParseRange(p.Versions)
@@ -407,11 +417,11 @@ func (s *Source) fields() sourceFields {
 // is read; {sameTag} is too, from the versions the list keeps for each tag.
 func (s *Source) ListingKey() string {
 	type pkg struct {
-		Name           string     `json:"name"`
-		Path           string     `json:"path"`
-		Paths          []PathRule `json:"paths"`
-		Versions       string     `json:"versions"`
-		VersionFromTag bool       `json:"versionFromTag,omitempty"`
+		Name           string          `json:"name"`
+		Path           string          `json:"path"`
+		Paths          []PathRule      `json:"paths"`
+		Versions       string          `json:"versions"`
+		VersionFromTag *VersionFromTag `json:"versionFromTag,omitempty"`
 	}
 	var pkgs []pkg
 	for _, p := range s.Packages {

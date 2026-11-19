@@ -57,9 +57,10 @@ type GitHubPackage struct {
 	// PathFor returns the folder of the package in a tag, from the tag's
 	// version; false means the tag is not read.
 	PathFor func(semver.Version) (string, bool)
-	// VersionFromTag gives the package the version of the tag, in place of
-	// the one in its package.json.
-	VersionFromTag bool
+	// VersionFromTag reports whether the package takes the version of a
+	// tag, given that version, in place of the one in its package.json. nil
+	// is for no tag.
+	VersionFromTag func(semver.Version) bool
 }
 
 // NewGitHub returns the upstream of a github recipe source.
@@ -74,7 +75,7 @@ func NewGitHub(s *recipe.Source, client *fetch.Client, cacheDir string) (*GitHub
 	}
 	var pkgs []GitHubPackage
 	for _, p := range s.Packages {
-		pkgs = append(pkgs, GitHubPackage{Name: p.Name, PathFor: p.PathFor, VersionFromTag: p.VersionFromTag})
+		pkgs = append(pkgs, GitHubPackage{Name: p.Name, PathFor: p.PathFor, VersionFromTag: p.TakesTagVersion})
 	}
 	return &GitHub{
 		Owner: owner, Repo: repo,
@@ -357,7 +358,7 @@ func (g *GitHub) release(ctx context.Context, t tag, p GitHubPackage) (*Release,
 		return nil, nil
 	}
 	v, upstream := t.version, m.Version
-	if !p.VersionFromTag {
+	if p.VersionFromTag == nil || !p.VersionFromTag(t.version) {
 		if v, err = semver.Parse(m.Version); err != nil {
 			return nil, nil
 		}

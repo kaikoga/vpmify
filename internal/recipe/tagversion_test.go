@@ -1,6 +1,7 @@
 package recipe
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -88,6 +89,67 @@ func TestTagVersionRejects(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: err = %v, want it to mention %q", c.name, err, c.want)
 		}
+	}
+}
+
+func TestVersionFromTag(t *testing.T) {
+	cases := []struct {
+		field string
+		tags  map[string]bool // tag version -> the package takes it
+		json  string          // the field in the listing key, "" for none
+	}{
+		{`, "versionFromTag": true`, map[string]bool{"0.63.0": true, "0.65.3": true}, `true`},
+		{`, "versionFromTag": {"tags": "0.63.0 || 0.65.1"}`, map[string]bool{"0.63.0": true, "0.65.1": true, "0.65.2": false, "0.80.0": false}, `{"tags":"0.63.0 || 0.65.1"}`},
+		{`, "versionFromTag": false`, map[string]bool{"0.63.0": false}, ``},
+		{``, map[string]bool{"0.63.0": false}, ``},
+	}
+	keys := map[string]string{}
+	for _, c := range cases {
+		s, p := onlyPackage(t, gitRecipe(c.field))
+		for tag, want := range c.tags {
+			if got := p.TakesTagVersion(version(t, tag)); got != want {
+				t.Errorf("%s: tag %s = %v, want %v", c.field, tag, got, want)
+			}
+		}
+		// true is written as the bool it once was, so that the listing keys
+		// of recipes from before the range stay.
+		got := ""
+		if p.VersionFromTag != nil {
+			data, err := json.Marshal(p.VersionFromTag)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got = string(data)
+		}
+		if got != c.json {
+			t.Errorf("%s: written as %q, want %q", c.field, got, c.json)
+		}
+		keys[c.json] = s.ListingKey()
+	}
+	// The three ways to take versions read upstream differently: the lists
+	// of one are stale for another.
+	if len(keys) != 3 || keys[`true`] == keys[``] || keys[`true`] == keys[`{"tags":"0.63.0 || 0.65.1"}`] || keys[``] == keys[`{"tags":"0.63.0 || 0.65.1"}`] {
+		t.Errorf("listing keys are not all different: %v", keys)
+	}
+}
+
+func TestVersionFromTagRejects(t *testing.T) {
+	cases := []struct{ name, field, want string }{
+		{"empty tags", `{"tags": ""}`, "needs tags"},
+		{"no tags", `{}`, "needs tags"},
+		{"bad range", `{"tags": "newer"}`, "versionFromTag.tags"},
+		{"unknown field", `{"tags": "<1.0.0", "version": "{1}"}`, "versionFromTag"},
+		{"not true or an object", `"<1.0.0"`, "versionFromTag"},
+	}
+	for _, c := range cases {
+		_, err := Parse([]byte(gitRecipe(`, "versionFromTag": ` + c.field)))
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want it to mention %q", c.name, err, c.want)
+		}
+	}
+	npm := `{"id": "pkg", "sources": [{"type": "npm", "registry": "https://r", "packages": [{"name": "p", "versionFromTag": {"tags": "<1.0.0"}}]}]}`
+	if _, err := Parse([]byte(npm)); err == nil || !strings.Contains(err.Error(), "versionFromTag") {
+		t.Errorf("npm with a range: err = %v", err)
 	}
 }
 
