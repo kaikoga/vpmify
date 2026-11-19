@@ -3,7 +3,10 @@ package semver
 import "testing"
 
 func TestParseRejects(t *testing.T) {
-	for _, s := range []string{"", "1", "1.2", "1.2.3.4", "01.2.3", "1.2.3-", "1.2.3+", "1.2.3-a..b", "v1.2.3", "1.x.3"} {
+	// The version names a folder in the store, so identifiers keep to the
+	// characters SemVer allows and never make a path.
+	for _, s := range []string{"", "1", "1.2", "1.2.3.4", "01.2.3", "1.2.3-", "1.2.3+", "1.2.3-a..b", "v1.2.3", "1.x.3",
+		"1.0.0+../../x", "1.0.0-a/b", "1.0.0+a\\b", "1.0.0-a_b", "1.0.0+a..b"} {
 		if _, err := Parse(s); err == nil {
 			t.Errorf("Parse(%q) succeeded", s)
 		}

@@ -26,6 +26,11 @@ func Parse(s string) (Version, error) {
 		if v.Build == "" {
 			return Version{}, fmt.Errorf("invalid version %q: empty build metadata", s)
 		}
+		for _, id := range strings.Split(v.Build, ".") {
+			if err := checkIdentifier(id); err != nil {
+				return Version{}, fmt.Errorf("invalid version %q: build metadata: %w", s, err)
+			}
+		}
 	}
 	if i := strings.IndexByte(rest, '-'); i >= 0 {
 		pre := rest[i+1:]
@@ -35,8 +40,8 @@ func Parse(s string) (Version, error) {
 		}
 		v.Pre = strings.Split(pre, ".")
 		for _, id := range v.Pre {
-			if id == "" {
-				return Version{}, fmt.Errorf("invalid version %q: empty prerelease identifier", s)
+			if err := checkIdentifier(id); err != nil {
+				return Version{}, fmt.Errorf("invalid version %q: prerelease: %w", s, err)
 			}
 		}
 	}
@@ -56,6 +61,21 @@ func Parse(s string) (Version, error) {
 		*nums[i] = n
 	}
 	return v, nil
+}
+
+// checkIdentifier allows only the characters SemVer allows in prerelease
+// and build identifiers. A version names a folder in Vpmify's store, so an
+// upstream version such as "1.0.0+../../x" must not make a path.
+func checkIdentifier(id string) error {
+	if id == "" {
+		return fmt.Errorf("empty identifier")
+	}
+	for _, c := range id {
+		if !(c >= '0' && c <= '9' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c == '-') {
+			return fmt.Errorf("identifier %q has %q", id, c)
+		}
+	}
+	return nil
 }
 
 // String returns the version as it was written.
