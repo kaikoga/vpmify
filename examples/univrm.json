@@ -5,13 +5,31 @@
       "type": "github",
       "url": "https://github.com/vrm-c/UniVRM.git",
       "tagPattern": "v*",
-      "tags": ">=0.125.0",
+      "tags": ">=0.66.0",
       "packages": [
+        {
+          "name": "com.vrmc.vrmshaders",
+          "paths": [
+            { "tags": "<0.125.0", "path": "Assets/VRMShaders" }
+          ]
+        },
+        {
+          "name": "com.vrmc.unigltf",
+          "paths": [
+            { "tags": "<0.81.0", "path": "Assets/UniGLTF" }
+          ],
+          "overrides": [
+            { "set": { "vpmDependencies": { "com.vrmc.vrmshaders": ">={sameTag}" } } }
+          ]
+        },
         {
           "name": "com.vrmc.gltf",
           "paths": [
             { "tags": ">=0.131.0", "path": "Packages/UniGLTF" },
-            { "tags": "<0.131.0", "path": "Assets/UniGLTF" }
+            { "tags": ">=0.81.0 <0.131.0", "path": "Assets/UniGLTF" }
+          ],
+          "overrides": [
+            { "versions": "<0.125.0", "set": { "vpmDependencies": { "com.vrmc.vrmshaders": ">={sameTag}" } } }
           ]
         },
         {
@@ -21,17 +39,20 @@
             { "tags": "<0.131.0", "path": "Assets/VRM" }
           ],
           "overrides": [
-            { "set": { "vpmDependencies": { "com.vrmc.gltf": ">={sameTag}" } } }
+            { "versions": "<0.81.0", "set": { "vpmDependencies": { "com.vrmc.unigltf": ">={sameTag}", "com.vrmc.vrmshaders": ">={sameTag}" } } },
+            { "versions": ">=0.81.0 <0.125.0", "set": { "vpmDependencies": { "com.vrmc.gltf": ">={sameTag}", "com.vrmc.vrmshaders": ">={sameTag}" } } },
+            { "versions": ">=0.125.0", "set": { "vpmDependencies": { "com.vrmc.gltf": ">={sameTag}" } } }
           ]
         },
         {
           "name": "com.vrmc.vrm",
           "paths": [
             { "tags": ">=0.131.0", "path": "Packages/VRM10" },
-            { "tags": "<0.131.0", "path": "Assets/VRM10" }
+            { "tags": ">=0.81.0 <0.131.0", "path": "Assets/VRM10" }
           ],
           "overrides": [
-            { "set": { "vpmDependencies": { "com.vrmc.gltf": ">={sameTag}" } } }
+            { "versions": "<0.125.0", "set": { "vpmDependencies": { "com.vrmc.gltf": ">={sameTag}", "com.vrmc.vrmshaders": ">={sameTag}" } } },
+            { "versions": ">=0.125.0", "set": { "vpmDependencies": { "com.vrmc.gltf": ">={sameTag}" } } }
           ]
         }
       ]
