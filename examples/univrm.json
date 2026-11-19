@@ -21,11 +21,12 @@
         },
         {
           "name": "com.vrmc.unigltf",
+          "versionFromTag": { "tags": "<0.65.2" },
           "paths": [
             { "tags": "<0.81.0", "path": "Assets/UniGLTF" }
           ],
           "overrides": [
-            { "set": { "vpmDependencies": { "com.vrmc.vrmshaders": ">={sameTag}" } } }
+            { "set": { "vpmDependencies": { "com.vrmc.vrmshaders": "={sameTag}" } } }
           ]
         },
         {
@@ -35,7 +36,7 @@
             { "tags": ">=0.81.0 <0.131.0", "path": "Assets/UniGLTF" }
           ],
           "overrides": [
-            { "versions": "<0.125.0", "set": { "vpmDependencies": { "com.vrmc.vrmshaders": ">={sameTag}" } } }
+            { "versions": "<0.125.0", "set": { "vpmDependencies": { "com.vrmc.vrmshaders": "={sameTag}" } } }
           ]
         },
         {
@@ -45,12 +46,12 @@
             { "tags": "<0.131.0", "path": "Assets/VRM" }
           ],
           "overrides": [
-            { "versions": "<0.59.0", "set": { "vpmDependencies": { "com.vrmc.vrmshaders": ">={sameTag}" } } },
-            { "versions": ">=0.59.0 <0.63.0", "set": { "vpmDependencies": { "com.vrmc.meshutility": ">={sameTag}", "com.vrmc.vrmshaders": ">={sameTag}" } } },
-            { "versions": ">=0.63.0 <0.63.1", "set": { "vpmDependencies": { "com.vrmc.meshutility": ">={sameTag}", "com.vrmc.unigltf": ">={sameTag}", "com.vrmc.vrmshaders": ">={sameTag}" } } },
-            { "versions": ">=0.63.1 <0.81.0", "set": { "vpmDependencies": { "com.vrmc.unigltf": ">={sameTag}", "com.vrmc.vrmshaders": ">={sameTag}" } } },
-            { "versions": ">=0.81.0 <0.125.0", "set": { "vpmDependencies": { "com.vrmc.gltf": ">={sameTag}", "com.vrmc.vrmshaders": ">={sameTag}" } } },
-            { "versions": ">=0.125.0", "set": { "vpmDependencies": { "com.vrmc.gltf": ">={sameTag}" } } }
+            { "versions": "<0.59.0", "set": { "vpmDependencies": { "com.vrmc.vrmshaders": "={sameTag}" } } },
+            { "versions": ">=0.59.0 <0.63.0", "set": { "vpmDependencies": { "com.vrmc.meshutility": "={sameTag}", "com.vrmc.vrmshaders": "={sameTag}" } } },
+            { "versions": ">=0.63.0 <0.63.1", "set": { "vpmDependencies": { "com.vrmc.meshutility": "={sameTag}", "com.vrmc.unigltf": "={sameTag}", "com.vrmc.vrmshaders": "={sameTag}" } } },
+            { "versions": ">=0.63.1 <0.81.0", "set": { "vpmDependencies": { "com.vrmc.unigltf": "={sameTag}", "com.vrmc.vrmshaders": "={sameTag}" } } },
+            { "versions": ">=0.81.0 <0.125.0", "set": { "vpmDependencies": { "com.vrmc.gltf": "={sameTag}", "com.vrmc.vrmshaders": "={sameTag}" } } },
+            { "versions": ">=0.125.0", "set": { "vpmDependencies": { "com.vrmc.gltf": "={sameTag}" } } }
           ]
         },
         {
@@ -60,7 +61,7 @@
             { "tags": ">=0.64.0 <0.81.0", "path": "Assets/VRM10" }
           ],
           "overrides": [
-            { "set": { "vpmDependencies": { "com.vrmc.unigltf": ">={sameTag}", "com.vrmc.vrmshaders": ">={sameTag}" } } }
+            { "set": { "vpmDependencies": { "com.vrmc.unigltf": "={sameTag}", "com.vrmc.vrmshaders": "={sameTag}" } } }
           ]
         },
         {
@@ -70,8 +71,8 @@
             { "tags": ">=0.81.0 <0.131.0", "path": "Assets/VRM10" }
           ],
           "overrides": [
-            { "versions": "<0.125.0", "set": { "vpmDependencies": { "com.vrmc.gltf": ">={sameTag}", "com.vrmc.vrmshaders": ">={sameTag}" } } },
-            { "versions": ">=0.125.0", "set": { "vpmDependencies": { "com.vrmc.gltf": ">={sameTag}" } } }
+            { "versions": "<0.125.0", "set": { "vpmDependencies": { "com.vrmc.gltf": "={sameTag}", "com.vrmc.vrmshaders": "={sameTag}" } } },
+            { "versions": ">=0.125.0", "set": { "vpmDependencies": { "com.vrmc.gltf": "={sameTag}" } } }
           ]
         }
       ]
