@@ -7,7 +7,6 @@
       "packages": [
         {
           "name": "mu.cluster.cluster-creator-kit",
-          "versions": ">=2.0.0",
           "overrides": [
             {
               "versions": ">=3.4.0",
