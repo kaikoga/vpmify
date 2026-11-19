@@ -2,6 +2,7 @@ import {Events} from "@wailsio/runtime";
 import {VpmifyService} from "../bindings/github.com/kaikoga/vpmify/gui";
 import type {Entry} from "../bindings/github.com/kaikoga/vpmify/internal/app";
 import {Busy, Log, Pending} from "../bindings/events";
+import {applyStatic, currentLang, type Key, type Lang, setLang, t} from "./i18n";
 
 function byId<T extends HTMLElement>(id: string): T {
     return document.getElementById(id)! as T;
@@ -11,6 +12,7 @@ const errorElement = byId<HTMLParagraphElement>("error");
 const confirmSection = byId<HTMLElement>("confirm-section");
 const confirmElement = byId<HTMLDivElement>("confirm");
 const spinnerElement = byId<HTMLSpanElement>("spinner");
+const languageElement = byId<HTMLSelectElement>("language");
 const pendingSection = byId<HTMLElement>("pending-section");
 const pendingElement = byId<HTMLDivElement>("pending");
 const recipesElement = byId<HTMLTableSectionElement>("recipes");
@@ -33,6 +35,15 @@ function cell(row: HTMLTableRowElement, text: string): HTMLTableCellElement {
     const td = row.insertCell();
     td.textContent = text;
     return td;
+}
+
+function headRow(table: HTMLTableElement, keys: (Key | null)[]) {
+    const head = table.createTHead().insertRow();
+    for (const k of keys) {
+        const th = document.createElement("th");
+        th.textContent = k ? t(k) : "";
+        head.appendChild(th);
+    }
 }
 
 function button(label: string, onClick: () => void): HTMLButtonElement {
@@ -72,12 +83,7 @@ function confirmRemoval(r: Removal) {
     confirmElement.appendChild(before);
     if (r.entries.length > 0) {
         const table = document.createElement("table");
-        const head = table.createTHead().insertRow();
-        for (const h of ["Package", "Version", "Unity"]) {
-            const th = document.createElement("th");
-            th.textContent = h;
-            head.appendChild(th);
-        }
+        headRow(table, ["col.package", "col.version", "col.unity"]);
         const body = table.createTBody();
         for (const e of r.entries) {
             const row = body.insertRow();
@@ -87,12 +93,14 @@ function confirmRemoval(r: Removal) {
         }
         confirmElement.appendChild(table);
     }
-    const after = document.createElement("p");
-    after.textContent = r.after;
-    confirmElement.appendChild(after);
+    if (r.after) {
+        const after = document.createElement("p");
+        after.textContent = r.after;
+        confirmElement.appendChild(after);
+    }
     const actions = document.createElement("div");
     actions.className = "actions";
-    actions.appendChild(button("Cancel", closeConfirm));
+    actions.appendChild(button(t("remove.cancel"), closeConfirm));
     actions.appendChild(button(r.confirm, () => {
         closeConfirm();
         act(r.run);
@@ -118,39 +126,35 @@ async function confirmRecipeRemoval(id: string) {
     }
     const entries = preview.removed ?? [];
     confirmRemoval({
-        title: `Remove the recipe ${id}`,
-        before: entries.length > 0
-            ? "These packages the recipe made available are removed from ALCOM."
-            : "The recipe has made no package available; only the recipe is removed.",
+        title: t("remove.recipe.title", {id}),
+        before: t(entries.length > 0 ? "remove.recipe.before" : "remove.recipe.beforeNone"),
         entries,
-        after: entries.length > 0
-            ? "If a project has imported them, ALCOM can no longer update or reinstall them."
-            : "",
-        confirm: "Remove recipe",
+        after: entries.length > 0 ? t("remove.recipe.after") : "",
+        confirm: t("remove.recipe.confirm"),
         run: () => VpmifyService.RemoveRecipe(id),
     });
 }
 
 function confirmVersionRemoval(id: string, e: Entry) {
-    const label = packageLabel(e.package, e.displayName);
+    const params = {label: packageLabel(e.package, e.displayName), version: e.version};
     confirmRemoval({
-        title: `Remove ${label} ${e.version}`,
-        before: `${label} ${e.version} is removed from ALCOM.`,
+        title: t("remove.version.title", params),
+        before: t("remove.version.before", params),
         entries: [],
-        after: "If a project has imported it, ALCOM can no longer reinstall it. It can be made available again here.",
-        confirm: "Remove package",
+        after: t("remove.version.after"),
+        confirm: t("remove.version.confirm"),
         run: () => VpmifyService.RemoveVersions(`${id}/${e.package}`, e.version),
     });
 }
 
 function confirmPackageRemoval(id: string, name: string, entries: Entry[]) {
-    const label = packageLabel(name, entries[0]?.displayName);
+    const params = {label: packageLabel(name, entries[0]?.displayName)};
     confirmRemoval({
-        title: `Remove every version of ${label}`,
-        before: `These versions of ${label} are removed from ALCOM.`,
+        title: t("remove.package.title", params),
+        before: t("remove.package.before", params),
         entries,
-        after: "If a project has imported them, ALCOM can no longer update or reinstall them. The recipe stays, so they can be made available again here.",
-        confirm: "Remove versions",
+        after: t("remove.package.after"),
+        confirm: t("remove.package.confirm"),
         run: () => VpmifyService.RemoveVersions(`${id}/${name}`, ""),
     });
 }
@@ -196,7 +200,7 @@ async function showPending() {
         card.className = "card";
         const from = document.createElement("p");
         from.className = "note";
-        from.textContent = "From " + (p.from ?? []).join(", ");
+        from.textContent = t("pending.from", {from: (p.from ?? []).join(", ")});
         card.appendChild(from);
         if (p.error) {
             const e = document.createElement("p");
@@ -205,12 +209,7 @@ async function showPending() {
             card.appendChild(e);
         } else {
             const table = document.createElement("table");
-            const head = table.createTHead().insertRow();
-            for (const h of ["Recipe", "Package", "Source", "Versions", ""]) {
-                const th = document.createElement("th");
-                th.textContent = h;
-                head.appendChild(th);
-            }
+            headRow(table, ["col.recipe", "col.package", "col.source", "col.versions", null]);
             const body = table.createTBody();
             // One row per package; the recipe's id and whether it is new go
             // on its first row.
@@ -221,8 +220,8 @@ async function showPending() {
                     cell(row, i === 0 ? r.id : "");
                     cell(row, pkg.name);
                     cell(row, pkg.source);
-                    cell(row, pkg.versions || "any");
-                    cell(row, i === 0 ? (r.replaces ? "replaces your recipe" : "new") : "");
+                    cell(row, pkg.versions || t("pending.anyVersion"));
+                    cell(row, i === 0 ? t(r.replaces ? "pending.replaces" : "pending.new") : "");
                 });
             }
             card.appendChild(table);
@@ -231,12 +230,12 @@ async function showPending() {
         actions.className = "actions";
         if (!p.error) {
             const first = p.recipes?.[0]?.id ?? null;
-            actions.appendChild(button("Add", () => act(async () => {
+            actions.appendChild(button(t("pending.add"), () => act(async () => {
                 await VpmifyService.ConfirmAdd(p.token);
                 selected = first;
             })));
         }
-        actions.appendChild(button(p.error ? "Dismiss" : "Don't add", () => act(() => VpmifyService.DiscardAdd(p.token))));
+        actions.appendChild(button(t(p.error ? "pending.dismiss" : "pending.dontAdd"), () => act(() => VpmifyService.DiscardAdd(p.token))));
         card.appendChild(actions);
         pendingElement.appendChild(card);
     }
@@ -279,7 +278,7 @@ async function showVersions() {
         return;
     }
     const id = selected;
-    versionsTitle.textContent = `Versions of ${id}`;
+    versionsTitle.textContent = t("versions.title", {id});
     versionsElement.replaceChildren();
     versionsUpdated.textContent = "";
     noVersionsElement.hidden = true;
@@ -312,28 +311,32 @@ async function showVersions() {
         heading.className = "group";
         const th = document.createElement("th");
         th.colSpan = 4;
-        th.textContent = `${packageLabel(p.package, p.displayName)} (${p.source}), version list read ${new Date(p.updated).toLocaleString()}`;
+        th.textContent = t("versions.listRead", {
+            package: packageLabel(p.package, p.displayName),
+            source: p.source,
+            updated: new Date(p.updated).toLocaleString(currentLang()),
+        });
         heading.appendChild(th);
         const headingActions = heading.insertCell();
         if (ofPackage.length > 0) {
-            headingActions.appendChild(button("Remove all versions…", () => confirmPackageRemoval(id, p.package, ofPackage)));
+            headingActions.appendChild(button(t("versions.removeAll"), () => confirmPackageRemoval(id, p.package, ofPackage)));
         }
         for (const v of p.versions ?? []) {
             const row = versionsElement.insertRow();
-            cell(row, v.version + (v.prerelease ? " (prerelease)" : ""));
+            cell(row, v.prerelease ? t("versions.prerelease", {version: v.version}) : v.version);
             cell(row, v.unity ?? "");
             cell(row, v.origin);
-            cell(row, v.available ? "yes" : "");
+            cell(row, v.available ? t("versions.availableYes") : "");
             const td = row.insertCell();
             const entry = ofPackage.find((e) => e.version === v.version);
             if (entry) {
-                td.appendChild(button("Remove…", () => confirmVersionRemoval(id, entry)));
+                td.appendChild(button(t("versions.remove"), () => confirmVersionRemoval(id, entry)));
             } else if (v.unusable) {
                 // Why the version cannot be converted.
                 td.textContent = v.unusable;
                 td.className = "note";
             } else if (!v.available) {
-                td.appendChild(button("Make available", () => act(() => VpmifyService.Pull([`${id}/${p.package}@${v.version}`]))));
+                td.appendChild(button(t("versions.makeAvailable"), () => act(() => VpmifyService.Pull([`${id}/${p.package}@${v.version}`]))));
             }
             shown++;
         }
@@ -353,11 +356,11 @@ async function showAvailable() {
             cell(row, packageLabel(e.package, e.displayName));
             cell(row, e.version);
             cell(row, e.unity ?? "");
-            cell(row, e.registered ? "registered" : "not registered");
+            cell(row, t(e.registered ? "available.registered" : "available.notRegistered"));
         }
         emptyElement.hidden = entries.length > 0;
         settingsErrorElement.hidden = !result.settingsError;
-        settingsErrorElement.textContent = result.settingsError ? `ALCOM settings: ${result.settingsError}` : "";
+        settingsErrorElement.textContent = result.settingsError ? t("available.settingsError", {error: result.settingsError}) : "";
     } catch (err) {
         settingsErrorElement.hidden = false;
         settingsErrorElement.textContent = String(err);
@@ -394,8 +397,17 @@ byId("remove-recipe").addEventListener("click", () => {
 });
 byId("reload").addEventListener("click", () => act(async () => {}));
 prereleasesElement.addEventListener("change", () => showVersions());
+languageElement.addEventListener("change", () => {
+    setLang(languageElement.value as Lang);
+    applyStatic();
+    // An open card keeps the language it was written in.
+    closeConfirm();
+    refresh();
+});
 
 async function start() {
+    languageElement.value = currentLang();
+    applyStatic();
     // Listen first, then read what arrived before the page loaded.
     Events.On(Busy, (event) => setBusy(event.data));
     Events.On(Log, (event) => appendLog(event.data));

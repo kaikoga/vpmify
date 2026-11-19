@@ -11,11 +11,15 @@
     <header class="top">
         <h1>Vpmify</h1>
         <div class="actions">
-            <span id="spinner" class="spinner" title="Working" hidden></span>
-            <button id="choose" type="button">Add recipe files…</button>
+            <span id="spinner" class="spinner" data-i18n-title="app.working" hidden></span>
+            <select id="language" data-i18n-title="app.language">
+                <option value="en">English</option>
+                <option value="ja">日本語</option>
+            </select>
+            <button id="choose" type="button" data-i18n="app.addFiles"></button>
         </div>
     </header>
-    <p class="hint">Recipe files dropped on this window are added too, after you confirm.</p>
+    <p class="hint" data-i18n="app.dropHint"></p>
     <p id="error" class="error" hidden></p>
 
     <section id="confirm-section" hidden>
@@ -23,61 +27,61 @@
     </section>
 
     <section id="pending-section" hidden>
-        <h2>Waiting to add</h2>
+        <h2 data-i18n="pending.title"></h2>
         <div id="pending"></div>
     </section>
 
     <section>
         <header>
-            <h2>Recipes</h2>
-            <button id="update-all" type="button">Update all</button>
+            <h2 data-i18n="recipes.title"></h2>
+            <button id="update-all" type="button" data-i18n="recipes.updateAll"></button>
         </header>
         <table>
             <thead>
-            <tr><th>Recipe</th><th>Packages</th><th>Problem</th></tr>
+            <tr><th data-i18n="col.recipe"></th><th data-i18n="col.packages"></th><th data-i18n="col.problem"></th></tr>
             </thead>
             <tbody id="recipes"></tbody>
         </table>
-        <p id="no-recipes" hidden>No recipes yet.</p>
+        <p id="no-recipes" data-i18n="recipes.none" hidden></p>
     </section>
 
     <section id="versions-section" hidden>
         <header>
-            <h2 id="versions-title">Versions</h2>
+            <h2 id="versions-title"></h2>
             <div class="actions">
-                <label><input id="prereleases" type="checkbox"/> Prereleases</label>
-                <button id="update" type="button">Update</button>
-                <button id="pull-newest" type="button">Make newest available</button>
-                <button id="remove-recipe" type="button">Remove recipe…</button>
+                <label><input id="prereleases" type="checkbox"/> <span data-i18n="versions.prereleases"></span></label>
+                <button id="update" type="button" data-i18n="versions.update"></button>
+                <button id="pull-newest" type="button" data-i18n="versions.pullNewest"></button>
+                <button id="remove-recipe" type="button" data-i18n="versions.removeRecipe"></button>
             </div>
         </header>
         <p id="versions-updated" class="note"></p>
         <table>
             <thead>
-            <tr><th>Version</th><th>Unity</th><th>From</th><th>Available</th><th></th></tr>
+            <tr><th data-i18n="col.version"></th><th data-i18n="col.unity"></th><th data-i18n="col.from"></th><th data-i18n="col.available"></th><th></th></tr>
             </thead>
             <tbody id="versions"></tbody>
         </table>
-        <p id="no-versions" hidden>No version to show.</p>
+        <p id="no-versions" data-i18n="versions.none" hidden></p>
     </section>
 
     <section>
         <header>
-            <h2>Available versions</h2>
-            <button id="reload" type="button">Reload</button>
+            <h2 data-i18n="available.title"></h2>
+            <button id="reload" type="button" data-i18n="available.reload"></button>
         </header>
         <p id="settings-error" class="error" hidden></p>
         <table>
             <thead>
-            <tr><th>Recipe</th><th>Package</th><th>Version</th><th>Unity</th><th>ALCOM</th></tr>
+            <tr><th data-i18n="col.recipe"></th><th data-i18n="col.package"></th><th data-i18n="col.version"></th><th data-i18n="col.unity"></th><th data-i18n="col.alcom"></th></tr>
             </thead>
             <tbody id="entries"></tbody>
         </table>
-        <p id="empty" hidden>No version is available yet.</p>
+        <p id="empty" data-i18n="available.none" hidden></p>
     </section>
 
     <section>
-        <h2>Log</h2>
+        <h2 data-i18n="log.title"></h2>
         <pre id="log"></pre>
     </section>
 </main>
