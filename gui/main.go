@@ -16,6 +16,10 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// version is set with -ldflags "-X main.version=..." by the production builds
+// of the Wails tasks, from VERSION in Taskfile.yml.
+var version = "dev"
+
 func main() {
 	logger := newLogger()
 	logger.Info("start", "pid", os.Getpid(), "args", os.Args)

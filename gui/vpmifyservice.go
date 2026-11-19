@@ -56,7 +56,7 @@ func NewVpmifyService() (*VpmifyService, error) {
 	s := &VpmifyService{}
 	s.core = &vpmify.App{
 		Layout:      paths.Layout{Base: base},
-		Client:      fetch.NewClient("vpmify-gui/dev"),
+		Client:      fetch.NewClient("vpmify-gui/" + version),
 		Log:         &lineWriter{emit: func(line string) { s.send(eventLog, line) }},
 		VerifyDelay: 2 * time.Second,
 	}

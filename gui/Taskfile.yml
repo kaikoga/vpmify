@@ -9,6 +9,13 @@ vars:
   # by `wails3 build GOOS=...` (or the GOOS env var) for cross-compilation. The
   # tasks below dispatch to the matching platform Taskfile via this variable.
   GOOS: '{{.GOOS | default OS}}'
+  # The version the production builds embed as main.version. It is the
+  # application version in build/config.yml unless given, as
+  # `wails3 task package VERSION=...` (scripts/release.sh gives it).
+  CONFIG_VERSION:
+    sh: >-
+      sed -n 's/^  version: "\([^"]*\)".*/\1/p' build/config.yml
+  VERSION: '{{.VERSION | default .CONFIG_VERSION}}'
 
 includes:
   common: ./build/Taskfile.yml
