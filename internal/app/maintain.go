@@ -191,14 +191,14 @@ func (a *App) Doctor(fix bool) ([]Problem, error) {
 		for _, id := range state.SortedKeys(st.Recipes) {
 			rs := st.Recipes[id]
 			if !hasRecipe[id] {
-				add(&Problem{Message: fmt.Sprintf("%s: versions are available but the recipe is gone; `vpmify remove %s` deletes them", id, id)})
+				add(&Problem{Message: fmt.Sprintf("%s: versions are available but the recipe is gone; `vpmify recipe remove %s` deletes them", id, id)})
 			}
 			for _, name := range state.SortedKeys(rs.Packages) {
 				ps := rs.Packages[name]
 				// Not removed on its own: a project may lock the versions.
 				if r := recipes[id]; r != nil && len(ps.Versions) > 0 {
 					if src, _ := r.Package(name); src == nil {
-						add(&Problem{Message: fmt.Sprintf("%s: versions of %s are available but the recipe no longer provides it; `vpmify remove %s/%s` deletes them", id, name, id, name)})
+						add(&Problem{Message: fmt.Sprintf("%s: versions of %s are available but the recipe no longer provides it; `vpmify package remove --all %s/%s` deletes them", id, name, id, name)})
 					}
 				}
 				for _, v := range ps.SortedVersions() {
@@ -273,7 +273,7 @@ func (a *App) Doctor(fix bool) ([]Problem, error) {
 func (a *App) checkVersion(id, name, v string, ps *state.PackageState) (p *Problem, inStore bool) {
 	vs := ps.Versions[v]
 	want := a.Layout.PackageDir(id, name, v)
-	resync := fmt.Sprintf("; `vpmify pull %s/%s@%s` makes it available again", id, name, v)
+	resync := fmt.Sprintf("; `vpmify package pull %s/%s@%s` makes it available again", id, name, v)
 	forget := func() { delete(ps.Versions, v) }
 	if !samePath(vs.Path, want) {
 		// The user may have moved Vpmify's data. The recorded folder is

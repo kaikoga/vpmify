@@ -36,11 +36,11 @@ var errNoList = errors.New("no usable version list")
 func (a *App) loadLists(r *recipe.Recipe) ([]*pkgList, error) {
 	idx, err := index.Load(a.Layout.Index(r.ID))
 	if errors.Is(err, index.ErrNoIndex) {
-		return nil, fmt.Errorf("%w: none yet; run `vpmify update %s`", errNoList, r.ID)
+		return nil, fmt.Errorf("%w: none yet; run `vpmify recipe update %s`", errNoList, r.ID)
 	}
 	if err != nil {
 		// update writes the list anew whatever is there, so it mends this.
-		return nil, fmt.Errorf("%w: it cannot be read (%v); run `vpmify update %s`", errNoList, err, r.ID)
+		return nil, fmt.Errorf("%w: it cannot be read (%v); run `vpmify recipe update %s`", errNoList, err, r.ID)
 	}
 	var out []*pkgList
 	var errs []error
@@ -49,7 +49,7 @@ func (a *App) loadLists(r *recipe.Recipe) ([]*pkgList, error) {
 		if l == nil {
 			// The source may list other folders or come from elsewhere now,
 			// or the last update could not read it.
-			errs = append(errs, fmt.Errorf("%w for %s: the recipe changed since it was read, or the last update could not read it; run `vpmify update %s`", errNoList, s.Describe(), r.ID))
+			errs = append(errs, fmt.Errorf("%w for %s: the recipe changed since it was read, or the last update could not read it; run `vpmify recipe update %s`", errNoList, s.Describe(), r.ID))
 			continue
 		}
 		listed := map[string]map[string]bool{}
@@ -57,7 +57,7 @@ func (a *App) loadLists(r *recipe.Recipe) ([]*pkgList, error) {
 		for _, p := range s.Packages {
 			releases, err := l.Releases(p.Name)
 			if err != nil {
-				return nil, fmt.Errorf("%w: %v; run `vpmify update %s`", errNoList, err, r.ID)
+				return nil, fmt.Errorf("%w: %v; run `vpmify recipe update %s`", errNoList, err, r.ID)
 			}
 			pl := &pkgList{src: s, pkg: p, updated: l.Updated, releases: releases, byVersion: map[string]source.Release{}, listed: listed}
 			listed[p.Name] = map[string]bool{}

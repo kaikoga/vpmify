@@ -65,7 +65,7 @@ func (a *App) recipePath(id string) string {
 func (a *App) loadRecipe(id string) (*recipe.Recipe, error) {
 	r, err := recipe.Load(a.recipePath(id))
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("no recipe %q (add it with `vpmify add`)", id)
+		return nil, fmt.Errorf("no recipe %q (add it with `vpmify recipe add`)", id)
 	}
 	if err != nil {
 		return nil, err
@@ -319,7 +319,7 @@ func (a *App) update(ctx context.Context, ids []string) (*UpdateResult, error) {
 			return nil, err
 		}
 		if len(all) == 0 {
-			a.logf("no recipes; add one with `vpmify add <recipe.json>`")
+			a.logf("no recipes; add one with `vpmify recipe add <recipe.json>`")
 		}
 		ids = all
 	}
@@ -528,7 +528,7 @@ func (a *App) pull(ctx context.Context, targets []target, opt PullOptions) (*Pul
 	}
 	if len(targets) == 0 {
 		if len(all) == 0 {
-			a.logf("no recipes; add one with `vpmify add <recipe.json>`")
+			a.logf("no recipes; add one with `vpmify recipe add <recipe.json>`")
 		}
 		for _, id := range all {
 			targets = append(targets, target{id: id})
@@ -687,14 +687,14 @@ func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pu
 		case !matched && len(unusable) > 0:
 			return errors.Join(unusable...)
 		case !matched:
-			return errors.Join(listErr, fmt.Errorf("no version list has %s: it is outside the packages' versions, or `vpmify update %s` has not read it yet", e.version, id))
+			return errors.Join(listErr, fmt.Errorf("no version list has %s: it is outside the packages' versions, or `vpmify recipe update %s` has not read it yet", e.version, id))
 		}
 	}
 	for _, l := range lists {
 		for _, v := range extra[l.pkg.Name] {
 			rel, ok := l.byVersion[v]
 			if !ok {
-				return fmt.Errorf("%s: the version list has no %s: it is outside the package's versions, or `vpmify update %s` has not read it yet", l.pkg.Name, v, id)
+				return fmt.Errorf("%s: the version list has no %s: it is outside the package's versions, or `vpmify recipe update %s` has not read it yet", l.pkg.Name, v, id)
 			}
 			if _, err := l.expand(rel); err != nil {
 				return fmt.Errorf("%s: %s: %w", l.pkg.Name, v, err)
@@ -758,7 +758,7 @@ func (a *App) pullPackage(ctx context.Context, st *state.State, id string, l *pk
 	for _, v := range extra {
 		rel, ok := l.byVersion[v]
 		if !ok {
-			return 0, fmt.Errorf("the version list has no %s: it is outside the package's versions, or `vpmify update %s` has not read it yet", v, id)
+			return 0, fmt.Errorf("the version list has no %s: it is outside the package's versions, or `vpmify recipe update %s` has not read it yet", v, id)
 		}
 		selected = appendRelease(selected, rel)
 	}
@@ -1008,7 +1008,7 @@ func (a *App) dependencyVersion(id, name string, rng semver.Range) (string, erro
 			return usable[i].Version.String(), nil
 		}
 	}
-	return "", fmt.Errorf("the version list of %s has no version that satisfies it (`vpmify update %s` reads it again)", name, id)
+	return "", fmt.Errorf("the version list of %s has no version that satisfies it (`vpmify recipe update %s` reads it again)", name, id)
 }
 
 // readVPMDependencies returns the vpmDependencies of the package in dir.
@@ -1139,28 +1139,32 @@ func uniquePaths(paths []string) []string {
 	return out
 }
 
-// RemoveResult is what Remove did.
+// RemoveResult is what RemoveVersions or RemoveRecipe did, or what
+// RemoveRecipe would do when Applied is false.
 type RemoveResult struct {
-	// Removed are the versions that are no longer available; Registered is
-	// false for each.
+	// Applied is false when RemoveRecipe only showed what it would remove.
+	Applied bool `json:"applied"`
+	// Removed are the versions that are no longer available, or would not
+	// be; Registered is false for each.
 	Removed []Entry `json:"removed"`
 	// RecipeRemoved is true when the recipe itself was removed.
 	RecipeRemoved bool `json:"recipeRemoved"`
 	// Registered and Unregistered are the folders whose registration with
-	// ALCOM changed. Remove registers the available versions ALCOM is
+	// ALCOM changed. Removing registers the available versions ALCOM is
 	// missing, as pull does.
 	Registered   []string `json:"registered"`
 	Unregistered []string `json:"unregistered"`
 }
 
-// Remove unregisters and deletes versions. ref is "<id>" or "<id>/<name>":
-// with a version it removes that version of every package of the recipe
-// that has it, or of the named package; without one it removes the named
-// package's versions, or the whole recipe, which removes the recipe file and
-// its version lists too. A package the recipe no longer provides can still
-// be removed by name. Copies already in projects stay. The result is nil
-// when Remove stopped before forgetting any version.
-func (a *App) Remove(ctx context.Context, ref, version string) (*RemoveResult, error) {
+// RemoveVersions unregisters and deletes available versions, and leaves the
+// recipe and its version lists, so that pull can make them available again
+// without an update. ref is "<id>" or "<id>/<name>": with a version it
+// removes that version of every package of the recipe that has it, or of
+// the named package; without one it removes every version of the named
+// package, or of the recipe. A package the recipe no longer provides can
+// still be removed by name. Copies already in projects stay. The result is
+// nil when RemoveVersions stopped before forgetting any version.
+func (a *App) RemoveVersions(ref, version string) (*RemoveResult, error) {
 	id, only, err := parseRef(ref)
 	if err != nil {
 		return nil, err
@@ -1172,72 +1176,115 @@ func (a *App) Remove(ctx context.Context, ref, version string) (*RemoveResult, e
 			return err
 		}
 		rs, ok := st.Recipes[id]
-		if only != "" {
-			// A package is removed by its record, whether the recipe still
-			// provides it or not.
-			if !ok && !fsutil.Exists(a.recipePath(id)) {
-				return fmt.Errorf("no recipe %q", id)
-			}
-			if !ok || rs.Packages[only] == nil || len(rs.Packages[only].Versions) == 0 {
-				return fmt.Errorf("%s: no version of %s is available", id, only)
-			}
-		}
-		// A recipe whose file is gone can still be removed by its record, and
-		// one whose record is gone by its file.
-		if !ok && (version != "" || !fsutil.Exists(a.recipePath(id))) {
+		// Versions are removed by their record, whether the recipe still
+		// provides them or not, or is gone.
+		if !ok && !fsutil.Exists(a.recipePath(id)) {
 			return fmt.Errorf("no recipe %q", id)
 		}
-		var dirs []string
-		removed := []Entry{}
-		if rs != nil {
-			for _, name := range state.SortedKeys(rs.Packages) {
-				if only != "" && name != only {
-					continue
-				}
-				ps := rs.Packages[name]
-				for _, v := range ps.SortedVersions() {
-					if version != "" && v != version {
-						continue
-					}
-					vs := ps.Versions[v]
-					dirs = append(dirs, vs.Path)
-					removed = append(removed, Entry{Recipe: id, Package: name, Version: v, Unity: vs.Unity, Path: vs.Path})
-					delete(ps.Versions, v)
-				}
-				if version == "" {
-					delete(rs.Packages, name)
-				}
+		if only != "" && (!ok || rs.Packages[only] == nil || len(rs.Packages[only].Versions) == 0) {
+			return fmt.Errorf("%s: no version of %s is available", id, only)
+		}
+		dirs, removed := takeVersions(rs, id, only, version)
+		if len(dirs) == 0 {
+			if version != "" {
+				return fmt.Errorf("%s: version %s is not available", ref, version)
 			}
-		}
-		if version != "" && len(dirs) == 0 {
-			return fmt.Errorf("%s: version %s is not available", ref, version)
-		}
-		whole := version == "" && only == ""
-		if whole {
-			delete(st.Recipes, id)
+			return fmt.Errorf("%s: no version is available", id)
 		}
 		change, saved, err := a.forget(st, dirs)
 		if saved {
-			res = &RemoveResult{Removed: removed, Registered: change.Added, Unregistered: change.Removed}
+			res = &RemoveResult{Applied: true, Removed: removed, Registered: nonNil(change.Added), Unregistered: nonNil(change.Removed)}
+		}
+		return err
+	})
+	return res, err
+}
+
+// RemoveRecipe removes recipe id: it unregisters and deletes every
+// available version, and deletes the recipe file and its version lists, so
+// that using the recipe again takes an add. Without apply it only returns
+// what it would remove, so that the user sees it first. A recipe whose file
+// is gone can still be removed by its record, and one whose record is gone
+// by its file. Copies already in projects stay. The result is nil when
+// RemoveRecipe stopped before forgetting any version.
+func (a *App) RemoveRecipe(id string, apply bool) (*RemoveResult, error) {
+	if _, only, err := parseRef(id); err != nil || only != "" {
+		return nil, fmt.Errorf("want a recipe id, not %q", id)
+	}
+	var res *RemoveResult
+	err := a.withLock(func() error {
+		st, err := state.Load(a.Layout.State())
+		if err != nil {
+			return err
+		}
+		rs, ok := st.Recipes[id]
+		if !ok && !fsutil.Exists(a.recipePath(id)) {
+			return fmt.Errorf("no recipe %q", id)
+		}
+		dirs, removed := takeVersions(rs, id, "", "")
+		if !apply {
+			res = &RemoveResult{Removed: removed, Registered: []string{}, Unregistered: []string{}}
+			return nil
+		}
+		delete(st.Recipes, id)
+		change, saved, err := a.forget(st, dirs)
+		if saved {
+			res = &RemoveResult{Applied: true, Removed: removed, Registered: nonNil(change.Added), Unregistered: nonNil(change.Removed)}
 		}
 		if err != nil {
 			return err
 		}
-		if whole {
-			for _, p := range []string{a.recipePath(id), a.Layout.Index(id)} {
-				if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
-					return err
-				}
+		for _, p := range []string{a.recipePath(id), a.Layout.Index(id)} {
+			if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return err
 			}
-			a.logf("%s: removed recipe", id)
-			res.RecipeRemoved = true
 		}
+		a.logf("%s: removed recipe", id)
+		res.RecipeRemoved = true
 		return nil
 	})
 	return res, err
 }
 
-// Entry is one available version, as `vpmify list` shows it.
+// takeVersions takes out of rs, which may be nil, the available versions of
+// package only (every package when it is empty) that are version (every
+// version when it is empty), and returns their folders and entries. Taking
+// every version of a package forgets the package too.
+func takeVersions(rs *state.RecipeState, id, only, version string) (dirs []string, removed []Entry) {
+	removed = []Entry{}
+	if rs == nil {
+		return nil, removed
+	}
+	for _, name := range state.SortedKeys(rs.Packages) {
+		if only != "" && name != only {
+			continue
+		}
+		ps := rs.Packages[name]
+		for _, v := range ps.SortedVersions() {
+			if version != "" && v != version {
+				continue
+			}
+			vs := ps.Versions[v]
+			dirs = append(dirs, vs.Path)
+			removed = append(removed, Entry{Recipe: id, Package: name, Version: v, Unity: vs.Unity, Path: vs.Path})
+			delete(ps.Versions, v)
+		}
+		if version == "" {
+			delete(rs.Packages, name)
+		}
+	}
+	return dirs, removed
+}
+
+// nonNil makes an empty list print as [] rather than null.
+func nonNil[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
+}
+
+// Entry is one available version, as `vpmify package list` shows it.
 type Entry struct {
 	Recipe     string `json:"recipe"`
 	Package    string `json:"package"`
@@ -1255,12 +1302,18 @@ type ListResult struct {
 	SettingsError string `json:"settingsError,omitempty"`
 }
 
-// List returns every available version and whether ALCOM has it
-// registered. The error is for failures that leave no list.
-func (a *App) List() (*ListResult, error) {
+// List returns the available versions of the recipes ids, or of every
+// recipe when there are none, and whether ALCOM has each registered. The
+// error is for failures that leave no list.
+func (a *App) List(ids ...string) (*ListResult, error) {
 	st, err := state.Load(a.Layout.State())
 	if err != nil {
 		return nil, err
+	}
+	for _, id := range ids {
+		if _, ok := st.Recipes[id]; !ok && !fsutil.Exists(a.recipePath(id)) {
+			return nil, fmt.Errorf("no recipe %q", id)
+		}
 	}
 	res := &ListResult{}
 	registered := map[string]bool{}
@@ -1275,6 +1328,9 @@ func (a *App) List() (*ListResult, error) {
 	}
 	res.Entries = []Entry{}
 	for _, id := range state.SortedKeys(st.Recipes) {
+		if len(ids) > 0 && !slices.Contains(ids, id) {
+			continue
+		}
 		rs := st.Recipes[id]
 		for _, name := range state.SortedKeys(rs.Packages) {
 			ps := rs.Packages[name]
@@ -1350,7 +1406,7 @@ type VersionInfo struct {
 	Unusable string `json:"unusable,omitempty"`
 }
 
-// VersionList is what `vpmify versions` shows for one recipe.
+// VersionList is what `vpmify recipe versions` shows for one recipe.
 type VersionList struct {
 	Recipe   string            `json:"recipe"`
 	Packages []PackageVersions `json:"packages"`
@@ -1370,8 +1426,6 @@ type PackageVersions struct {
 type VersionsOptions struct {
 	// All lists prereleases too.
 	All bool
-	// Available lists only the versions Vpmify has made available.
-	Available bool
 	// Unity lists only the versions a project on this Unity can use, read
 	// the way vrc-get reads "unity": as the oldest Unity the version
 	// supports (vrc-get-vpm/src/lib.rs, unity_compatible). It is a Unity
@@ -1433,8 +1487,6 @@ func (a *App) Versions(ref string, opt VersionsOptions) (*VersionList, error) {
 			unity := l.pkg.Unity(rel.Version, rel.Unity)
 			switch {
 			case rel.Version.IsPrerelease() && !opt.All:
-				continue
-			case opt.Available && !isAvailable:
 				continue
 			case opt.Unity != "" && !project.canUse(unity):
 				continue

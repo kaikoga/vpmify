@@ -27,17 +27,25 @@ var version = "dev"
 
 const usage = `usage: vpmify <command> [--json] [arguments]
 
-commands:
-  add <recipe.json|URL>...     add recipes and read their version lists
-  update [<id>...]             read the version lists from upstream again;
+recipes and their version lists:
+  recipe add <recipe.json|URL>...
+                               add recipes and read their version lists
+  recipe update [<id>...]      read the version lists from upstream again;
                                converts nothing
-  versions [--all] [--available] [--unity <version>] <id>[/<package>]
+  recipe versions [--all] [--unity <version>] <id>[/<package>]
                                show the stable versions in the version lists of
                                a recipe's packages, or of one package: --all
-                               with prereleases, --available only those
-                               available to ALCOM, --unity only those a project
+                               with prereleases, --unity only those a project
                                on that Unity can use
-  pull [--all] [--refetch] [<id>[/<package>][@<version>]...]
+  recipe list                  show the recipes
+  recipe remove [--yes] <id>   show what removing the recipe deletes; --yes
+                               unregisters and deletes its available versions,
+                               and deletes the recipe and its version lists
+
+available versions, which ALCOM lists as user packages:
+  package list [<id>...]       show the available versions, of every recipe or
+                               of the ones named
+  package pull [--all] [--refetch] [<id>[/<package>][@<version>]...]
                                convert versions from the version lists and
                                register them with ALCOM, which makes them
                                available: the newest version of each package
@@ -46,10 +54,14 @@ commands:
                                (of every package that has it, without "/");
                                --refetch also downloads and builds every
                                available version again
-  list                         show available versions
-  remove <id>[/<package>] [<version>]
-                               unregister and delete a version, every version
-                               of a package, or the whole recipe
+  package remove <id>[/<package>]@<version>
+  package remove --all <id>[/<package>]
+                               unregister and delete a version, or every
+                               version, of a recipe's packages or of one
+                               package; the recipe and its version lists stay,
+                               so package pull can make them available again
+
+other commands:
   doctor [--fix]               find disagreements among recipes, the store and
                                ALCOM's settings; --fix fixes what it can
   clean [--yes]                show what clean deletes; --yes unregisters and deletes
@@ -113,66 +125,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	switch cmd {
-	case "add":
-		// Every argument is a recipe, even one that starts with "-".
-		if len(rest) == 0 {
-			return out.usageError("add takes recipe files or URLs")
-		}
-		res, err := a.Add(ctx, rest...)
-		if err == nil && !asJSON {
-			fmt.Fprintln(stderr, "`vpmify versions <id>` lists the versions; `vpmify pull` makes the newest ones available")
-		}
-		return out.result(res, err)
-	case "update":
-		ids, _, perr := splitFlags(rest)
-		if perr != nil {
-			return out.usageError(perr.Error())
-		}
-		res, err := a.Update(ctx, ids)
-		return out.result(res, err)
-	case "pull":
-		targets, flags, perr := splitFlags(rest, "--all", "--refetch")
-		if perr != nil {
-			return out.usageError(perr.Error())
-		}
-		res, err := a.Pull(ctx, targets, app.PullOptions{All: flags["--all"], Refetch: flags["--refetch"]})
-		return out.result(res, err)
-	case "versions":
-		rest, unity, perr := takeValue(rest, "--unity")
-		if perr != nil {
-			return out.usageError(perr.Error())
-		}
-		ids, flags, perr := splitFlags(rest, "--all", "--available")
-		if perr != nil || len(ids) != 1 {
-			return out.usageError("versions takes one recipe id, or <id>/<package>")
-		}
-		opt := app.VersionsOptions{All: flags["--all"], Available: flags["--available"], Unity: unity}
-		list, err := a.Versions(ids[0], opt)
-		if list != nil && !asJSON {
-			if perr := printVersions(stdout, list); perr != nil && err == nil {
-				err = perr
-			}
-		}
-		return out.result(list, err)
-	case "list":
-		if args, _, perr := splitFlags(rest); perr != nil || len(args) > 0 {
-			return out.usageError("list takes only --json")
-		}
-		res, err := a.List()
-		if err == nil && !asJSON {
-			err = printList(stdout, stderr, res)
-		}
-		return out.result(res, err)
-	case "remove":
-		if len(rest) < 1 || len(rest) > 2 {
-			return out.usageError("remove takes a recipe id or <id>/<package>, and an optional version")
-		}
-		v := ""
-		if len(rest) == 2 {
-			v = rest[1]
-		}
-		res, err := a.Remove(ctx, rest[0], v)
-		return out.result(res, err)
+	case "recipe":
+		return runRecipe(ctx, a, out, rest)
+	case "package":
+		return runPackage(ctx, a, out, rest)
 	case "clean":
 		args, flags, perr := splitFlags(rest, "--yes", "-y")
 		if perr != nil || len(args) > 0 {
@@ -204,7 +160,134 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		return 0
 	default:
+		if moved, ok := movedCommands[cmd]; ok {
+			return out.usageError(fmt.Sprintf("unknown command %q; it is now %s", cmd, moved))
+		}
 		return out.usageError(fmt.Sprintf("unknown command %q", cmd))
+	}
+}
+
+// movedCommands are the commands that took no namespace before the commands
+// were split into recipe and package (kaikoga 2026-11-19), with where they
+// went, so that a user of the old form learns the new one.
+var movedCommands = map[string]string{
+	"add":      "`vpmify recipe add`",
+	"update":   "`vpmify recipe update`",
+	"versions": "`vpmify recipe versions`",
+	"pull":     "`vpmify package pull`",
+	"list":     "`vpmify package list`",
+	"remove":   "`vpmify recipe remove` for a recipe, or `vpmify package remove` for versions",
+}
+
+// runRecipe runs the commands on recipes and their version lists.
+func runRecipe(ctx context.Context, a *app.App, out output, args []string) int {
+	if len(args) == 0 {
+		return out.usageError("recipe needs a command: add, update, versions, list or remove")
+	}
+	cmd, rest := args[0], args[1:]
+	switch cmd {
+	case "add":
+		// Every argument is a recipe, even one that starts with "-".
+		if len(rest) == 0 {
+			return out.usageError("recipe add takes recipe files or URLs")
+		}
+		res, err := a.Add(ctx, rest...)
+		if err == nil && !out.json {
+			fmt.Fprintln(out.stderr, "`vpmify recipe versions <id>` lists the versions; `vpmify package pull` makes the newest ones available")
+		}
+		return out.result(res, err)
+	case "update":
+		ids, _, perr := splitFlags(rest)
+		if perr != nil {
+			return out.usageError(perr.Error())
+		}
+		res, err := a.Update(ctx, ids)
+		return out.result(res, err)
+	case "versions":
+		rest, unity, perr := takeValue(rest, "--unity")
+		if perr != nil {
+			return out.usageError(perr.Error())
+		}
+		ids, flags, perr := splitFlags(rest, "--all")
+		if perr != nil || len(ids) != 1 {
+			return out.usageError("recipe versions takes one recipe id, or <id>/<package>")
+		}
+		list, err := a.Versions(ids[0], app.VersionsOptions{All: flags["--all"], Unity: unity})
+		if list != nil && !out.json {
+			if perr := printVersions(out.stdout, list); perr != nil && err == nil {
+				err = perr
+			}
+		}
+		return out.result(list, err)
+	case "list":
+		if args, _, perr := splitFlags(rest); perr != nil || len(args) > 0 {
+			return out.usageError("recipe list takes only --json")
+		}
+		recipes, err := a.Recipes()
+		if err == nil && !out.json {
+			err = printRecipes(out.stdout, recipes)
+		}
+		return out.result(recipeListResult{Recipes: nonNil(recipes)}, err)
+	case "remove":
+		ids, flags, perr := splitFlags(rest, "--yes", "-y")
+		if perr != nil || len(ids) != 1 {
+			return out.usageError("recipe remove takes one recipe id, and --yes")
+		}
+		yes := flags["--yes"] || flags["-y"]
+		res, err := a.RemoveRecipe(ids[0], yes)
+		if res != nil && !out.json {
+			if perr := printRemoveRecipe(out.stdout, ids[0], res, err == nil); perr != nil && err == nil {
+				err = perr
+			}
+		}
+		return out.result(res, err)
+	default:
+		return out.usageError(fmt.Sprintf("unknown command \"recipe %s\"", cmd))
+	}
+}
+
+// runPackage runs the commands on available versions.
+func runPackage(ctx context.Context, a *app.App, out output, args []string) int {
+	if len(args) == 0 {
+		return out.usageError("package needs a command: list, pull or remove")
+	}
+	cmd, rest := args[0], args[1:]
+	switch cmd {
+	case "list":
+		ids, _, perr := splitFlags(rest)
+		if perr != nil {
+			return out.usageError(perr.Error())
+		}
+		res, err := a.List(ids...)
+		if err == nil && !out.json {
+			err = printList(out.stdout, out.stderr, res)
+		}
+		return out.result(res, err)
+	case "pull":
+		targets, flags, perr := splitFlags(rest, "--all", "--refetch")
+		if perr != nil {
+			return out.usageError(perr.Error())
+		}
+		res, err := a.Pull(ctx, targets, app.PullOptions{All: flags["--all"], Refetch: flags["--refetch"]})
+		return out.result(res, err)
+	case "remove":
+		targets, flags, perr := splitFlags(rest, "--all")
+		if perr != nil || len(targets) != 1 {
+			return out.usageError("package remove takes one <id>[/<package>]@<version>, or --all and one <id>[/<package>]")
+		}
+		// A version or --all is always named, so that removing every version
+		// is never what a short command does by chance.
+		ref, version, named := strings.Cut(targets[0], "@")
+		switch {
+		case flags["--all"] && named:
+			return out.usageError("package remove takes either @<version> or --all, not both")
+		case !flags["--all"] && (!named || version == ""):
+			return out.usageError("package remove needs @<version>, or --all to remove every version")
+		}
+		res, err := a.RemoveVersions(ref, version)
+		return out.result(res, err)
+	default:
+		return out.usageError(fmt.Sprintf("unknown command \"package %s\"", cmd))
 	}
 }
 
@@ -284,6 +367,11 @@ func nonNil[T any](s []T) []T {
 type cleanResult struct {
 	Applied bool        `json:"applied"`
 	Entries []app.Entry `json:"entries"`
+}
+
+// recipeListResult is what `recipe list --json` prints.
+type recipeListResult struct {
+	Recipes []app.RecipeInfo `json:"recipes"`
 }
 
 // doctorResult is what `doctor --json` prints. OK is true when no problem
@@ -366,22 +454,70 @@ func printVersions(stdout io.Writer, list *app.VersionList) error {
 			fmt.Fprintf(stdout, "%s cannot be converted: %s\n", v.Version, v.Unusable)
 		}
 	}
-	fmt.Fprintf(stdout, "\n`vpmify pull` makes the newest version of each package available; `vpmify pull %s/<package>@<version>` adds another.\n", list.Recipe)
+	fmt.Fprintf(stdout, "\n`vpmify package pull` makes the newest version of each package available; `vpmify package pull %s/<package>@<version>` adds another.\n", list.Recipe)
 	return nil
+}
+
+// printRecipes prints the user's recipes, and why one cannot be used.
+func printRecipes(stdout io.Writer, recipes []app.RecipeInfo) error {
+	if len(recipes) == 0 {
+		fmt.Fprintln(stdout, "no recipes; add one with `vpmify recipe add <recipe.json>`")
+		return nil
+	}
+	tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "RECIPE\tPACKAGES\tFROM")
+	for _, r := range recipes {
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", r.ID, strings.Join(r.Packages, " "), r.Origin)
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	for _, r := range recipes {
+		if r.Problem != "" {
+			fmt.Fprintf(stdout, "%s cannot be used: %s\n", r.ID, r.Problem)
+		}
+	}
+	return nil
+}
+
+// printRemoveRecipe prints the versions removing recipe id deletes, and,
+// without --yes, how to go on.
+func printRemoveRecipe(stdout io.Writer, id string, res *app.RemoveResult, succeeded bool) error {
+	if err := printEntries(stdout, res.Removed); err != nil {
+		return err
+	}
+	if !succeeded {
+		return nil
+	}
+	if !res.Applied {
+		fmt.Fprintf(stdout, "removing %s deletes these %d versions, the recipe and its version lists.\n", id, len(res.Removed))
+		fmt.Fprintln(stdout, "a project that locks one of them cannot resolve it, and using the recipe again takes `vpmify recipe add`.")
+		fmt.Fprintf(stdout, "run `vpmify recipe remove %s --yes` to remove it.\n", id)
+		return nil
+	}
+	fmt.Fprintf(stdout, "removed %s and its %d versions.\n", id, len(res.Removed))
+	return nil
+}
+
+// printEntries prints available versions as a table, or nothing when there
+// are none.
+func printEntries(stdout io.Writer, entries []app.Entry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "RECIPE\tPACKAGE\tVERSION\tUNITY")
+	for _, e := range entries {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", e.Recipe, e.Package, e.Version, e.Unity)
+	}
+	return tw.Flush()
 }
 
 // printClean prints the versions clean deletes, so the user can name the
 // ones to make available again, and what to do next when clean succeeded.
 func printClean(stdout io.Writer, entries []app.Entry, yes, succeeded bool) error {
-	if len(entries) > 0 {
-		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "RECIPE\tPACKAGE\tVERSION\tUNITY")
-		for _, e := range entries {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", e.Recipe, e.Package, e.Version, e.Unity)
-		}
-		if ferr := tw.Flush(); ferr != nil {
-			return ferr
-		}
+	if err := printEntries(stdout, entries); err != nil {
+		return err
 	}
 	if !succeeded {
 		return nil
@@ -393,8 +529,8 @@ func printClean(stdout io.Writer, entries []app.Entry, yes, succeeded bool) erro
 		return nil
 	}
 	fmt.Fprintf(stdout, "deleted %d versions and the downloads.\n", len(entries))
-	fmt.Fprintln(stdout, "run `vpmify pull` to make the newest versions available again, and")
-	fmt.Fprintln(stdout, "`vpmify pull <id>/<package>@<version>` for each other version a project needs.")
+	fmt.Fprintln(stdout, "run `vpmify package pull` to make the newest versions available again, and")
+	fmt.Fprintln(stdout, "`vpmify package pull <id>/<package>@<version>` for each other version a project needs.")
 	return nil
 }
 

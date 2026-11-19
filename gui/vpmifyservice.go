@@ -88,7 +88,7 @@ func (s *VpmifyService) run(fn func() error) error {
 	return fn()
 }
 
-// List returns what `vpmify list` shows.
+// List returns what `vpmify package list` shows.
 func (s *VpmifyService) List() (vpmify.ListResult, error) {
 	r, err := s.core.List()
 	if err != nil {
@@ -133,7 +133,7 @@ func (s *VpmifyService) Update(ctx context.Context, ids []string) error {
 	})
 }
 
-// Pull makes versions available as `vpmify pull` does: targets are "<id>"
+// Pull makes versions available as `vpmify package pull` does: targets are "<id>"
 // or "<id>/<package>", either with "@<version>".
 func (s *VpmifyService) Pull(ctx context.Context, targets []string) error {
 	return s.run(func() error {

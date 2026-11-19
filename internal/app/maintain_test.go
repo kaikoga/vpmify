@@ -155,7 +155,7 @@ func TestDoctorReportsWhatItCannotFix(t *testing.T) {
 		t.Fatal(err, f.log)
 	}
 	msgs := problemMessages(problems)
-	if len(problems) != 2 || !strings.Contains(msgs[0], "broken: recipe cannot be read") || !strings.Contains(msgs[1], "vpmify remove kit") {
+	if len(problems) != 2 || !strings.Contains(msgs[0], "broken: recipe cannot be read") || !strings.Contains(msgs[1], "vpmify recipe remove kit") {
 		t.Errorf("problems = %v", msgs)
 	}
 	for _, p := range problems {
@@ -216,7 +216,7 @@ func TestRemoveLeavesFoldersOutsideTheStore(t *testing.T) {
 	}
 	outside := f.moveRecord("1.0.0")
 
-	if _, err := f.app.Remove(context.Background(), "kit", "1.0.0"); err != nil {
+	if _, err := f.app.RemoveVersions("kit", "1.0.0"); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if got := f.available(); len(got) != 0 {
@@ -246,12 +246,12 @@ func TestRemoveLeavesAFolderAnotherRecipeUses(t *testing.T) {
 	}
 	// kit2, made by hand, has no version list either.
 	if msgs := problemMessages(problems); len(msgs) != 2 ||
-		!strings.Contains(msgs[0], "kit2: no usable version list: none yet; run `vpmify update kit2`") ||
+		!strings.Contains(msgs[0], "kit2: no usable version list: none yet; run `vpmify recipe update kit2`") ||
 		!strings.Contains(msgs[1], "kit2: "+pkgName+" 1.0.0 is recorded at "+dir) {
 		t.Errorf("problems = %v", msgs)
 	}
 
-	if _, err := f.app.Remove(context.Background(), "kit2", ""); err != nil {
+	if _, err := f.app.RemoveRecipe("kit2", true); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if !exists(dir) {
@@ -268,7 +268,7 @@ func TestRemoveDeletesTheEmptyPackageFolder(t *testing.T) {
 	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if _, err := f.app.Remove(context.Background(), "kit", "1.0.0"); err != nil {
+	if _, err := f.app.RemoveVersions("kit", "1.0.0"); err != nil {
 		t.Fatal(err, f.log)
 	}
 	for _, p := range []string{filepath.Join(f.app.Layout.Packages(), "kit", pkgName), filepath.Join(f.app.Layout.Packages(), "kit")} {
@@ -290,7 +290,7 @@ func TestRemoveWithoutSettingsChangesNothing(t *testing.T) {
 	if err := os.Remove(f.settings); err != nil {
 		t.Fatal(err)
 	}
-	if res, err := f.app.Remove(context.Background(), "kit", "1.0.0"); err == nil || res != nil {
+	if res, err := f.app.RemoveVersions("kit", "1.0.0"); err == nil || res != nil {
 		t.Errorf("remove without settings.json = %+v, %v; want nil and an error", res, err)
 	}
 	st, err := state.Load(f.app.Layout.State())
@@ -328,7 +328,7 @@ func TestRemoveReportsWhatItDidBeforeFailing(t *testing.T) {
 	}
 	dir := f.app.Layout.PackageDir("kit", pkgName, "1.0.0")
 	lockFolder(t, dir)
-	res, err := f.app.Remove(context.Background(), "kit", "1.0.0")
+	res, err := f.app.RemoveVersions("kit", "1.0.0")
 	if err == nil {
 		t.Fatal("no error for a folder that cannot be deleted")
 	}
@@ -342,7 +342,7 @@ func TestRemoveReportsWhatItDidBeforeFailing(t *testing.T) {
 
 func TestRemoveOfNoRecipeFails(t *testing.T) {
 	f := newFixture(t)
-	res, err := f.app.Remove(context.Background(), "nosuch", "")
+	res, err := f.app.RemoveRecipe("nosuch", true)
 	if err == nil || !strings.Contains(err.Error(), `no recipe "nosuch"`) || res != nil {
 		t.Errorf("remove nosuch = %+v, %v; want nil and no recipe", res, err)
 	}
@@ -591,7 +591,6 @@ func TestDoctorIgnoresFileBrowserClutter(t *testing.T) {
 func TestASecondRecipeForOnePackageHasItsOwnFolders(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
-	ctx := context.Background()
 	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
@@ -611,7 +610,7 @@ func TestASecondRecipeForOnePackageHasItsOwnFolders(t *testing.T) {
 	if problems, err := f.app.Doctor(false); err != nil || len(problems) != 0 {
 		t.Errorf("problems = %v, err = %v", problemMessages(problems), err)
 	}
-	if _, err := f.app.Remove(ctx, "kit", ""); err != nil {
+	if _, err := f.app.RemoveRecipe("kit", true); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if !exists(f.app.Layout.PackageDir("kit2", pkgName, "1.0.0")) {

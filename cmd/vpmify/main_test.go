@@ -55,11 +55,12 @@ func TestJSONSuccess(t *testing.T) {
 		want map[string]any
 	}{
 		{[]string{"version", "--json"}, map[string]any{"version": "dev"}},
-		{[]string{"list", "--json"}, map[string]any{"entries": []any{}}},
-		{[]string{"--json", "list"}, map[string]any{"entries": []any{}}},
+		{[]string{"package", "list", "--json"}, map[string]any{"entries": []any{}}},
+		{[]string{"--json", "package", "list"}, map[string]any{"entries": []any{}}},
 		{[]string{"help", "--json"}, map[string]any{"usage": usage}},
-		{[]string{"update", "--json"}, map[string]any{"recipes": []any{}, "errors": []any{}}},
-		{[]string{"pull", "--json"}, map[string]any{
+		{[]string{"recipe", "list", "--json"}, map[string]any{"recipes": []any{}}},
+		{[]string{"recipe", "update", "--json"}, map[string]any{"recipes": []any{}, "errors": []any{}}},
+		{[]string{"package", "pull", "--json"}, map[string]any{
 			"built": []any{}, "upToDate": []any{}, "registered": []any{}, "unregistered": []any{}, "errors": []any{},
 		}},
 		{[]string{"clean", "--json"}, map[string]any{"applied": false, "entries": []any{}}},
@@ -80,12 +81,25 @@ func TestJSONErrors(t *testing.T) {
 		code int
 	}{
 		// A command that does nothing prints only "error".
-		{[]string{"versions", "--json", "nope"}, 1},
-		{[]string{"remove", "--json"}, 2},
+		{[]string{"recipe", "versions", "--json", "nope"}, 1},
+		{[]string{"recipe", "remove", "--json"}, 2},
+		{[]string{"recipe", "remove", "--json", "nope"}, 1},
+		{[]string{"recipe", "remove", "--json", "nope/com.example.pkg"}, 1},
+		{[]string{"recipe", "--json"}, 2},
+		{[]string{"recipe", "nope", "--json"}, 2},
+		{[]string{"package", "list", "--json", "nope"}, 1},
+		// package remove always names a version or --all.
+		{[]string{"package", "remove", "--json", "nope"}, 2},
+		{[]string{"package", "remove", "--json", "nope@"}, 2},
+		{[]string{"package", "remove", "--json", "--all", "nope@1.0.0"}, 2},
+		{[]string{"package", "remove", "--json", "nope@1.0.0"}, 1},
+		{[]string{"package", "remove", "--json", "--all", "nope"}, 1},
+		{[]string{"package", "--json"}, 2},
 		{[]string{"nope", "--json"}, 2},
 		{[]string{"--json"}, 2},
-		// add reads every argument as a recipe, even one that starts with "-".
-		{[]string{"add", "--json", "-missing.json"}, 1},
+		// recipe add reads every argument as a recipe, even one that starts
+		// with "-".
+		{[]string{"recipe", "add", "--json", "-missing.json"}, 1},
 	}
 	for _, tt := range tests {
 		code, obj := runJSON(t, tt.args...)
@@ -98,7 +112,7 @@ func TestJSONErrors(t *testing.T) {
 // A command that did part of its work prints what it did and "error".
 func TestJSONPartialFailure(t *testing.T) {
 	withData(t, false)
-	code, obj := runJSON(t, "pull", "--json", "nope")
+	code, obj := runJSON(t, "package", "pull", "--json", "nope")
 	if code != 1 {
 		t.Errorf("code = %d, want 1", code)
 	}
@@ -115,8 +129,17 @@ func TestJSONPartialFailure(t *testing.T) {
 
 func TestJSONListSettingsError(t *testing.T) {
 	withData(t, false)
-	code, obj := runJSON(t, "list", "--json")
+	code, obj := runJSON(t, "package", "list", "--json")
 	if msg, _ := obj["settingsError"].(string); code != 0 || msg == "" {
 		t.Errorf("list = %d %v, want 0 and a settingsError", code, obj)
+	}
+}
+
+// A command from before the namespaces fails and names where it went.
+func TestMovedCommand(t *testing.T) {
+	withData(t, false)
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"pull"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "it is now `vpmify package pull`") {
+		t.Errorf("pull = %d, stderr = %s", code, stderr.String())
 	}
 }

@@ -1,8 +1,8 @@
-// Package index keeps the version lists `vpmify update` reads from upstream
-// for one recipe: what each version is and where its archive is. `vpmify
-// pull` and `vpmify versions` read only these lists, so what they show and
-// make available does not change until the next update (kaikoga
-// 2026-11-18).
+// Package index keeps the version lists `vpmify recipe update` reads from
+// upstream for one recipe: what each version is and where its archive is.
+// `vpmify package pull` and `vpmify recipe versions` read only these lists,
+// so what they show and make available does not change until the next
+// update (kaikoga 2026-11-18).
 package index
 
 import (

@@ -374,14 +374,14 @@ func TestPullNamesVersionsByPackage(t *testing.T) {
 	}
 
 	// remove takes the same names.
-	res, err := f.app.Remove(ctx, "mono/com.example.pkg", "")
+	res, err := f.app.RemoveVersions("mono/com.example.pkg", "")
 	if err != nil {
 		t.Fatal(err, f.log)
 	}
 	if len(res.Removed) != 2 || res.RecipeRemoved {
 		t.Errorf("remove pkg = %+v", res)
 	}
-	if _, err := f.app.Remove(ctx, "mono", "1.0.0"); err != nil {
+	if _, err := f.app.RemoveVersions("mono", "1.0.0"); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if got, want := f.available(), []string{"1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
@@ -422,10 +422,10 @@ func TestRecipesThatShareAPackage(t *testing.T) {
 	}
 
 	// The dependency comes from the dependent's own recipe first.
-	if _, err := f.app.Remove(ctx, "both/com.example.base", ""); err != nil {
+	if _, err := f.app.RemoveVersions("both/com.example.base", ""); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if _, err := f.app.Remove(ctx, "alone", ""); err != nil {
+	if _, err := f.app.RemoveRecipe("alone", true); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if _, err := f.app.Add(ctx, f.writeFile("alone.json", alone)); err != nil {
@@ -443,13 +443,13 @@ func TestRecipesThatShareAPackage(t *testing.T) {
 		t.Errorf("built = %v, want %v", built, want)
 	}
 	// Removing one recipe leaves the other's folders.
-	if _, err := f.app.Remove(ctx, "both", ""); err != nil {
+	if _, err := f.app.RemoveRecipe("both", true); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if _, err := f.app.Pull(ctx, []string{"alone"}, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if _, err := f.app.Remove(ctx, "alone/com.example.base", "1.1.0"); err != nil {
+	if _, err := f.app.RemoveVersions("alone/com.example.base", "1.1.0"); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if _, err := os.Stat(filepath.Join(f.app.Layout.Packages(), "alone")); !os.IsNotExist(err) {
@@ -515,10 +515,10 @@ func TestDoctorNamesAPackageTheRecipeNoLongerHas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if msgs := problemMessages(problems); len(msgs) != 1 || !strings.Contains(msgs[0], "`vpmify remove mono/com.example.pkg`") {
+	if msgs := problemMessages(problems); len(msgs) != 1 || !strings.Contains(msgs[0], "`vpmify package remove --all mono/com.example.pkg`") {
 		t.Errorf("doctor = %v", msgs)
 	}
-	if _, err := f.app.Remove(ctx, "mono/com.example.pkg", ""); err != nil {
+	if _, err := f.app.RemoveVersions("mono/com.example.pkg", ""); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if problems, err := f.app.Doctor(false); err != nil || len(problems) != 0 {
@@ -603,13 +603,13 @@ func TestRemoveOfAPackageWithoutVersions(t *testing.T) {
 	if _, err := f.app.Add(ctx, f.writeFile("mono.json", recipe)); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if _, err := f.app.Remove(ctx, "mono/com.example.base", ""); err == nil || !strings.Contains(err.Error(), "no version of com.example.base is available") {
+	if _, err := f.app.RemoveVersions("mono/com.example.base", ""); err == nil || !strings.Contains(err.Error(), "no version of com.example.base is available") {
 		t.Errorf("before pull: err = %v", err)
 	}
 	if _, err := f.app.Pull(ctx, []string{"mono/com.example.pkg"}, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if _, err := f.app.Remove(ctx, "mono/com.example.base", ""); err == nil || !strings.Contains(err.Error(), "no version of com.example.base is available") {
+	if _, err := f.app.RemoveVersions("mono/com.example.base", ""); err == nil || !strings.Contains(err.Error(), "no version of com.example.base is available") {
 		t.Errorf("after pull: err = %v", err)
 	}
 }

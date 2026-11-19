@@ -372,19 +372,30 @@ func TestResults(t *testing.T) {
 		t.Errorf("pull = %+v", pulled)
 	}
 
-	removed, err := f.app.Remove(ctx, "kit", "1.1.0")
+	removed, err := f.app.RemoveVersions("kit", "1.1.0")
 	if err != nil {
 		t.Fatal(err, f.log)
 	}
 	wantRemoved := []Entry{{Recipe: "kit", Package: pkgName, Version: "1.1.0", Unity: "2021.3", Path: dir}}
-	if !reflect.DeepEqual(removed.Removed, wantRemoved) || removed.RecipeRemoved || !reflect.DeepEqual(removed.Unregistered, []string{dir}) {
+	if !reflect.DeepEqual(removed.Removed, wantRemoved) || !removed.Applied || removed.RecipeRemoved || !reflect.DeepEqual(removed.Unregistered, []string{dir}) {
 		t.Errorf("remove = %+v", removed)
 	}
-	removed, err = f.app.Remove(ctx, "kit", "")
+	// Without apply, RemoveRecipe only tells what it would remove.
+	preview, err := f.app.RemoveRecipe("kit", false)
 	if err != nil {
 		t.Fatal(err, f.log)
 	}
-	if len(removed.Removed) != 1 || !removed.RecipeRemoved {
+	if len(preview.Removed) != 1 || preview.Applied || preview.RecipeRemoved {
+		t.Errorf("remove kit without apply = %+v", preview)
+	}
+	if got := f.available(); len(got) != 1 {
+		t.Errorf("available after the preview = %v", got)
+	}
+	removed, err = f.app.RemoveRecipe("kit", true)
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	if len(removed.Removed) != 1 || !removed.Applied || !removed.RecipeRemoved {
 		t.Errorf("remove kit = %+v", removed)
 	}
 }
@@ -451,10 +462,6 @@ func TestVersions(t *testing.T) {
 			"1.1.0 2021.3 available=false",
 			"1.0.0 2021.3 available=true",
 		}},
-		{"available", VersionsOptions{Available: true}, []string{
-			"2.0.0 6000.2 available=true",
-			"1.0.0 2021.3 available=true",
-		}},
 		// unity is the oldest Unity a version supports.
 		{"unity 2022.3", VersionsOptions{Unity: "2022.3.22f1"}, []string{
 			"1.1.0 2021.3 available=false",
@@ -493,7 +500,7 @@ func TestPullRefusesAVersionListOfAnotherRecipe(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(f.app.Layout.Recipes(), "kit.json"), []byte(edited), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.app.Pull(ctx, nil, PullOptions{}); err == nil || !strings.Contains(err.Error(), "vpmify update kit") {
+	if _, err := f.app.Pull(ctx, nil, PullOptions{}); err == nil || !strings.Contains(err.Error(), "vpmify recipe update kit") {
 		t.Errorf("err = %v", err)
 	}
 	if _, err := f.app.Versions("kit", VersionsOptions{}); err == nil {
@@ -537,11 +544,11 @@ func TestBrokenVersionListPointsAtUpdate(t *testing.T) {
 	if err := os.WriteFile(f.app.Layout.Index("kit"), []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.app.Pull(ctx, nil, PullOptions{}); err == nil || !strings.Contains(err.Error(), "run `vpmify update kit`") {
+	if _, err := f.app.Pull(ctx, nil, PullOptions{}); err == nil || !strings.Contains(err.Error(), "run `vpmify recipe update kit`") {
 		t.Errorf("pull: err = %v", err)
 	}
 	problems, err := f.app.Doctor(false)
-	if err != nil || len(problems) != 1 || !strings.Contains(problems[0].Message, "run `vpmify update kit`") {
+	if err != nil || len(problems) != 1 || !strings.Contains(problems[0].Message, "run `vpmify recipe update kit`") {
 		t.Errorf("doctor: problems = %v, err = %v", problemMessages(problems), err)
 	}
 	// update mends it.
@@ -589,7 +596,7 @@ func TestRemove(t *testing.T) {
 		t.Fatal(err, f.log)
 	}
 
-	if _, err := f.app.Remove(ctx, "kit", "1.0.0"); err != nil {
+	if _, err := f.app.RemoveVersions("kit", "1.0.0"); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if got, want := f.available(), []string{"2.0.0@6000.2"}; !reflect.DeepEqual(got, want) {
@@ -598,8 +605,29 @@ func TestRemove(t *testing.T) {
 	if _, err := os.Stat(f.app.Layout.PackageDir("kit", pkgName, "1.0.0")); !os.IsNotExist(err) {
 		t.Errorf("1.0.0 still in the store: %v", err)
 	}
+	if _, err := f.app.RemoveVersions("kit", "1.0.0"); err == nil || !strings.Contains(err.Error(), "version 1.0.0 is not available") {
+		t.Errorf("removing 1.0.0 again: err = %v", err)
+	}
 
-	if _, err := f.app.Remove(ctx, "kit", ""); err != nil {
+	// Removing every version leaves the recipe and its version list, so
+	// pull takes a version again without an update.
+	if _, err := f.app.RemoveVersions("kit", ""); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if got := f.available(); len(got) != 0 {
+		t.Errorf("placed = %v", got)
+	}
+	if _, err := f.app.RemoveVersions("kit", ""); err == nil || !strings.Contains(err.Error(), "no version is available") {
+		t.Errorf("removing every version again: err = %v", err)
+	}
+	if _, err := f.app.Pull(ctx, []string{"kit@1.0.0"}, PullOptions{}); err != nil {
+		t.Fatal(err, f.log)
+	}
+
+	if _, err := f.app.RemoveRecipe("kit/"+pkgName, true); err == nil {
+		t.Error("RemoveRecipe took a package")
+	}
+	if _, err := f.app.RemoveRecipe("kit", true); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if got := f.available(); len(got) != 0 {

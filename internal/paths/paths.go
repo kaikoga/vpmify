@@ -61,7 +61,7 @@ func (l Layout) PackageDir(id, name, version string) string {
 // Cache holds downloaded archives.
 func (l Layout) Cache() string { return filepath.Join(l.Home(), "cache") }
 
-// Index is the version list `vpmify update` keeps for recipe id.
+// Index is the version list `vpmify recipe update` keeps for recipe id.
 func (l Layout) Index(id string) string {
 	return filepath.Join(l.Home(), "index", id+".json")
 }
