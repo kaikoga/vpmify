@@ -48,7 +48,7 @@ func warudoRepo() *testutil.FakeGitHub {
 }
 
 func warudoRecipe(version, pkg string) string {
-	return `{"id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
+	return `{"vpmifyFormat": 1, "id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
   "tagVersion": {"match": "(\\d+)\\.(\\d+)\\.(\\d+)(?:\\.(\\d+))?", "version": "` + version + `"},
   "tags": ">=0.14.4000",
   "packages": [{"name": "com.example.pkg"` + pkg + `}]}]}`
@@ -96,7 +96,7 @@ func TestGitHubTagVersion(t *testing.T) {
 	// value: 0.15.2.9 is older than 0.15.2.10.
 	gh.Tag("0.15.2.9", map[string]string{"package.json": manifest("com.example.pkg", "0.15.2")})
 	gh.Tag("0.15.2.10", map[string]string{"package.json": manifest("com.example.pkg", "0.15.2")})
-	src = newSource(t, gh, `{"id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
+	src = newSource(t, gh, `{"vpmifyFormat": 1, "id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
   "tagVersion": {"match": "(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "version": "{1}.{2}.{3}"},
   "tags": ">=0.15.0",
   "packages": [{"name": "com.example.pkg", "versionFromTag": true}]}]}`)
@@ -132,7 +132,7 @@ func TestGitHubVersionFromTagInARangeOfTags(t *testing.T) {
 			"Pkg/package.json":  manifest("com.example.pkg", v.tag),
 		})
 	}
-	src := newSource(t, gh, `{"id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
+	src := newSource(t, gh, `{"vpmifyFormat": 1, "id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
   "packages": [{"name": "com.example.base", "path": "Base", "versionFromTag": {"tags": "<0.65.2"}},
     {"name": "com.example.pkg", "path": "Pkg"}]}]}`)
 	all, _, err := src.Releases(context.Background())
@@ -177,7 +177,7 @@ func TestGitHubReleases(t *testing.T) {
 	gh.Tag("Samples", map[string]string{"Assets/Pkg/package.json": manifest("com.example.pkg", "0.0.1")})
 
 	src := newSource(t, gh, `{
-  "id": "pkg",
+  "vpmifyFormat": 1, "id": "pkg",
   "sources": [{"type": "github", "url": "https://github.com/owner/repo.git", "tags": ">=0.9.0",
     "packages": [{"name": "com.example.pkg",
       "paths": [{"tags": ">=1.1.0", "path": "Packages/Pkg"}, {"tags": "<1.1.0", "path": "Assets/Pkg"}]}]}]
@@ -227,7 +227,7 @@ func TestGitHubOverlaysFollowTheTag(t *testing.T) {
 	gh.Tag("v1.0.0", map[string]string{"package.json": manifest("com.example.pkg", "1.0.0")})
 	gh.Tag("v1.1.0", map[string]string{"package.json": manifest("com.example.pkg", "3.0.0")})
 	const a, b = "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222"
-	recipeJSON := `{"id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
+	recipeJSON := `{"vpmifyFormat": 1, "id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
   "packages": [{"name": "com.example.pkg", "overlays": [
     {"tags": "<1.1.0", "path": "Sub", "url": "https://github.com/other/sub.git", "commit": "` + a + `"},
     {"tags": ">=1.1.0", "path": "Lib/Sub", "url": "https://github.com/other/sub", "commit": "` + b + `"}]}]}]}`
@@ -265,7 +265,7 @@ func TestGitHubSameTag(t *testing.T) {
 	})
 	// No base in this tag.
 	gh.Tag("v1.1.0", map[string]string{"Pkg/package.json": manifest("com.example.pkg", "1.1.0")})
-	src := newSource(t, gh, `{"id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
+	src := newSource(t, gh, `{"vpmifyFormat": 1, "id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
   "packages": [{"name": "com.example.base", "path": "Base"}, {"name": "com.example.pkg", "path": "Pkg"}]}]}`)
 	all, _, err := src.Releases(context.Background())
 	if err != nil {
@@ -308,7 +308,7 @@ func TestGitHubStableVersionComesFromAStableTag(t *testing.T) {
 		"Base/package.json": manifest("com.example.base", "2.0.1"),
 		"Pkg/package.json":  manifest("com.example.pkg", "1.0.0"),
 	})
-	src := newSource(t, gh, `{"id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
+	src := newSource(t, gh, `{"vpmifyFormat": 1, "id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
   "packages": [{"name": "com.example.base", "path": "Base"}, {"name": "com.example.pkg", "path": "Pkg"}]}]}`)
 	all, _, err := src.Releases(context.Background())
 	if err != nil {
@@ -330,7 +330,7 @@ func TestGitHubTagsRangeLimitsReads(t *testing.T) {
 		gh.Tag("v"+v, map[string]string{"package.json": manifest("com.example.pkg", v)})
 	}
 	src := newSource(t, gh, `{
-  "id": "pkg",
+  "vpmifyFormat": 1, "id": "pkg",
   "sources": [{"type": "github", "url": "https://github.com/owner/repo", "tags": ">=1.1.0", "packages": [{"name": "com.example.pkg"}]}]
 }`)
 	all, _, err := src.Releases(context.Background())

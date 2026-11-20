@@ -11,7 +11,7 @@ import (
 const warudoMatch = `(\\d+)\\.(\\d+)\\.(\\d+)(?:\\.(\\d+))?`
 
 func tagRecipe(version string) string {
-	return `{"id": "pkg", "sources": [{` + gitSourceHead + `,
+	return `{"vpmifyFormat": 1, "id": "pkg", "sources": [{` + gitSourceHead + `,
   "tagVersion": {"match": "` + warudoMatch + `", "version": "` + version + `"},
   "packages": [{"name": "com.example.pkg", "versionFromTag": true}]}]}`
 }
@@ -55,7 +55,7 @@ func TestTagVersionOf(t *testing.T) {
 	}
 
 	// An empty group is 0, as is one that took no part in the match.
-	s, _ := onlyPackage(t, `{"id": "pkg", "sources": [{`+gitSourceHead+`,
+	s, _ := onlyPackage(t, `{"vpmifyFormat": 1, "id": "pkg", "sources": [{`+gitSourceHead+`,
   "tagVersion": {"match": "(\\d+)\\.(\\d+)\\.(\\d+)\\.?(\\d*)", "version": "{1}.{2}.{3}{4}"},
   "packages": [{"name": "com.example.pkg"}]}]}`)
 	if v, _ := s.TagVersionOf("0.14.3"); v.String() != "0.14.30" {
@@ -79,10 +79,10 @@ func TestTagVersionRejects(t *testing.T) {
 		{"padding too wide", tagRecipe("{1}.{2}.{3}{4:09999999999}"), "at most 18"},
 		{"open brace", tagRecipe("{1}.{2"), "without '}'"},
 		{"close brace", tagRecipe("1}.2"), "without '{'"},
-		{"bad match", `{"id": "pkg", "sources": [{` + gitSourceHead + `, "tagVersion": {"match": "(", "version": "1.0.0"}, "packages": [{"name": "p"}]}]}`, "match:"},
-		{"no version", `{"id": "pkg", "sources": [{` + gitSourceHead + `, "tagVersion": {"match": ".*"}, "packages": [{"name": "p"}]}]}`, "needs match and version"},
-		{"npm with tagVersion", `{"id": "pkg", "sources": [{"type": "npm", "registry": "https://r", "tagVersion": {"match": ".*", "version": "1.0.0"}, "packages": [{"name": "p"}]}]}`, "takes no url, tagVersion"},
-		{"npm with versionFromTag", `{"id": "pkg", "sources": [{"type": "npm", "registry": "https://r", "packages": [{"name": "p", "versionFromTag": true}]}]}`, "versionFromTag"},
+		{"bad match", `{"vpmifyFormat": 1, "id": "pkg", "sources": [{` + gitSourceHead + `, "tagVersion": {"match": "(", "version": "1.0.0"}, "packages": [{"name": "p"}]}]}`, "match:"},
+		{"no version", `{"vpmifyFormat": 1, "id": "pkg", "sources": [{` + gitSourceHead + `, "tagVersion": {"match": ".*"}, "packages": [{"name": "p"}]}]}`, "needs match and version"},
+		{"npm with tagVersion", `{"vpmifyFormat": 1, "id": "pkg", "sources": [{"type": "npm", "registry": "https://r", "tagVersion": {"match": ".*", "version": "1.0.0"}, "packages": [{"name": "p"}]}]}`, "takes no url, tagVersion"},
+		{"npm with versionFromTag", `{"vpmifyFormat": 1, "id": "pkg", "sources": [{"type": "npm", "registry": "https://r", "packages": [{"name": "p", "versionFromTag": true}]}]}`, "versionFromTag"},
 	}
 	for _, c := range cases {
 		_, err := Parse([]byte(c.recipe))
@@ -138,7 +138,6 @@ func TestVersionFromTagRejects(t *testing.T) {
 		{"empty tags", `{"tags": ""}`, "needs tags"},
 		{"no tags", `{}`, "needs tags"},
 		{"bad range", `{"tags": "newer"}`, "versionFromTag.tags"},
-		{"unknown field", `{"tags": "<1.0.0", "version": "{1}"}`, "versionFromTag"},
 		{"not true or an object", `"<1.0.0"`, "versionFromTag"},
 	}
 	for _, c := range cases {
@@ -147,7 +146,7 @@ func TestVersionFromTagRejects(t *testing.T) {
 			t.Errorf("%s: err = %v, want it to mention %q", c.name, err, c.want)
 		}
 	}
-	npm := `{"id": "pkg", "sources": [{"type": "npm", "registry": "https://r", "packages": [{"name": "p", "versionFromTag": {"tags": "<1.0.0"}}]}]}`
+	npm := `{"vpmifyFormat": 1, "id": "pkg", "sources": [{"type": "npm", "registry": "https://r", "packages": [{"name": "p", "versionFromTag": {"tags": "<1.0.0"}}]}]}`
 	if _, err := Parse([]byte(npm)); err == nil || !strings.Contains(err.Error(), "versionFromTag") {
 		t.Errorf("npm with a range: err = %v", err)
 	}
@@ -155,7 +154,7 @@ func TestVersionFromTagRejects(t *testing.T) {
 
 func TestTagVersionChangesTheListingKey(t *testing.T) {
 	base, _ := onlyPackage(t, gitRecipe(""))
-	rule, _ := onlyPackage(t, `{"id": "pkg", "sources": [{`+gitSourceHead+`,
+	rule, _ := onlyPackage(t, `{"vpmifyFormat": 1, "id": "pkg", "sources": [{`+gitSourceHead+`,
   "tagVersion": {"match": "`+warudoMatch+`", "version": "{1}.{2}.{3}{4:03}"},
   "packages": [{"name": "com.example.pkg"}]}]}`)
 	fromTag, _ := onlyPackage(t, tagRecipe("{1}.{2}.{3}{4:03}"))

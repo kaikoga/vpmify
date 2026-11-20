@@ -137,7 +137,7 @@ func jsonString(s string) string {
 // fields in extra (each starting with ", ").
 func npmRecipe(id, registry, name, extra string) string {
 	return `{
-  "id": "` + id + `",
+  "vpmifyFormat": 1, "id": "` + id + `",
   "sources": [{"type": "npm", "registry": "` + registry + `", "packages": [{"name": "` + name + `"` + extra + `}]}]
 }`
 }

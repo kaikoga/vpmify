@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -34,9 +35,20 @@ const (
 // available is not part of it: the user chooses that with each command
 // (kaikoga 2026-11-18).
 type Recipe struct {
+	// Format is the format the recipe is written in, which its writer
+	// declares. A file without it is not a recipe, and a recipe in a format
+	// newer than Format needs a newer Vpmify (kaikoga 2026-11-20).
+	Format  int       `json:"vpmifyFormat"`
 	ID      string    `json:"id"`
 	Sources []*Source `json:"sources"`
 }
+
+// Format is the newest recipe format this Vpmify reads. It goes up when a
+// recipe written for the new format would be built wrongly by a Vpmify that
+// does not know it, since fields Vpmify does not know are ignored without a
+// word (kaikoga 2026-11-20): they hold what a recipe may say beside what
+// Vpmify reads, such as "$schema".
+const Format = 1
 
 // Source says where packages come from.
 type Source struct {
@@ -174,13 +186,31 @@ func Parse(data []byte) (*Recipe, error) {
 	// Editors on Windows may save UTF-8 with a byte order mark, which
 	// encoding/json does not take.
 	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	var r Recipe
-	if err := dec.Decode(&r); err != nil {
-		if strings.Contains(err.Error(), `unknown field "source"`) {
-			return nil, fmt.Errorf("%w (recipes list their sources under \"sources\" since 2026-11-19; write the recipe in that form and add it again)", err)
+	// The format is read first, so that a recipe this Vpmify cannot read says
+	// so instead of failing on whatever the newer format changed.
+	var head struct {
+		Format *int `json:"vpmifyFormat"`
+	}
+	if err := json.Unmarshal(data, &head); err != nil {
+		var typeErr *json.UnmarshalTypeError
+		if !errors.As(err, &typeErr) {
+			return nil, err
 		}
+		if typeErr.Field != "vpmifyFormat" {
+			return nil, fmt.Errorf("not a Vpmify recipe: not a JSON object")
+		}
+		return nil, fmt.Errorf("vpmifyFormat must be a whole number")
+	}
+	switch {
+	case head.Format == nil:
+		return nil, fmt.Errorf("not a Vpmify recipe: it has no vpmifyFormat")
+	case *head.Format < 1:
+		return nil, fmt.Errorf("vpmifyFormat %d is not a format of Vpmify recipes", *head.Format)
+	case *head.Format > Format:
+		return nil, fmt.Errorf("the recipe is in format %d, and this Vpmify reads up to format %d: a newer Vpmify is needed", *head.Format, Format)
+	}
+	var r Recipe
+	if err := json.Unmarshal(data, &r); err != nil {
 		return nil, err
 	}
 	if err := r.check(); err != nil {

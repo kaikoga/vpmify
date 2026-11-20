@@ -14,7 +14,7 @@ const gitSourceHead = `"type": "github", "url": "https://github.com/owner/repo"`
 // gitRecipe returns a recipe with one GitHub source whose one package,
 // com.example.pkg, has the fields in pkg (each starting with ", ").
 func gitRecipe(pkg string) string {
-	return `{"id": "pkg", "sources": [{` + gitSourceHead + `, "packages": [{"name": "com.example.pkg"` + pkg + `}]}]}`
+	return `{"vpmifyFormat": 1, "id": "pkg", "sources": [{` + gitSourceHead + `, "packages": [{"name": "com.example.pkg"` + pkg + `}]}]}`
 }
 
 func mustParse(t *testing.T, s string) *Recipe {
@@ -86,10 +86,10 @@ func TestPathFor(t *testing.T) {
 
 func TestParseRejects(t *testing.T) {
 	npm := func(pkgs string) string {
-		return `{"id": "pkg", "sources": [{"type": "npm", "registry": "https://r", "packages": [` + pkgs + `]}]}`
+		return `{"vpmifyFormat": 1, "id": "pkg", "sources": [{"type": "npm", "registry": "https://r", "packages": [` + pkgs + `]}]}`
 	}
 	sameTag := func(name string) string {
-		return `{"id": "pkg", "sources": [{` + gitSourceHead + `, "packages": [{"name": "a"},
+		return `{"vpmifyFormat": 1, "id": "pkg", "sources": [{` + gitSourceHead + `, "packages": [{"name": "a"},
   {"name": "b", "overrides": [{"set": {"vpmDependencies": {"` + name + `": "={sameTag}"}}}]}]}]}`
 	}
 	cases := []struct {
@@ -101,16 +101,22 @@ func TestParseRejects(t *testing.T) {
 		{"bad folder", gitRecipe(`, "paths": [{"path": "../A"}]`), "bad folder"},
 		{"paths without path", gitRecipe(`, "paths": [{"tags": ">=1.0.0"}]`), `has no "path"`},
 		{"npm with path", npm(`{"name": "p", "path": "A"}`), "take no path"},
-		{"no sources", `{"id": "pkg", "sources": []}`, "no sources"},
+		{"no sources", `{"vpmifyFormat": 1, "id": "pkg", "sources": []}`, "no sources"},
 		// Where a source comes from is checked when the recipe is read, so
 		// that add saves no recipe update cannot read.
-		{"source elsewhere than GitHub", `{"id": "pkg", "sources": [{"type": "github", "url": "https://gitlab.com/owner/repo", "packages": [{"name": "p"}]}]}`, "want https://github.com/<owner>/<repo>"},
-		{"registry that is no URL", `{"id": "pkg", "sources": [{"type": "npm", "registry": "ftp://r", "packages": [{"name": "p"}]}]}`, "not an http(s) URL"},
-		{"no packages", `{"id": "pkg", "sources": [{` + gitSourceHead + `, "packages": []}]}`, "no packages"},
-		{"twice in a recipe", `{"id": "pkg", "sources": [{` + gitSourceHead + `, "packages": [{"name": "p"}]},
+		{"source elsewhere than GitHub", `{"vpmifyFormat": 1, "id": "pkg", "sources": [{"type": "github", "url": "https://gitlab.com/owner/repo", "packages": [{"name": "p"}]}]}`, "want https://github.com/<owner>/<repo>"},
+		{"registry that is no URL", `{"vpmifyFormat": 1, "id": "pkg", "sources": [{"type": "npm", "registry": "ftp://r", "packages": [{"name": "p"}]}]}`, "not an http(s) URL"},
+		{"no packages", `{"vpmifyFormat": 1, "id": "pkg", "sources": [{` + gitSourceHead + `, "packages": []}]}`, "no packages"},
+		{"twice in a recipe", `{"vpmifyFormat": 1, "id": "pkg", "sources": [{` + gitSourceHead + `, "packages": [{"name": "p"}]},
   {"type": "npm", "registry": "https://r", "packages": [{"name": "p"}]}]}`, "comes twice"},
-		{"old form", `{"id": "pkg", "source": {"type": "npm", "registry": "https://r", "name": "p"}}`, `under "sources"`},
-		{"sameTag on another source", `{"id": "pkg", "sources": [{` + gitSourceHead + `, "packages": [{"name": "a"}]},
+		{"no format", `{"id": "pkg", "sources": [{"type": "npm", "registry": "https://r", "packages": [{"name": "p"}]}]}`, "not a Vpmify recipe"},
+		{"not an object", `[]`, "not a Vpmify recipe"},
+		{"format that is no number", `{"vpmifyFormat": "1", "id": "pkg", "sources": []}`, "whole number"},
+		{"format zero", `{"vpmifyFormat": 0, "id": "pkg", "sources": []}`, "not a format"},
+		// A newer format is refused before anything else is read, so the
+		// recipe's writer may have used what this Vpmify would get wrong.
+		{"newer format", `{"vpmifyFormat": 2, "id": "PKG", "sources": 3}`, "a newer Vpmify is needed"},
+		{"sameTag on another source", `{"vpmifyFormat": 1, "id": "pkg", "sources": [{` + gitSourceHead + `, "packages": [{"name": "a"}]},
   {` + gitSourceHead + `, "packages": [{"name": "b", "overrides": [{"set": {"vpmDependencies": {"a": "={sameTag}"}}}]}]}]}`, "same source"},
 		{"sameTag on itself", sameTag("b"), "itself"},
 		{"sameTag on npm", npm(`{"name": "a"}, {"name": "b", "overrides": [{"set": {"vpmDependencies": {"a": "={sameTag}"}}}]}`), "needs a source with tags"},
@@ -123,6 +129,21 @@ func TestParseRejects(t *testing.T) {
 	}
 	if _, err := Parse([]byte(sameTag("a"))); err != nil {
 		t.Errorf("sameTag on a package of the same source: %v", err)
+	}
+}
+
+// Fields Vpmify does not know are ignored at every level (kaikoga
+// 2026-11-20).
+func TestParseIgnoresUnknownFields(t *testing.T) {
+	r, err := Parse([]byte(`{"$schema": "https://example.com/recipe.schema.json", "vpmifyFormat": 1, "id": "pkg", "comment": "why",
+  "sources": [{` + gitSourceHead + `, "comment": 1, "packages": [{"name": "p", "comment": [], "versionFromTag": {"tags": "<1.0.0", "comment": ""},
+    "paths": [{"path": "A", "comment": ""}], "overrides": [{"set": {"unity": "2022.3"}, "comment": ""}],
+    "overlays": [{"path": "Sub", "url": "https://github.com/owner/sub", "commit": "` + commitA + `", "comment": ""}]}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := r.Sources[0].Packages[0]; !p.TakesTagVersion(version(t, "0.9.0")) || len(p.OverridesFor(version(t, "1.0.0"))) != 1 {
+		t.Errorf("package = %+v", p)
 	}
 }
 
@@ -186,14 +207,14 @@ func TestListingKey(t *testing.T) {
 		t.Error("no overlays changed the key")
 	}
 	// So does another package in the source: update reads it too.
-	two := mustParse(t, `{"id": "pkg", "sources": [{`+gitSourceHead+`, "packages": [{"name": "com.example.pkg", "path": "A"}, {"name": "b"}]}]}`)
+	two := mustParse(t, `{"vpmifyFormat": 1, "id": "pkg", "sources": [{`+gitSourceHead+`, "packages": [{"name": "com.example.pkg", "path": "A"}, {"name": "b"}]}]}`)
 	if two.Sources[0].ListingKey() == base {
 		t.Error("another package kept the key")
 	}
 }
 
 func TestExpandedOverrides(t *testing.T) {
-	r := mustParse(t, `{"id": "pkg", "sources": [{`+gitSourceHead+`, "packages": [{"name": "a"}, {"name": "c"},
+	r := mustParse(t, `{"vpmifyFormat": 1, "id": "pkg", "sources": [{`+gitSourceHead+`, "packages": [{"name": "a"}, {"name": "c"},
   {"name": "com.example.pkg", "overrides": [
     {"set": {"displayName": "{version} stays", "vpmDependencies": {"a": ">={version}", "b": "={dependencies}", "c": ">={sameTag}"}}},
     {"versions": ">=2.0.0", "set": {"vpmDependencies": null}}
@@ -253,7 +274,7 @@ func TestExpandedOverrides(t *testing.T) {
 }
 
 func TestFingerprint(t *testing.T) {
-	r := mustParse(t, `{"id": "pkg", "sources": [{`+gitSourceHead+`, "packages": [{"name": "a"}, {"name": "b"}]}]}`)
+	r := mustParse(t, `{"vpmifyFormat": 1, "id": "pkg", "sources": [{`+gitSourceHead+`, "packages": [{"name": "a"}, {"name": "b"}]}]}`)
 	s := r.Sources[0]
 	_, a := r.Package("a")
 	base := s.Fingerprint(a, "A", "commit1", nil, nil)
@@ -264,7 +285,7 @@ func TestFingerprint(t *testing.T) {
 		t.Error("another expanded {sameTag} kept the fingerprint")
 	}
 	// Another package of the source does not change it.
-	other := mustParse(t, `{"id": "pkg", "sources": [{`+gitSourceHead+`, "packages": [{"name": "a"}, {"name": "b", "path": "B"}]}]}`)
+	other := mustParse(t, `{"vpmifyFormat": 1, "id": "pkg", "sources": [{`+gitSourceHead+`, "packages": [{"name": "a"}, {"name": "b", "path": "B"}]}]}`)
 	if other.Sources[0].Fingerprint(a, "A", "commit1", nil, nil) != base {
 		t.Error("a sibling changed the fingerprint")
 	}
@@ -322,7 +343,7 @@ func TestOverlaysRejected(t *testing.T) {
 		{"bad tags", with(overlay("nonsense", "Sub", commitA)), "overlays[0].tags"},
 		{"same folder", with(overlay(">=1.0.0", "Sub", commitA), overlay("<=1.0.0", "Sub", commitB)), "both fill"},
 		{"nested folder", with(overlay("", "Sub", commitA), overlay("", "Sub/Inner", commitB)), "both fill"},
-		{"npm", `{"id": "pkg", "sources": [{"type": "npm", "registry": "https://r", "packages": [{"name": "p", "overlays": [` + overlay("", "Sub", commitA) + `]}]}]}`, "take no path, paths, versionFromTag or overlays"},
+		{"npm", `{"vpmifyFormat": 1, "id": "pkg", "sources": [{"type": "npm", "registry": "https://r", "packages": [{"name": "p", "overlays": [` + overlay("", "Sub", commitA) + `]}]}]}`, "take no path, paths, versionFromTag or overlays"},
 	}
 	for _, c := range cases {
 		_, err := Parse([]byte(c.recipe))

@@ -1,7 +1,6 @@
 package recipe
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -211,9 +210,7 @@ func (v *VersionFromTag) UnmarshalJSON(data []byte) error {
 	var obj struct {
 		Tags string `json:"tags"`
 	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&obj); err != nil {
+	if err := json.Unmarshal(data, &obj); err != nil {
 		return fmt.Errorf(`versionFromTag: want true or {"tags": "<range>"}: %w`, err)
 	}
 	if obj.Tags == "" {
