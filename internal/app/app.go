@@ -98,8 +98,9 @@ func (a *App) recipeIDs() ([]string, error) {
 // yet, so that the GUI can show what a link would add before the user
 // agrees to it.
 type Draft struct {
-	ID       string         `json:"id"`
-	Packages []DraftPackage `json:"packages"`
+	ID          string         `json:"id"`
+	DisplayName string         `json:"displayName,omitempty"`
+	Packages    []DraftPackage `json:"packages"`
 	// Origin is the file path or URL the recipe was read from.
 	Origin string `json:"origin"`
 	// Replaces is true when the user already has a recipe with this id.
@@ -138,12 +139,13 @@ func (a *App) readRecipeRef(ctx context.Context, ref string) (Draft, error) {
 		return Draft{}, fmt.Errorf("%s: %w", ref, err)
 	}
 	d := Draft{
-		ID:       r.ID,
-		Packages: []DraftPackage{},
-		Origin:   origin,
-		Replaces: fsutil.Exists(a.recipePath(r.ID)),
-		recipe:   r,
-		data:     data,
+		ID:          r.ID,
+		DisplayName: r.DisplayName,
+		Packages:    []DraftPackage{},
+		Origin:      origin,
+		Replaces:    fsutil.Exists(a.recipePath(r.ID)),
+		recipe:      r,
+		data:        data,
 	}
 	for _, s := range r.Sources {
 		for _, p := range s.Packages {
@@ -1442,8 +1444,9 @@ func (a *App) List(ids ...string) (*ListResult, error) {
 
 // RecipeInfo is one of the user's recipes.
 type RecipeInfo struct {
-	ID       string   `json:"id"`
-	Packages []string `json:"packages"`
+	ID          string   `json:"id"`
+	DisplayName string   `json:"displayName,omitempty"`
+	Packages    []string `json:"packages"`
 	// Origin is the file path or URL the recipe was added from.
 	Origin string `json:"origin,omitempty"`
 	// Problem says why the recipe or its version lists cannot be used, such
@@ -1470,6 +1473,7 @@ func (a *App) Recipes() ([]RecipeInfo, error) {
 		}
 		r, err := a.loadRecipe(id)
 		if err == nil {
+			info.DisplayName = r.DisplayName
 			info.Packages = r.Names()
 			_, err = a.loadLists(r)
 		}

@@ -39,9 +39,16 @@ type Recipe struct {
 	// Format is the format the recipe is written in, which its writer
 	// declares. A file without it is not a recipe, and a recipe in a format
 	// newer than Format needs a newer Vpmify (kaikoga 2026-11-20).
-	Format  int       `json:"vpmifyFormat"`
-	ID      string    `json:"id"`
-	Sources []*Source `json:"sources"`
+	Format int `json:"vpmifyFormat"`
+	// ID names the recipe in commands and in the store. It is in reverse
+	// domain form, with the domain of whoever writes the recipe, as the ids
+	// of VPM repositories are (kaikoga 2026-11-20); Vpmify does not check
+	// the form.
+	ID string `json:"id"`
+	// DisplayName is the name people read, as package.json has one beside
+	// its name.
+	DisplayName string    `json:"displayName,omitempty"`
+	Sources     []*Source `json:"sources"`
 }
 
 // Format is the newest recipe format this Vpmify reads. It goes up when a

@@ -1,6 +1,7 @@
 {
   "vpmifyFormat": 1,
-  "id": "univrm",
+  "id": "net.kaikoga.vpmify.univrm",
+  "displayName": "UniVRM",
   "sources": [
     {
       "type": "github",

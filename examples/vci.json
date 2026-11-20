@@ -1,6 +1,7 @@
 {
   "vpmifyFormat": 1,
-  "id": "vci",
+  "id": "net.kaikoga.vpmify.vci",
+  "displayName": "VCI",
   "sources": [
     {
       "type": "github",

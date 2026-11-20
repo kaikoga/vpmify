@@ -177,8 +177,9 @@ func TestExamplesParse(t *testing.T) {
 			t.Error(err)
 			continue
 		}
-		if want := strings.TrimSuffix(filepath.Base(f), ".json"); r.ID != want {
-			t.Errorf("%s: id %q", f, r.ID)
+		// The examples are kaikoga's recipes, named after their files.
+		if want := "net.kaikoga.vpmify." + strings.TrimSuffix(filepath.Base(f), ".json"); r.ID != want || r.DisplayName == "" {
+			t.Errorf("%s: id %q, displayName %q", f, r.ID, r.DisplayName)
 		}
 	}
 }
