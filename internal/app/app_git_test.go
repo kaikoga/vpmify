@@ -182,6 +182,52 @@ func TestPullAddsTheDependencyItWrites(t *testing.T) {
 	}
 }
 
+// An onDemand package is not chosen by a pull that names no package, with
+// --all either: it comes as a dependency, or when the user names it or a
+// version (kaikoga 2026-11-20).
+func TestPullLeavesOnDemandPackagesToDependenciesAndNames(t *testing.T) {
+	f := newFixture(t)
+	gh := monorepo("1.0.0", "1.1.0")
+	f.app.Client.HTTP.Transport = gh
+	ctx := context.Background()
+	pull := func(opt PullOptions, args ...string) []string {
+		t.Helper()
+		res, err := f.app.Pull(ctx, args, opt)
+		if err != nil {
+			t.Fatal(err, f.log)
+		}
+		built := []string{}
+		for _, b := range res.Built {
+			built = append(built, fmt.Sprintf("%s %s %s %v", b.Recipe, b.Package, b.Version, b.Dependency))
+		}
+		return built
+	}
+	base := gitPackage("com.example.base", "Packages/Base", `, "onDemand": true`)
+	if _, err := f.app.Add(ctx,
+		f.writeFile("mono.json", gitRecipe("mono", "", gitPackage("com.example.pkg", "Packages/Pkg", ""), base)),
+		f.writeFile("dep.json", gitRecipe("dep", "", gitPackage("com.example.pkg", "Packages/Pkg", pkgNeedsBase), base))); err != nil {
+		t.Fatal(err, f.log)
+	}
+
+	// Nothing depends on base in mono: it is left, with --all too.
+	if got, want := pull(PullOptions{All: true}, "mono"), []string{"mono com.example.pkg 1.0.0 false", "mono com.example.pkg 1.1.0 false"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("pull --all mono built %v, want %v", got, want)
+	}
+	// In dep the newest pkg depends on base, which comes as its dependency
+	// while no recipe has made it available.
+	if got, want := pull(PullOptions{}, "dep"), []string{"dep com.example.pkg 1.1.0 false", "dep com.example.base 1.1.0 true"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("pull dep built %v, want %v", got, want)
+	}
+	// Naming the package chooses from it, and a version named for the recipe
+	// takes every package that has it.
+	if got, want := pull(PullOptions{}, "mono/com.example.base"), []string{"mono com.example.base 1.1.0 false"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("pull mono/com.example.base built %v, want %v", got, want)
+	}
+	if got, want := pull(PullOptions{}, "mono@1.0.0"), []string{"mono com.example.base 1.0.0 false"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("pull mono@1.0.0 built %v, want %v", got, want)
+	}
+}
+
 func TestPullFailsWhenTheDependencyCannotBeAdded(t *testing.T) {
 	f := newFixture(t)
 	gh := monorepo("1.0.0", "1.1.0")

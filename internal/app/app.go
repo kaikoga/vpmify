@@ -479,8 +479,8 @@ type PullOptions struct {
 // Pull converts versions of the named recipes (all recipes when args is
 // empty) from their version lists into the store, and registers every
 // available version with ALCOM, which makes them available. It adds the
-// newest version of each package (of the package "<id>/<name>" names),
-// whatever Unity it needs, every version with opt.All, and
+// newest version of each package that is not onDemand (of the package
+// "<id>/<name>" names), whatever Unity it needs, every version with opt.All, and
 // "<id>@<version>" names one more of every package that has it
 // ("<id>/<name>@<version>" of that package). The named recipes' available
 // versions that the recipe now builds differently are built again; other
@@ -631,9 +631,9 @@ type pkgVersion struct {
 // pullRequest says which versions pullRecipe adds. The zero value adds
 // none, and only builds available versions again when they need it.
 type pullRequest struct {
-	// choose adds the newest version, or every version with all, of every
-	// package when whole is true and of the
-	// packages in only otherwise.
+	// choose adds the newest version, or every version with all, of the
+	// packages in only, and when whole is true of every package that is not
+	// onDemand.
 	choose, all bool
 	whole       bool
 	only        map[string]bool
@@ -641,8 +641,8 @@ type pullRequest struct {
 	extra []pkgVersion
 }
 
-func (req pullRequest) chooses(name string) bool {
-	return req.choose && (req.whole || req.only[name])
+func (req pullRequest) chooses(p *recipe.Package) bool {
+	return req.choose && (req.only[p.Name] || req.whole && !p.OnDemand)
 }
 
 // pullRecipe makes the versions req asks for from recipe id's version lists
@@ -727,7 +727,7 @@ func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pu
 	}
 	built := 0
 	for _, l := range lists {
-		n, err := a.pullPackage(ctx, st, id, l, req.chooses(l.pkg.Name), req.all, req.choose, extra[l.pkg.Name], fresh, res)
+		n, err := a.pullPackage(ctx, st, id, l, req.chooses(l.pkg), req.all, req.choose, extra[l.pkg.Name], fresh, res)
 		built += n
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", l.pkg.Name, err))

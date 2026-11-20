@@ -96,6 +96,12 @@ type Package struct {
 	// Versions and Prerelease say which versions the recipe can convert.
 	Versions   string `json:"versions,omitempty"`
 	Prerelease bool   `json:"prerelease,omitempty"`
+	// OnDemand keeps the package out of what a pull chooses when the user
+	// names no package, so that ALCOM does not list a package upstream no
+	// longer releases beside the ones it does (UniVRM's com.vrmc.vrmshaders).
+	// Its versions still come when an available version depends on them, or
+	// when the user names the package or a version (kaikoga 2026-11-20).
+	OnDemand bool `json:"onDemand,omitempty"`
 	// VersionFromTag makes the version of the tag the package's version, in
 	// place of the one its package.json has, for a repository whose
 	// package.json does not tell its releases apart (Warudo-Mod-Tool keeps

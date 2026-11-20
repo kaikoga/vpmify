@@ -49,7 +49,8 @@ available versions, which ALCOM lists as user packages:
                                convert versions from the version lists and
                                register them with ALCOM, which makes them
                                available: the newest version of each package
-                               (of the one named after "/"), every
+                               (of the one named after "/"; a package the
+                               recipe marks onDemand only when named), every
                                version with --all, and each @<version> named
                                (of every package that has it, without "/");
                                --refetch also downloads and builds every
