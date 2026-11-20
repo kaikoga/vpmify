@@ -591,8 +591,11 @@ var (
 	placeholders       = map[string]bool{
 		// The package's own version, for packages released in lockstep.
 		"{version}": true,
-		// The version the upstream package.json's UPM "dependencies" gives
-		// the same package, for a dependency whose numbers differ.
+		// The version the package's UPM "dependencies" give the same package,
+		// for a dependency whose numbers differ: the upstream package.json's,
+		// or what the recipe's overrides set in their place, so that a recipe
+		// that corrects a UPM dependency writes the version once (kaikoga
+		// 2026-11-20).
 		"{dependencies}": true,
 		// The version the same package has in the same tag, for packages of
 		// one repository whose numbers differ and whose UPM dependencies
@@ -632,14 +635,29 @@ func checkVPMDependencies(raw json.RawMessage, tagged bool, self string, sibling
 }
 
 // ExpandedOverridesFor returns OverridesFor(v) with the placeholders in
-// vpmDependencies filled in: from v, from upstream, the UPM "dependencies"
-// of version v, and from sameTag, the versions of the source's other
-// packages in the tag v was taken from that can be made available. A
-// placeholder that cannot be filled in is an error, and the version cannot
-// be converted.
+// vpmDependencies filled in: from v, from the UPM "dependencies" of version
+// v, which are upstream unless an override sets the field, and from sameTag,
+// the versions of the source's other packages in the tag v was taken from
+// that can be made available. A placeholder that cannot be filled in is an
+// error, and the version cannot be converted.
 func (p *Package) ExpandedOverridesFor(v semver.Version, upstream, sameTag map[string]string) ([]map[string]json.RawMessage, error) {
+	sets := p.OverridesFor(v)
+	// {dependencies} reads the field as package.json has it once every
+	// override is applied, wherever in the overrides it is set.
+	for _, set := range sets {
+		raw, ok := set["dependencies"]
+		if !ok {
+			continue
+		}
+		// null removes the field, and what is not an object of version
+		// strings names no version.
+		upstream = nil
+		if err := json.Unmarshal(raw, &upstream); err != nil {
+			upstream = nil
+		}
+	}
 	var out []map[string]json.RawMessage
-	for _, set := range p.OverridesFor(v) {
+	for _, set := range sets {
 		raw, ok := set["vpmDependencies"]
 		if !ok || string(raw) == "null" {
 			out = append(out, set)
@@ -653,7 +671,7 @@ func (p *Package) ExpandedOverridesFor(v semver.Version, upstream, sameTag map[s
 			if strings.Contains(value, "{dependencies}") {
 				dep, ok := upstream[name]
 				if !ok {
-					return nil, fmt.Errorf("vpmDependencies %s uses {dependencies}, but the upstream package.json has no UPM dependency on %s", name, name)
+					return nil, fmt.Errorf("vpmDependencies %s uses {dependencies}, but package.json has no UPM dependency on %s", name, name)
 				}
 				value = strings.ReplaceAll(value, "{dependencies}", dep)
 			}

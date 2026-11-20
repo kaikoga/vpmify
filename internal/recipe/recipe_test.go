@@ -221,6 +221,27 @@ func TestExpandedOverrides(t *testing.T) {
 		t.Errorf("2.0.0: the first set still applies, so {dependencies} has nothing to read: %s", sets)
 	}
 
+	// {dependencies} reads "dependencies" as the overrides leave it, wherever
+	// they set it: a later override corrects b for 1.x, and removes the field
+	// for 3.x.
+	_, p = onlyPackage(t, gitRecipe(`, "overrides": [
+    {"set": {"vpmDependencies": {"b": "={dependencies}"}}},
+    {"versions": "<2.0.0", "set": {"dependencies": {"b": "0.3.2"}}},
+    {"versions": ">=3.0.0", "set": {"dependencies": null}}
+  ]`))
+	for _, c := range []struct{ version, want string }{{"1.2.0", "=0.3.2"}, {"2.0.0", "=0.3.0"}} {
+		sets, err := p.ExpandedOverridesFor(version(t, c.version), map[string]string{"b": "0.3.0"}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := string(sets[0]["vpmDependencies"]); got != `{"b":"`+c.want+`"}` {
+			t.Errorf("%s: vpmDependencies = %s, want b %s", c.version, got, c.want)
+		}
+	}
+	if _, err := p.ExpandedOverridesFor(version(t, "3.0.0"), map[string]string{"b": "0.3.0"}, nil); err == nil || !strings.Contains(err.Error(), "no UPM dependency on b") {
+		t.Errorf("3.0.0: err = %v", err)
+	}
+
 	for _, bad := range []string{
 		`{"vpmDependencies": {"a": ">={self}"}}`,
 		`{"vpmDependencies": ["a"]}`,
