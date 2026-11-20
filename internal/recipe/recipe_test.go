@@ -102,6 +102,10 @@ func TestParseRejects(t *testing.T) {
 		{"paths without path", gitRecipe(`, "paths": [{"tags": ">=1.0.0"}]`), `has no "path"`},
 		{"npm with path", npm(`{"name": "p", "path": "A"}`), "take no path"},
 		{"no sources", `{"id": "pkg", "sources": []}`, "no sources"},
+		// Where a source comes from is checked when the recipe is read, so
+		// that add saves no recipe update cannot read.
+		{"source elsewhere than GitHub", `{"id": "pkg", "sources": [{"type": "github", "url": "https://gitlab.com/owner/repo", "packages": [{"name": "p"}]}]}`, "want https://github.com/<owner>/<repo>"},
+		{"registry that is no URL", `{"id": "pkg", "sources": [{"type": "npm", "registry": "ftp://r", "packages": [{"name": "p"}]}]}`, "not an http(s) URL"},
 		{"no packages", `{"id": "pkg", "sources": [{` + gitSourceHead + `, "packages": []}]}`, "no packages"},
 		{"twice in a recipe", `{"id": "pkg", "sources": [{` + gitSourceHead + `, "packages": [{"name": "p"}]},
   {"type": "npm", "registry": "https://r", "packages": [{"name": "p"}]}]}`, "comes twice"},
@@ -119,6 +123,19 @@ func TestParseRejects(t *testing.T) {
 	}
 	if _, err := Parse([]byte(sameTag("a"))); err != nil {
 		t.Errorf("sameTag on a package of the same source: %v", err)
+	}
+}
+
+func TestGitHubRepo(t *testing.T) {
+	for _, ok := range []string{"https://github.com/a/b", "https://github.com/a/b.git", "https://github.com/a/b/"} {
+		if o, r, err := GitHubRepo(ok); err != nil || o != "a" || r != "b" {
+			t.Errorf("%s: %s %s %v", ok, o, r, err)
+		}
+	}
+	for _, bad := range []string{"http://github.com/a/b", "https://gitlab.com/a/b", "https://github.com/a", "https://github.com/a/b/c", "git@github.com:a/b.git"} {
+		if _, _, err := GitHubRepo(bad); err == nil {
+			t.Errorf("%s accepted", bad)
+		}
 	}
 }
 
@@ -278,6 +295,7 @@ func TestOverlaysRejected(t *testing.T) {
 		{"root", with(overlay("", "/", commitA)), `needs a "path"`},
 		{"outside", with(overlay("", "../Sub", commitA)), "bad folder"},
 		{"no url", with(`{"path": "Sub", "commit": "` + commitA + `"}`), "needs url"},
+		{"elsewhere than GitHub", with(`{"path": "Sub", "url": "https://gitlab.com/owner/sub", "commit": "` + commitA + `"}`), "overlays[0].url"},
 		{"short commit", with(overlay("", "Sub", "1111111111")), "40 lowercase hex"},
 		{"resolve", with(`{"path": "Sub", "resolve": "submodule"}`), "not supported yet"},
 		{"bad tags", with(overlay("nonsense", "Sub", commitA)), "overlays[0].tags"},

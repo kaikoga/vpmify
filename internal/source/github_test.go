@@ -248,15 +248,6 @@ func TestGitHubOverlaysFollowTheTag(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("overlays = %q, want %q", got, want)
 	}
-
-	// An overlay from elsewhere than GitHub is refused before anything is read.
-	r, err := recipe.Parse([]byte(strings.Replace(recipeJSON, "https://github.com/other/sub.git", "https://gitlab.com/other/sub", 1)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := NewGitHub(r.Sources[0], fetch.NewClient("vpmify-test"), t.TempDir()); err == nil || !strings.Contains(err.Error(), "overlays[0]") {
-		t.Errorf("err = %v", err)
-	}
 }
 
 func TestGitHubSameTag(t *testing.T) {
@@ -374,18 +365,5 @@ func TestParseRefAdvertisementPeelsAnnotatedTags(t *testing.T) {
 	}
 	if _, err := parseRefAdvertisement([]byte("zzzz")); err == nil {
 		t.Error("bad length accepted")
-	}
-}
-
-func TestParseGitHubURL(t *testing.T) {
-	for _, ok := range []string{"https://github.com/a/b", "https://github.com/a/b.git", "https://github.com/a/b/"} {
-		if o, r, err := parseGitHubURL(ok); err != nil || o != "a" || r != "b" {
-			t.Errorf("%s: %s %s %v", ok, o, r, err)
-		}
-	}
-	for _, bad := range []string{"http://github.com/a/b", "https://gitlab.com/a/b", "https://github.com/a", "https://github.com/a/b/c", "git@github.com:a/b.git"} {
-		if _, _, err := parseGitHubURL(bad); err == nil {
-			t.Errorf("%s accepted", bad)
-		}
 	}
 }

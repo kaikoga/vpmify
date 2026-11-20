@@ -68,7 +68,7 @@ type GitHubPackage struct {
 
 // NewGitHub returns the upstream of a github recipe source.
 func NewGitHub(s *recipe.Source, client *fetch.Client, cacheDir string) (*GitHub, error) {
-	owner, repo, err := parseGitHubURL(s.URL)
+	owner, repo, err := recipe.GitHubRepo(s.URL)
 	if err != nil {
 		return nil, err
 	}
@@ -78,11 +78,6 @@ func NewGitHub(s *recipe.Source, client *fetch.Client, cacheDir string) (*GitHub
 	}
 	var pkgs []GitHubPackage
 	for _, p := range s.Packages {
-		for i, o := range p.Overlays {
-			if _, _, err := parseGitHubURL(o.URL); err != nil {
-				return nil, fmt.Errorf("package %s: overlays[%d]: %w", p.Name, i, err)
-			}
-		}
 		pkgs = append(pkgs, GitHubPackage{Name: p.Name, PathFor: p.PathFor, VersionFromTag: p.TakesTagVersion, OverlaysFor: p.OverlaysFor})
 	}
 	return &GitHub{
@@ -98,21 +93,6 @@ func NewGitHub(s *recipe.Source, client *fetch.Client, cacheDir string) (*GitHub
 		RawBase:            "https://raw.githubusercontent.com",
 		CodeloadBase:       "https://codeload.github.com",
 	}, nil
-}
-
-func parseGitHubURL(raw string) (owner, repo string, err error) {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return "", "", err
-	}
-	if u.Scheme != "https" || !strings.EqualFold(u.Host, "github.com") {
-		return "", "", fmt.Errorf("github source takes https://github.com/<owner>/<repo> only, not %q", raw)
-	}
-	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", fmt.Errorf("github url %q is not https://github.com/<owner>/<repo>", raw)
-	}
-	return parts[0], strings.TrimSuffix(parts[1], ".git"), nil
 }
 
 type tag struct {
@@ -375,7 +355,7 @@ func (g *GitHub) release(ctx context.Context, t tag, p GitHubPackage) (*Release,
 	var overlays []Overlay
 	if p.OverlaysFor != nil {
 		for _, o := range p.OverlaysFor(t.version) {
-			owner, repo, err := parseGitHubURL(o.URL)
+			owner, repo, err := recipe.GitHubRepo(o.URL)
 			if err != nil {
 				return nil, fmt.Errorf("tag %s: overlay %s: %w", t.name, o.Path, err)
 			}

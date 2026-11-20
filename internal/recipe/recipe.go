@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path"
 	"regexp"
@@ -223,12 +224,18 @@ func (s *Source) check() error {
 		if s.Registry == "" {
 			return fmt.Errorf("npm source needs registry")
 		}
+		if u, err := url.Parse(s.Registry); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+			return fmt.Errorf("registry %q is not an http(s) URL", s.Registry)
+		}
 		if s.URL != "" || s.TagPattern != "" || s.TagVersion != nil || s.Tags != "" {
 			return fmt.Errorf("npm source takes no url, tagPattern, tagVersion or tags")
 		}
 	case SourceGitHub:
 		if s.URL == "" {
 			return fmt.Errorf("github source needs url")
+		}
+		if _, _, err := GitHubRepo(s.URL); err != nil {
+			return fmt.Errorf("url: %w", err)
 		}
 		if s.Registry != "" {
 			return fmt.Errorf("github source takes no registry")
@@ -387,6 +394,9 @@ func (p *Package) checkOverlays() error {
 		if o.URL == "" {
 			return fmt.Errorf("overlays[%d] needs url", i)
 		}
+		if _, _, err := GitHubRepo(o.URL); err != nil {
+			return fmt.Errorf("overlays[%d].url: %w", i, err)
+		}
 		if !commitPattern.MatchString(o.Commit) {
 			return fmt.Errorf("overlays[%d].commit %q is not a commit in 40 lowercase hex digits", i, o.Commit)
 		}
@@ -404,6 +414,22 @@ func (p *Package) checkOverlays() error {
 		p.overlays = append(p.overlays, parsedOverlay{tags: tags, Overlay: o})
 	}
 	return nil
+}
+
+// GitHubRepo returns the owner and the repository that raw names, the URL
+// of a github source or of an overlay. Only https://github.com/<owner>/<repo>
+// is taken, with or without ".git": Vpmify reads the repository through
+// GitHub's own endpoints, which it addresses by owner and repository.
+func GitHubRepo(raw string) (owner, repo string, err error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", "", err
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if u.Scheme != "https" || !strings.EqualFold(u.Host, "github.com") || len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", fmt.Errorf("want https://github.com/<owner>/<repo>, not %q", raw)
+	}
+	return parts[0], strings.TrimSuffix(parts[1], ".git"), nil
 }
 
 // nestedFolders reports whether a and b are one folder or one holds the
