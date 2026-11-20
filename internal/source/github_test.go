@@ -300,6 +300,28 @@ func TestGitHubWarnsOnlyOfTagsThatMakeAVersion(t *testing.T) {
 	}
 }
 
+// Names that differ only in leading zeros, which compare equal by value,
+// are ordered by their text, so that the tag taken does not change from run
+// to run with the order the ref advertisement comes in.
+func TestGitHubOrdersTagsOfEqualNamesByText(t *testing.T) {
+	gh := testutil.NewFakeGitHub("owner", "repo")
+	for _, name := range []string{"r1.0.0", "r01.0.0", "r001.0.0"} {
+		gh.Tag(name, map[string]string{"package.json": manifest("com.example.pkg", "1.0.0")})
+	}
+	src := newSource(t, gh, `{"vpmifyFormat": 1, "id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
+  "tagVersion": {"match": "r(\\d+)\\.(\\d+)\\.(\\d+)", "version": "{1}.{2}.{3}"},
+  "packages": [{"name": "com.example.pkg"}]}]}`)
+	for range 20 {
+		all, _, err := src.Releases(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := all["com.example.pkg"]; len(got) != 1 || got[0].Origin != "tag r001.0.0" {
+			t.Fatalf("releases = %+v", got)
+		}
+	}
+}
+
 // The warning follows what each package takes. Tags whose package.json
 // keeps a version that an older tag has are not used, and warn of nothing;
 // two tags of one tag version that hold different package versions are both

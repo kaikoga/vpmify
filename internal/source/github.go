@@ -279,27 +279,36 @@ func joinNames(names []string) string {
 }
 
 // naturalLess orders names with their runs of digits compared by value, so
-// that 0.15.2.9 comes before 0.15.2.10.
+// that 0.15.2.9 comes before 0.15.2.10. Names equal by value (r1.0.0 and
+// r01.0.0) are ordered by their text, so that the order, and the tag a
+// version is taken from, does not follow the order the refs come in.
 func naturalLess(a, b string) bool {
+	if c := naturalCompare(a, b); c != 0 {
+		return c < 0
+	}
+	return a < b
+}
+
+func naturalCompare(a, b string) int {
 	for a != "" && b != "" {
 		da, db := digitRun(a), digitRun(b)
 		if da > 0 && db > 0 {
 			na, nb := strings.TrimLeft(a[:da], "0"), strings.TrimLeft(b[:db], "0")
 			if len(na) != len(nb) {
-				return len(na) < len(nb)
+				return len(na) - len(nb)
 			}
-			if na != nb {
-				return na < nb
+			if c := strings.Compare(na, nb); c != 0 {
+				return c
 			}
 			a, b = a[da:], b[db:]
 			continue
 		}
 		if a[0] != b[0] {
-			return a[0] < b[0]
+			return int(a[0]) - int(b[0])
 		}
 		a, b = a[1:], b[1:]
 	}
-	return len(a) < len(b)
+	return len(a) - len(b)
 }
 
 func digitRun(s string) int {
