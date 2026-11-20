@@ -1,0 +1,66 @@
+{
+  "id": "vci",
+  "sources": [
+    {
+      "type": "github",
+      "url": "https://github.com/virtual-cast/VCI.git",
+      "tagPattern": "v*",
+      "tags": ">=0.32.0",
+      "packages": [
+        {
+          "name": "com.virtualcast.univci",
+          "path": "Assets/VCI",
+          "overrides": [
+            {
+              "versions": "<0.33.0",
+              "set": {
+                "vpmDependencies": {
+                  "com.thirdparty.effekseer": "={sameTag}",
+                  "com.thirdparty.naudio": "={sameTag}",
+                  "com.vrmc.univrm": "={dependencies}",
+                  "com.vrmc.vrmshaders": "={dependencies}",
+                  "com.vrmc.unigltf": "={dependencies}"
+                }
+              }
+            },
+            {
+              "versions": ">=0.33.0 <0.45.0",
+              "set": {
+                "vpmDependencies": {
+                  "com.thirdparty.effekseer": "={sameTag}",
+                  "com.thirdparty.naudio": "={sameTag}",
+                  "com.vrmc.vrm": "={dependencies}",
+                  "com.vrmc.univrm": "={dependencies}",
+                  "com.vrmc.vrmshaders": "={dependencies}",
+                  "com.vrmc.gltf": "={dependencies}"
+                }
+              }
+            },
+            {
+              "versions": ">=0.45.0",
+              "set": {
+                "vpmDependencies": {
+                  "com.thirdparty.effekseer": "={sameTag}",
+                  "com.thirdparty.naudio": "={sameTag}",
+                  "com.vrmc.vrm": "={dependencies}",
+                  "com.vrmc.univrm": "={dependencies}",
+                  "com.vrmc.gltf": "={dependencies}"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "com.thirdparty.effekseer",
+          "path": "Assets/Effekseer",
+          "versionFromTag": true
+        },
+        {
+          "name": "com.thirdparty.naudio",
+          "path": "Assets/NAudio",
+          "versionFromTag": true
+        }
+      ]
+    }
+  ]
+}
