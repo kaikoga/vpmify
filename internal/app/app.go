@@ -286,7 +286,7 @@ type RecipeUpdate struct {
 	ID       string          `json:"id"`
 	Packages []PackageUpdate `json:"packages"`
 	// Warnings say what the recipe needs updating for, though the version
-	// lists were read (Git tags that its tagVersion reads as one version).
+	// lists were read (Git tags that read as one version).
 	Warnings []string `json:"warnings"`
 }
 
