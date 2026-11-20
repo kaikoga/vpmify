@@ -24,7 +24,7 @@
               }
             },
             {
-              "versions": ">=0.33.0 <0.45.0",
+              "versions": ">=0.33.0 <0.39.0 || >=0.41.0 <0.45.0",
               "set": {
                 "vpmDependencies": {
                   "com.thirdparty.effekseer": "={sameTag}",
@@ -33,6 +33,19 @@
                   "com.vrmc.univrm": "={dependencies}",
                   "com.vrmc.vrmshaders": "={dependencies}",
                   "com.vrmc.gltf": "={dependencies}"
+                }
+              }
+            },
+            {
+              "versions": ">=0.39.0 <0.41.0",
+              "set": {
+                "vpmDependencies": {
+                  "com.thirdparty.effekseer": "={sameTag}",
+                  "com.thirdparty.naudio": "={sameTag}",
+                  "com.vrmc.vrm": "=0.107.2",
+                  "com.vrmc.univrm": "=0.107.2",
+                  "com.vrmc.vrmshaders": "=0.107.2",
+                  "com.vrmc.gltf": "=0.107.2"
                 }
               }
             },
@@ -87,10 +100,10 @@
               "versions": ">=0.39.0 <0.41.0",
               "set": {
                 "dependencies": {
-                  "com.vrmc.vrm": "0.107.0",
-                  "com.vrmc.univrm": "0.107.0",
-                  "com.vrmc.vrmshaders": "0.107.0",
-                  "com.vrmc.gltf": "0.107.0",
+                  "com.vrmc.vrm": "0.107.2",
+                  "com.vrmc.univrm": "0.107.2",
+                  "com.vrmc.vrmshaders": "0.107.2",
+                  "com.vrmc.gltf": "0.107.2",
                   "com.unity.textmeshpro": "3.0.6"
                 }
               }
