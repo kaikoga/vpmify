@@ -45,7 +45,7 @@ recipe
       └─ overrides[]
 ```
 
-- Vpmify ignores the fields that are not described here. You may add `$schema`, or fields for your own notes. A misspelled field name is not an error either: the recipe is read as if the field were not there. Field names are case-sensitive, so `Versions` is a misspelling of `versions`. A name that comes twice in one object is an error. A range (`versions`, `tags`) that is not there means every version, so take care with the spelling.
+- Vpmify ignores the fields that are not described here, so you may add `$schema` or fields for your own notes. A misspelled field name is ignored too, without an error, and a misspelled range (`versions`, `tags`) means every version.
 - A package name may come only once in a recipe.
 
 ## Recipe
@@ -88,7 +88,7 @@ A github source has two kinds of versions. The name of a field tells which kind 
 - **The version of a tag** is read from the name of the tag. A field named `tags` (the source's `tags`, `tags` in `paths` and `overlays`, and `tags` in `versionFromTag`) is a range on the version of the tag.
 - **The version of a package** is usually the `version` of the `package.json` in the tag. A field named `versions` (the package's `versions`, and `versions` in `overrides`) is a range on the version of the package.
 
-The two need not agree. In UniVRM's tag `v0.80.0`, `com.vrmc.unigltf` has version 2.16.0. The folder of a package is chosen before its `package.json` is read, so it is written by the version of the tag.
+The two need not agree. In UniVRM's tag `v0.80.0`, `com.vrmc.unigltf` has version 2.16.0.
 
 ### How the version of a tag is read
 
@@ -108,10 +108,7 @@ For a repository whose tags are not SemVer, write `tagVersion`.
 
 The example reads the tag `0.15.2.2` as 0.15.2002, and the tag `0.15.2` as 0.15.2000.
 
-- A tag whose result is not SemVer is not read, nor is a tag with a group longer than its padding (a fourth group of 4 digits in the example).
-- Leading zeros of the numbers are dropped.
-
-When two tags read as one version and hold the same version of a package (also without `tagVersion`, when the repository has both `v1.2.3` and `1.2.3`), Vpmify warns and takes the package from the one whose name comes first. Write a `tagVersion` that tells them apart.
+When two tags read as one version and hold the same version of a package, Vpmify warns. Write a `tagVersion` that tells them apart.
 
 ## Ranges
 
@@ -154,8 +151,6 @@ A package of a github source also takes these fields.
 
 In a tag, a package is not read when its folder has no `package.json`, when the `name` differs, or when the `version` does not read as SemVer.
 
-When one name and version is in several tags, the content of the oldest tag is used. A stable version is taken from the oldest tag whose name is not a prerelease, when there is one.
-
 ## Changing package.json
 
 `overrides` change fields of the `package.json` of the converted package.
@@ -196,13 +191,13 @@ ALCOM follows dependencies through `vpmDependencies` only. Vpmify does not copy 
 
 The values are version ranges that ALCOM reads. `>=1.2.1` means that version or newer, and `=1.2.3` and `1.2.3` mean exactly that version.
 
-In the values of `vpmDependencies`, the placeholders below are filled in. They are not filled in elsewhere, but do not write `{…}` as plain text in the values of `set` and `merge`: a later format may fill it in.
+In the values of `vpmDependencies`, the placeholders below are filled in.
 
 - `{version}`: this version of this package.
 - `{dependencies}`: the value the `dependencies` of `package.json` give the package of the same name. When the recipe changes `dependencies`, it is the value after every override that applies to the version. When there is no such value, the version cannot be converted.
 - `{sameTag}`: the version the package of that name, in the same source, has in the same tag. It works in a github source, for the other packages of the same source. When the tag has no version of that package that can be taken, the version cannot be converted.
 
-The packages a package depends on are either in the same recipe, or in another recipe that the user adds. When the `vpmDependencies` of an installed version name a package of a recipe the user has added, `pull` installs that package too.
+A dependency may also be a package of another recipe that the user adds. `pull` installs it from there too.
 
 Dependencies that come from Unity's registry (`com.unity.*`) stay in `dependencies`. Add the ones upstream's `package.json` leaves out to `dependencies` with `merge` (see [vci.json](../examples/vci.json)).
 
@@ -226,7 +221,7 @@ Dependencies that come from Unity's registry (`com.unity.*`) stay in `dependenci
 - `url` (required): the repository to take the content from, `https://github.com/<owner>/<repo>`.
 - `commit` (required): the commit to take, in 40 lowercase hex digits.
 
-The folder must be in upstream's archive, empty. When it is not, the version cannot be converted. Two overlays cannot fill one folder, or a folder and a folder inside it, in the same tag.
+The folder must be in upstream's archive, empty. When it is not, the version cannot be converted.
 
 ## Trying a recipe
 
@@ -240,3 +235,14 @@ vpmify package pull com.example.my-recipe@1.2.3    # name a version
 After you change a recipe, run `recipe add` again. It replaces the recipe that has the same `id`, and reads the version lists again. The versions whose conversion changes are built again the next time you `package pull` the recipe.
 
 When a recipe is on the web, a link of the form `vpmify://add?url=<https URL of the recipe>` adds it in the GUI.
+
+## Details
+
+Rules for rare cases, for when a recipe is not read as you expect.
+
+- Field names are case-sensitive: `Versions` is a misspelling of `versions`. A name that comes twice in one object is an error.
+- `tagVersion`: a tag whose result is not SemVer is not read, nor is a tag with a group longer than its padding (a fourth group of 4 digits in the example above). Leading zeros of the numbers are dropped.
+- When two tags read as one version and hold the same version of a package, the package is taken from the tag whose name comes first. This happens without `tagVersion` too, when the repository has both `v1.2.3` and `1.2.3`.
+- When one package version is in several tags, the content of the oldest tag is used. A stable version is taken from the oldest tag whose name is not a prerelease, when there is one.
+- Placeholders are filled in only in the values of `vpmDependencies`. Do not write `{…}` as plain text in other values of `set` and `merge`: a later format may fill it in.
+- Two overlays cannot fill one folder, or a folder and a folder inside it, in the same tag.
