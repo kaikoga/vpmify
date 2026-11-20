@@ -58,6 +58,14 @@ type Entry struct {
 	Pinned          bool              `json:"pinned,omitempty"`
 	CacheKey        string            `json:"cacheKey"`
 	Origin          string            `json:"origin"`
+	Overlays        []Overlay         `json:"overlays,omitempty"`
+}
+
+// Overlay is one overlay of an entry, as source.Overlay has it.
+type Overlay struct {
+	Path       string `json:"path"`
+	ArchiveURL string `json:"archiveUrl"`
+	CacheKey   string `json:"cacheKey"`
 }
 
 // NewList makes the list of releases, by package name, read now for a
@@ -67,6 +75,10 @@ func NewList(key string, releases map[string][]source.Release, now time.Time) *L
 	for name, rels := range releases {
 		entries := []Entry{}
 		for _, r := range rels {
+			var overlays []Overlay
+			for _, o := range r.Overlays {
+				overlays = append(overlays, Overlay{Path: o.Path, ArchiveURL: o.ArchiveURL, CacheKey: o.CacheKey})
+			}
 			entries = append(entries, Entry{
 				Version:         r.Version.String(),
 				UpstreamVersion: r.UpstreamVersion,
@@ -80,6 +92,7 @@ func NewList(key string, releases map[string][]source.Release, now time.Time) *L
 				Pinned:          r.Pinned,
 				CacheKey:        r.CacheKey,
 				Origin:          r.Origin,
+				Overlays:        overlays,
 			})
 		}
 		l.Packages[name] = entries
@@ -139,6 +152,10 @@ func (l *List) Releases(name string) ([]source.Release, error) {
 		if err != nil {
 			return nil, err
 		}
+		var overlays []source.Overlay
+		for _, o := range e.Overlays {
+			overlays = append(overlays, source.Overlay{Path: o.Path, ArchiveURL: o.ArchiveURL, CacheKey: o.CacheKey})
+		}
 		out = append(out, source.Release{
 			Version:         v,
 			UpstreamVersion: e.UpstreamVersion,
@@ -151,6 +168,7 @@ func (l *List) Releases(name string) ([]source.Release, error) {
 			Pinned:          e.Pinned,
 			CacheKey:        e.CacheKey,
 			Origin:          e.Origin,
+			Overlays:        overlays,
 		})
 	}
 	return out, nil

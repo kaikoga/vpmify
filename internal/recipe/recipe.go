@@ -81,10 +81,17 @@ type Package struct {
 	// package.json. It is nil when the recipe writes false or nothing.
 	VersionFromTag *VersionFromTag `json:"versionFromTag,omitempty"`
 	Overrides      []Override      `json:"overrides,omitempty"`
+	// Overlays put content from other repositories into folders of the
+	// package (Git sources). GitHub's archives leave a Git submodule out as an
+	// empty folder, and UniVRM before v0.125.0 has MToon as one. An overlay
+	// is not a Git submodule but another source unpacked into a subfolder,
+	// which the recipe names (kaikoga 2026-11-20).
+	Overlays []Overlay `json:"overlays,omitempty"`
 
 	versions  semver.Range
 	paths     []parsedPathRule
 	overrides []parsedOverride
+	overlays  []parsedOverlay
 }
 
 // PathRule is the folder of the package for the tags in range. Path is a
@@ -111,6 +118,29 @@ type parsedOverride struct {
 	versions semver.Range
 	set      map[string]json.RawMessage
 }
+
+// Overlay puts commit Commit of the GitHub repository URL into folder Path
+// of the package, for the tags in range. Tags is a range on the tag's
+// version, as in paths. Path is relative to the package's folder, so that
+// it stays when paths moves the package (kaikoga 2026-11-20); the folder
+// must be in the archive, empty.
+//
+// Resolve "submodule" (the commit the tag's submodule at Path points at)
+// and a missing URL (the submodule's) are planned but not read yet.
+type Overlay struct {
+	Tags    string `json:"tags,omitempty"`
+	Path    string `json:"path"`
+	URL     string `json:"url,omitempty"`
+	Commit  string `json:"commit,omitempty"`
+	Resolve string `json:"resolve,omitempty"`
+}
+
+type parsedOverlay struct {
+	tags semver.Range
+	Overlay
+}
+
+var commitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
@@ -251,11 +281,14 @@ func (p *Package) check(s *Source, siblings map[string]bool) error {
 	}
 	switch s.Type {
 	case SourceNPM:
-		if p.Path != "" || len(p.Paths) > 0 || p.VersionFromTag != nil {
-			return fmt.Errorf("an npm source's packages take no path, paths or versionFromTag")
+		if p.Path != "" || len(p.Paths) > 0 || p.VersionFromTag != nil || len(p.Overlays) > 0 {
+			return fmt.Errorf("an npm source's packages take no path, paths, versionFromTag or overlays")
 		}
 	case SourceGitHub:
 		if err := p.checkPaths(); err != nil {
+			return err
+		}
+		if err := p.checkOverlays(); err != nil {
 			return err
 		}
 		if f := p.VersionFromTag; f != nil && !f.All {
@@ -329,6 +362,47 @@ func (p *Package) checkPaths() error {
 	return nil
 }
 
+func (p *Package) checkOverlays() error {
+	for i, o := range p.Overlays {
+		// "" would be the package's folder itself, package.json and all.
+		if strings.Trim(o.Path, "/") == "" {
+			return fmt.Errorf(`overlays[%d] needs a "path" inside the package`, i)
+		}
+		if err := checkFolder(o.Path); err != nil {
+			return fmt.Errorf("overlays[%d]: %w", i, err)
+		}
+		o.Path = strings.Trim(o.Path, "/")
+		if o.Resolve != "" {
+			return fmt.Errorf("overlays[%d]: resolve is not supported yet; write url and commit", i)
+		}
+		if o.URL == "" {
+			return fmt.Errorf("overlays[%d] needs url", i)
+		}
+		if !commitPattern.MatchString(o.Commit) {
+			return fmt.Errorf("overlays[%d].commit %q is not a commit in 40 lowercase hex digits", i, o.Commit)
+		}
+		tags, err := semver.ParseRange(o.Tags)
+		if err != nil {
+			return fmt.Errorf("overlays[%d].tags: %w", i, err)
+		}
+		// One folder takes one content in a tag. Different folders may share
+		// tags, but not when one holds the other.
+		for j, prev := range p.overlays {
+			if semver.Overlaps(prev.tags, tags) && nestedFolders(prev.Path, o.Path) {
+				return fmt.Errorf("overlays[%d] and overlays[%d] both fill %q for some tags", j, i, o.Path)
+			}
+		}
+		p.overlays = append(p.overlays, parsedOverlay{tags: tags, Overlay: o})
+	}
+	return nil
+}
+
+// nestedFolders reports whether a and b are one folder or one holds the
+// other.
+func nestedFolders(a, b string) bool {
+	return a == b || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
+}
+
 // Describe names the source in messages: the Git repository's URL, or
 // "npm" and the registry.
 func (s *Source) Describe() string {
@@ -393,6 +467,18 @@ func (p *Package) PathFor(v semver.Version) (string, bool) {
 	return "", false
 }
 
+// OverlaysFor returns the overlays of the tag whose version is v, in the
+// recipe's order, with their paths trimmed of slashes (Git sources).
+func (p *Package) OverlaysFor(v semver.Version) []Overlay {
+	var out []Overlay
+	for _, o := range p.overlays {
+		if o.tags.Contains(v) {
+			out = append(out, o.Overlay)
+		}
+	}
+	return out
+}
+
 // sourceFields are the fields of a source without its packages.
 // TagVersion is omitted when empty, so that the keys and fingerprints of
 // recipes without it stay what they were before it came.
@@ -410,9 +496,11 @@ func (s *Source) fields() sourceFields {
 }
 
 // ListingKey identifies what decides the versions the source's version list
-// holds: the source, and each package's name, folders, range (Versions) and
-// VersionFromTag, which `update` applies when it reads upstream (kaikoga 2026-11-18). A
-// version list kept from an update whose key differs is stale. Prerelease
+// holds: the source, and each package's name, folders, range (Versions),
+// VersionFromTag and Overlays, which `update` applies when it reads upstream
+// (kaikoga 2026-11-18; overlays are applied there because the list keeps no
+// tag versions, and so that pull reads the list alone, kaikoga 2026-11-20).
+// A version list kept from an update whose key differs is stale. Prerelease
 // and Overrides are not in it, because they are applied to the list when it
 // is read; {sameTag} is too, from the versions the list keeps for each tag.
 func (s *Source) ListingKey() string {
@@ -422,10 +510,11 @@ func (s *Source) ListingKey() string {
 		Paths          []PathRule      `json:"paths"`
 		Versions       string          `json:"versions"`
 		VersionFromTag *VersionFromTag `json:"versionFromTag,omitempty"`
+		Overlays       []Overlay       `json:"overlays,omitempty"`
 	}
 	var pkgs []pkg
 	for _, p := range s.Packages {
-		pkgs = append(pkgs, pkg{p.Name, p.Path, p.Paths, p.Versions, p.VersionFromTag})
+		pkgs = append(pkgs, pkg{p.Name, p.Path, p.Paths, p.Versions, p.VersionFromTag, p.Overlays})
 	}
 	data, _ := json.Marshal(struct {
 		Source   sourceFields `json:"source"`
@@ -572,13 +661,22 @@ func (p *Package) ExpandedOverridesFor(v semver.Version, upstream, sameTag map[s
 // the fingerprint takes the archive and the expanded overrides.
 const convertRevision = 4
 
+// BuiltOverlay is an overlay as a version is built with it: the folder in
+// the package and the archive its content comes from.
+type BuiltOverlay struct {
+	Path    string `json:"path"`
+	Archive string `json:"archive"`
+}
+
 // Fingerprint identifies how a version of package p is built from upstream:
 // from folder dir of the archive cacheKey, with the overrides as expanded
-// for it. An available version whose fingerprint differs is built again
-// when its recipe is pulled. The source's other packages are not in it, so
-// that editing one package does not build the others again; what they give
-// through {sameTag} is, in expanded.
-func (s *Source) Fingerprint(p *Package, dir, cacheKey string, expanded []map[string]json.RawMessage) string {
+// for it and the overlays. An available version whose fingerprint differs
+// is built again when its recipe is pulled. The source's other packages are
+// not in it, so that editing one package does not build the others again;
+// what they give through {sameTag} is, in expanded. Overlays are omitted
+// when there are none, so that versions built before they came keep their
+// fingerprints.
+func (s *Source) Fingerprint(p *Package, dir, cacheKey string, expanded []map[string]json.RawMessage, overlays []BuiltOverlay) string {
 	h := sha256.New()
 	// encoding/json writes map keys sorted, so this is stable.
 	data, _ := json.Marshal(struct {
@@ -588,7 +686,8 @@ func (s *Source) Fingerprint(p *Package, dir, cacheKey string, expanded []map[st
 		Dir       string                       `json:"dir"`
 		Archive   string                       `json:"archive"`
 		Overrides []map[string]json.RawMessage `json:"overrides"`
-	}{convertRevision, s.fields(), p.Name, dir, cacheKey, expanded})
+		Overlays  []BuiltOverlay               `json:"overlays,omitempty"`
+	}{convertRevision, s.fields(), p.Name, dir, cacheKey, expanded, overlays})
 	h.Write(data)
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }

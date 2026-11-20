@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"archive/tar"
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
@@ -34,7 +35,8 @@ func NewFakeGitHub(owner, repo string) *FakeGitHub {
 	}
 }
 
-// Tag adds a tag pointing at a new commit with the given files.
+// Tag adds a tag pointing at a new commit with the given files. A path
+// ending in "/" is an empty folder in the archive.
 func (g *FakeGitHub) Tag(name string, files map[string]string) string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -87,11 +89,22 @@ func (g *FakeGitHub) RoundTrip(req *http.Request) (*http.Response, error) {
 			if files, ok := g.tree[commit]; ok {
 				g.Requests["codeload"]++
 				top := g.Repo + "-" + commit[:7] + "/"
-				prefixed := map[string]string{}
-				for p, c := range files {
-					prefixed[top+p] = c
+				names := make([]string, 0, len(files))
+				for p := range files {
+					names = append(names, p)
 				}
-				_, _ = rec.Write(TarGz(prefixed))
+				sort.Strings(names)
+				var entries []Entry
+				for _, p := range names {
+					// A path ending in "/" is an empty folder, as GitHub's
+					// archives keep a submodule.
+					if strings.HasSuffix(p, "/") {
+						entries = append(entries, Entry{Name: top + p, Typeflag: tar.TypeDir, Mode: 0o755})
+						continue
+					}
+					entries = append(entries, Entry{Name: top + p, Body: files[p]})
+				}
+				_, _ = rec.Write(TarGzEntries(entries))
 				return rec.Result(), nil
 			}
 		}

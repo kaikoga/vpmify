@@ -807,10 +807,19 @@ func (a *App) pullPackage(ctx context.Context, st *state.State, id string, l *pk
 		if vs, ok := ps.Versions[v]; ok && !refetch && vs.Fingerprint == fp && fsutil.Exists(vs.Path) {
 			continue
 		}
-		if refetch && !fresh[rel.CacheKey] {
-			fresh[rel.CacheKey] = true
-			if err := os.Remove(filepath.Join(a.Layout.Cache(), filepath.FromSlash(rel.CacheKey))); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return built, err
+		if refetch {
+			keys := []string{rel.CacheKey}
+			for _, o := range rel.Overlays {
+				keys = append(keys, o.CacheKey)
+			}
+			for _, key := range keys {
+				if fresh[key] {
+					continue
+				}
+				fresh[key] = true
+				if err := os.Remove(filepath.Join(a.Layout.Cache(), filepath.FromSlash(key))); err != nil && !errors.Is(err, fs.ErrNotExist) {
+					return built, err
+				}
 			}
 		}
 		a.logf("%s: converting %s %s (%s)", id, name, v, rel.Origin)
@@ -1050,20 +1059,14 @@ func appendRelease(list []source.Release, rel source.Release) []source.Release {
 // already in the store is swapped out only after the new one is complete,
 // so ALCOM never sees a half-built folder at the registered path.
 func (a *App) build(ctx context.Context, name string, rel source.Release, overrides []map[string]json.RawMessage, dir string) error {
-	archive := filepath.Join(a.Layout.Cache(), filepath.FromSlash(rel.CacheKey))
-	if fsutil.Exists(archive) {
-		if err := rel.Digests.CheckFile(archive); err != nil {
-			a.logf("cached archive is broken (%v); downloading again", err)
-			_ = os.Remove(archive)
-		}
+	archive, err := a.archive(ctx, rel.ArchiveURL, rel.CacheKey, rel.Digests, rel.Pinned)
+	if err != nil {
+		return err
 	}
-	if !fsutil.Exists(archive) {
-		if rel.Digests.Empty() && !rel.Pinned {
-			return fmt.Errorf("upstream publishes no digest for the archive")
-		}
-		a.logf("  downloading %s", rel.ArchiveURL)
-		if err := a.Client.Download(ctx, rel.ArchiveURL, archive, rel.Digests); err != nil {
-			return err
+	overlayArchives := make([]string, len(rel.Overlays))
+	for i, o := range rel.Overlays {
+		if overlayArchives[i], err = a.archive(ctx, o.ArchiveURL, o.CacheKey, fetch.Digests{}, true); err != nil {
+			return fmt.Errorf("overlay %s: %w", o.Path, err)
 		}
 	}
 
@@ -1083,6 +1086,22 @@ func (a *App) build(ctx context.Context, name string, rel source.Release, overri
 	}
 	for _, s := range res.Skipped {
 		a.logf("  skipped %s (not a regular file)", s)
+	}
+	for i, o := range rel.Overlays {
+		// The folder is where the archive left a submodule: it must be there
+		// and empty, or the recipe names the wrong folder.
+		target := filepath.Join(pkg, filepath.FromSlash(o.Path))
+		entries, err := os.ReadDir(target)
+		if err != nil || len(entries) > 0 {
+			return fmt.Errorf("overlay %s: the package has no empty folder %s", o.Path, o.Path)
+		}
+		res, err := convert.ExtractTarGz(overlayArchives[i], target, "")
+		if err != nil {
+			return fmt.Errorf("overlay %s: %w", o.Path, err)
+		}
+		for _, s := range res.Skipped {
+			a.logf("  skipped %s/%s (not a regular file)", o.Path, s)
+		}
 	}
 	upstream := rel.Version.String()
 	if rel.UpstreamVersion != "" {
@@ -1117,6 +1136,30 @@ func (a *App) build(ctx context.Context, name string, rel source.Release, overri
 		return nil
 	}
 	return os.Rename(pkg, dir)
+}
+
+// archive returns the path of the archive kept as cacheKey, downloading it
+// from url when it is not there or does not match digests. An archive
+// without digests is taken only when pinned, that is, addressed by a Git
+// commit.
+func (a *App) archive(ctx context.Context, url, cacheKey string, digests fetch.Digests, pinned bool) (string, error) {
+	archive := filepath.Join(a.Layout.Cache(), filepath.FromSlash(cacheKey))
+	if fsutil.Exists(archive) {
+		if err := digests.CheckFile(archive); err != nil {
+			a.logf("cached archive is broken (%v); downloading again", err)
+			_ = os.Remove(archive)
+		}
+	}
+	if !fsutil.Exists(archive) {
+		if digests.Empty() && !pinned {
+			return "", fmt.Errorf("upstream publishes no digest for the archive")
+		}
+		a.logf("  downloading %s", url)
+		if err := a.Client.Download(ctx, url, archive, digests); err != nil {
+			return "", err
+		}
+	}
+	return archive, nil
 }
 
 func (a *App) reconciler() *alcom.Reconciler {

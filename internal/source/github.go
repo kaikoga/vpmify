@@ -61,6 +61,9 @@ type GitHubPackage struct {
 	// tag, given that version, in place of the one in its package.json. nil
 	// is for no tag.
 	VersionFromTag func(semver.Version) bool
+	// OverlaysFor returns the overlays of a tag, from the tag's version. nil
+	// is for none.
+	OverlaysFor func(semver.Version) []recipe.Overlay
 }
 
 // NewGitHub returns the upstream of a github recipe source.
@@ -75,7 +78,12 @@ func NewGitHub(s *recipe.Source, client *fetch.Client, cacheDir string) (*GitHub
 	}
 	var pkgs []GitHubPackage
 	for _, p := range s.Packages {
-		pkgs = append(pkgs, GitHubPackage{Name: p.Name, PathFor: p.PathFor, VersionFromTag: p.TakesTagVersion})
+		for i, o := range p.Overlays {
+			if _, _, err := parseGitHubURL(o.URL); err != nil {
+				return nil, fmt.Errorf("package %s: overlays[%d]: %w", p.Name, i, err)
+			}
+		}
+		pkgs = append(pkgs, GitHubPackage{Name: p.Name, PathFor: p.PathFor, VersionFromTag: p.TakesTagVersion, OverlaysFor: p.OverlaysFor})
 	}
 	return &GitHub{
 		Owner: owner, Repo: repo,
@@ -364,6 +372,20 @@ func (g *GitHub) release(ctx context.Context, t tag, p GitHubPackage) (*Release,
 		}
 		upstream = ""
 	}
+	var overlays []Overlay
+	if p.OverlaysFor != nil {
+		for _, o := range p.OverlaysFor(t.version) {
+			owner, repo, err := parseGitHubURL(o.URL)
+			if err != nil {
+				return nil, fmt.Errorf("tag %s: overlay %s: %w", t.name, o.Path, err)
+			}
+			overlays = append(overlays, Overlay{
+				Path:       o.Path,
+				ArchiveURL: fmt.Sprintf("%s/%s/%s/tar.gz/%s", g.CodeloadBase, owner, repo, o.Commit),
+				CacheKey:   path.Join("git", "github.com", owner, repo, o.Commit+".tar.gz"),
+			})
+		}
+	}
 	unity, _ := m.Unity.(string)
 	return &Release{
 		Version:         v,
@@ -375,6 +397,7 @@ func (g *GitHub) release(ctx context.Context, t tag, p GitHubPackage) (*Release,
 		Pinned:          true,
 		CacheKey:        path.Join("git", "github.com", g.Owner, g.Repo, t.commit+".tar.gz"),
 		Origin:          "tag " + t.name,
+		Overlays:        overlays,
 	}, nil
 }
 

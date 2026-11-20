@@ -105,7 +105,11 @@ func (l *pkgList) usable(rel source.Release) bool {
 // fingerprint returns the fingerprint of rel built with the overrides
 // expanded for it.
 func (l *pkgList) fingerprint(rel source.Release, expanded []map[string]json.RawMessage) string {
-	return l.src.Fingerprint(l.pkg, rel.Dir, rel.CacheKey, expanded)
+	var overlays []recipe.BuiltOverlay
+	for _, o := range rel.Overlays {
+		overlays = append(overlays, recipe.BuiltOverlay{Path: o.Path, Archive: o.CacheKey})
+	}
+	return l.src.Fingerprint(l.pkg, rel.Dir, rel.CacheKey, expanded, overlays)
 }
 
 // accepted returns the releases pull chooses from without their being

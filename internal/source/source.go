@@ -39,6 +39,18 @@ type Release struct {
 	CacheKey string
 	// Origin says where the version was found, for messages.
 	Origin string
+	// Overlays go into folders of the package, in the recipe's order.
+	Overlays []Overlay
+}
+
+// Overlay is the content of another archive that goes into a folder of the
+// package. The archive is a Git commit's, so it needs no digest.
+type Overlay struct {
+	// Path is the folder, relative to the package's folder.
+	Path string
+	// ArchiveURL and CacheKey are as in Release.
+	ArchiveURL string
+	CacheKey   string
 }
 
 // Source is an upstream of the packages of one recipe source.

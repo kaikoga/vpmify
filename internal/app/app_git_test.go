@@ -249,6 +249,127 @@ func TestPullBuildsAgainOnlyTheRecipesItPulls(t *testing.T) {
 	}
 }
 
+// routeByRepo sends each request for a GitHub repository to its fake.
+type routeByRepo []*testutil.FakeGitHub
+
+func (r routeByRepo) RoundTrip(req *http.Request) (*http.Response, error) {
+	for _, g := range r {
+		p := "/" + g.Owner + "/" + g.Repo
+		if strings.HasPrefix(req.URL.Path, p+"/") || strings.HasPrefix(req.URL.Path, p+".git/") {
+			return g.RoundTrip(req)
+		}
+	}
+	return nil, fmt.Errorf("no fake for %s", req.URL)
+}
+
+// overlayRepos returns a monorepo whose pkg keeps a submodule at Sub, as
+// UniVRM keeps MToon, and the repository the submodule comes from, with
+// the commits of its tags s1 and s2.
+func overlayRepos() (mono, sub *testutil.FakeGitHub, s1, s2 string) {
+	mono = testutil.NewFakeGitHub("owner", "mono")
+	files := monoTag("1.0.0", "1.0.0")
+	files["Packages/Pkg/Sub/"] = ""
+	mono.Tag("v1.0.0", files)
+	sub = testutil.NewFakeGitHub("owner", "sub")
+	s1 = sub.Tag("s1", map[string]string{"Shader/Toon.shader": "one", "README.md": "sub"})
+	s2 = sub.Tag("s2", map[string]string{"Shader/Toon.shader": "two"})
+	return mono, sub, s1, s2
+}
+
+func overlayRecipe(path, commit string) string {
+	return gitRecipe("pkg", "", gitPackage("com.example.pkg", "Packages/Pkg",
+		fmt.Sprintf(`, "overlays": [{"tags": ">=1.0.0", "path": %q, "url": "https://github.com/owner/sub", "commit": %q}]`, path, commit)))
+}
+
+func TestOverlayFillsTheSubmoduleFolder(t *testing.T) {
+	f := newFixture(t)
+	mono, sub, s1, s2 := overlayRepos()
+	f.app.Client.HTTP.Transport = routeByRepo{mono, sub}
+	ctx := context.Background()
+	if err := f.addAndPull(PullOptions{}, f.writeFile("pkg.json", overlayRecipe("Sub", s1))); err != nil {
+		t.Fatal(err, f.log)
+	}
+	pkgDir := f.app.Layout.PackageDir("pkg", "com.example.pkg", "1.0.0")
+	read := func() string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(pkgDir, "Sub", "Shader", "Toon.shader"))
+		if err != nil {
+			t.Fatal(err, f.log)
+		}
+		return string(data)
+	}
+	if got := read(); got != "one" {
+		t.Errorf("Toon.shader = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(pkgDir, "Pkg.cs")); err != nil {
+		t.Error(err)
+	}
+	if n := sub.Requests["codeload"]; n != 1 {
+		t.Errorf("sub codeload requests = %d, want 1", n)
+	}
+
+	// Another commit needs an update, as other changes to what update reads
+	// do, and then builds the version again.
+	if err := os.WriteFile(f.app.recipePath("pkg"), []byte(overlayRecipe("Sub", s2)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.app.Pull(ctx, nil, PullOptions{}); err == nil || !strings.Contains(err.Error(), "recipe update pkg") {
+		t.Errorf("pull before update: err = %v", err)
+	}
+	if _, err := f.app.Update(ctx, nil); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if _, err := f.app.Pull(ctx, nil, PullOptions{}); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if got := read(); got != "two" {
+		t.Errorf("Toon.shader after the commit changed = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(pkgDir, "Sub", "README.md")); !os.IsNotExist(err) {
+		t.Errorf("README.md of the old commit: %v", err)
+	}
+
+	// Refetching downloads the overlay's archive again too.
+	if _, err := f.app.Pull(ctx, nil, PullOptions{Refetch: true}); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if n := sub.Requests["codeload"]; n != 3 {
+		t.Errorf("sub codeload requests after refetch = %d, want 3", n)
+	}
+}
+
+func TestOverlayNeedsAnEmptyFolder(t *testing.T) {
+	cases := []struct {
+		name, path string
+		files      map[string]string // added to the package's tag
+	}{
+		{"missing", "Missing", nil},
+		{"a file", "Pkg.cs", nil},
+		{"not empty", "Sub", map[string]string{"Packages/Pkg/Sub/Kept.cs": "class Kept {}"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t)
+			_, sub, s1, _ := overlayRepos()
+			files := monoTag("1.0.0", "1.0.0")
+			files["Packages/Pkg/Sub/"] = ""
+			for p, content := range c.files {
+				files[p] = content
+			}
+			mono := testutil.NewFakeGitHub("owner", "mono")
+			mono.Tag("v1.0.0", files)
+			f.app.Client.HTTP.Transport = routeByRepo{mono, sub}
+			err := f.addAndPull(PullOptions{}, f.writeFile("pkg.json", overlayRecipe(c.path, s1)))
+			if err == nil || !strings.Contains(err.Error(), "has no empty folder") {
+				t.Errorf("err = %v", err)
+			}
+			if _, err := os.Stat(f.app.Layout.PackageDir("pkg", "com.example.pkg", "1.0.0")); !os.IsNotExist(err) {
+				t.Errorf("the version was left: %v", err)
+			}
+		})
+	}
+}
+
 // sameTagRepo has base numbered apart from the tags, as UniVRM's UniGLTF
 // was, and a tag without base.
 func sameTagRepo() *testutil.FakeGitHub {

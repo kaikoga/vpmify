@@ -220,6 +220,45 @@ func TestGitHubReleases(t *testing.T) {
 	}
 }
 
+// Overlays are chosen by the tag's version, which the version list does not
+// keep, not by the package's.
+func TestGitHubOverlaysFollowTheTag(t *testing.T) {
+	gh := testutil.NewFakeGitHub("owner", "repo")
+	gh.Tag("v1.0.0", map[string]string{"package.json": manifest("com.example.pkg", "1.0.0")})
+	gh.Tag("v1.1.0", map[string]string{"package.json": manifest("com.example.pkg", "3.0.0")})
+	const a, b = "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222"
+	recipeJSON := `{"id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo", "tagPattern": "v*",
+  "packages": [{"name": "com.example.pkg", "overlays": [
+    {"tags": "<1.1.0", "path": "Sub", "url": "https://github.com/other/sub.git", "commit": "` + a + `"},
+    {"tags": ">=1.1.0", "path": "Lib/Sub", "url": "https://github.com/other/sub", "commit": "` + b + `"}]}]}]}`
+	all, _, err := newSource(t, gh, recipeJSON).Releases(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, r := range all["com.example.pkg"] {
+		for _, o := range r.Overlays {
+			got = append(got, r.Version.String()+" "+o.Path+" "+o.ArchiveURL+" "+o.CacheKey)
+		}
+	}
+	want := []string{
+		"1.0.0 Sub https://codeload.github.com/other/sub/tar.gz/" + a + " git/github.com/other/sub/" + a + ".tar.gz",
+		"3.0.0 Lib/Sub https://codeload.github.com/other/sub/tar.gz/" + b + " git/github.com/other/sub/" + b + ".tar.gz",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("overlays = %q, want %q", got, want)
+	}
+
+	// An overlay from elsewhere than GitHub is refused before anything is read.
+	r, err := recipe.Parse([]byte(strings.Replace(recipeJSON, "https://github.com/other/sub.git", "https://gitlab.com/other/sub", 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewGitHub(r.Sources[0], fetch.NewClient("vpmify-test"), t.TempDir()); err == nil || !strings.Contains(err.Error(), "overlays[0]") {
+		t.Errorf("err = %v", err)
+	}
+}
+
 func TestGitHubSameTag(t *testing.T) {
 	gh := testutil.NewFakeGitHub("owner", "repo")
 	// The base's numbers differ from the tag's.
