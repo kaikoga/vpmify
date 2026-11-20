@@ -873,7 +873,7 @@ func TestTagsOfOneVersionWarn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err, f.log)
 	}
-	if len(res.Recipes) != 1 || len(res.Recipes[0].Warnings) != 1 || !strings.Contains(res.Recipes[0].Warnings[0], "0.15.2.1 is used") {
+	if len(res.Recipes) != 1 || len(res.Recipes[0].Warnings) != 1 || !strings.Contains(res.Recipes[0].Warnings[0], "com.example.pkg is taken from 0.15.2.1") {
 		t.Errorf("result = %+v", res.Recipes)
 	}
 	if !strings.Contains(f.log.String(), "mono: warning: tags 0.15.2.1 and 0.15.2.2") {

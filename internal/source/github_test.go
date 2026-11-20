@@ -112,7 +112,7 @@ func TestGitHubTagVersion(t *testing.T) {
 		t.Errorf("releases = %q, want %q", summary, want)
 	}
 	// One warning per version names every tag of it, and the one used.
-	if len(warnings) != 1 || !strings.Contains(warnings[0], "tags 0.15.2.1, 0.15.2.2, 0.15.2.9 and 0.15.2.10 read as version 0.15.2, and 0.15.2.1 is used") {
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "tags 0.15.2.1, 0.15.2.2, 0.15.2.9 and 0.15.2.10 read as version 0.15.2, and com.example.pkg is taken from 0.15.2.1") {
 		t.Errorf("warnings = %q", warnings)
 	}
 }
@@ -270,7 +270,7 @@ func TestGitHubWarnsOfTagsThatReadAsOneVersionWithoutARule(t *testing.T) {
 	if want := []string{"1.0.0 tag 1.0.0", "1.1.0 tag v1.1.0"}; !reflect.DeepEqual(summary, want) {
 		t.Errorf("releases = %q, want %q", summary, want)
 	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0], "tags 1.0.0 and v1.0.0 read as version 1.0.0, and 1.0.0 is used") {
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "tags 1.0.0 and v1.0.0 read as version 1.0.0, and com.example.pkg is taken from 1.0.0") {
 		t.Errorf("warnings = %q", warnings)
 	}
 }
@@ -295,8 +295,57 @@ func TestGitHubWarnsOnlyOfTagsThatMakeAVersion(t *testing.T) {
 	if got := all["com.example.pkg"]; len(got) != 1 || got[0].Origin != "tag v2.0.0" {
 		t.Errorf("releases = %+v", got)
 	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0], "tags v2.0.0 and v2.0.0-old read as version 2.0.0, and v2.0.0 is used") {
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "tags v2.0.0 and v2.0.0-old read as version 2.0.0, and com.example.pkg is taken from v2.0.0") {
 		t.Errorf("warnings = %q", warnings)
+	}
+}
+
+// The warning follows what each package takes. Tags whose package.json
+// keeps a version that an older tag has are not used, and warn of nothing;
+// two tags of one tag version that hold different package versions are both
+// used; and a tag that holds only some of the packages counts only for them.
+func TestGitHubWarnsOfTheTagsEachPackageTakes(t *testing.T) {
+	recipe := `{"vpmifyFormat": 1, "id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
+  "packages": [{"name": "com.example.a", "path": "A"}, {"name": "com.example.b", "path": "B"}]}]}`
+	cases := []struct {
+		name string
+		tags map[string]map[string]string
+		want []string
+	}{
+		{"unused", map[string]map[string]string{
+			"1.0.0":  {"A/package.json": manifest("com.example.a", "1.0.0")},
+			"1.0.1":  {"A/package.json": manifest("com.example.a", "1.0.0")},
+			"v1.0.1": {"A/package.json": manifest("com.example.a", "1.0.0")},
+		}, nil},
+		{"different versions", map[string]map[string]string{
+			"1.0.0":  {"A/package.json": manifest("com.example.a", "1.0.0")},
+			"v1.0.0": {"A/package.json": manifest("com.example.a", "1.0.1")},
+		}, nil},
+		{"some packages", map[string]map[string]string{
+			"1.0.0":  {"A/package.json": manifest("com.example.a", "1.0.0")},
+			"v1.0.0": {"A/package.json": manifest("com.example.a", "1.0.0"), "B/package.json": manifest("com.example.b", "1.0.0")},
+		}, []string{"tags 1.0.0 and v1.0.0 read as version 1.0.0, and com.example.a is taken from 1.0.0"}},
+		{"both packages", map[string]map[string]string{
+			"1.0.0":  {"A/package.json": manifest("com.example.a", "1.0.0"), "B/package.json": manifest("com.example.b", "1.0.0")},
+			"v1.0.0": {"A/package.json": manifest("com.example.a", "1.0.0"), "B/package.json": manifest("com.example.b", "1.0.0")},
+		}, []string{"tags 1.0.0 and v1.0.0 read as version 1.0.0, and com.example.a and com.example.b are taken from 1.0.0"}},
+	}
+	for _, c := range cases {
+		gh := testutil.NewFakeGitHub("owner", "repo")
+		for name, files := range c.tags {
+			gh.Tag(name, files)
+		}
+		_, warnings, err := newSource(t, gh, recipe).Releases(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		ok := len(warnings) == len(c.want)
+		for i := 0; ok && i < len(c.want); i++ {
+			ok = strings.Contains(warnings[i], c.want[i])
+		}
+		if !ok {
+			t.Errorf("%s: warnings = %q, want %q", c.name, warnings, c.want)
+		}
 	}
 }
 

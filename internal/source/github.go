@@ -123,14 +123,7 @@ func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, []string, 
 	if err := errors.Join(errs...); err != nil {
 		return nil, nil, err
 	}
-	warnings := sameVersionWarnings(tags, func(i int) bool {
-		for j := range n {
-			if found[i*n+j] != nil {
-				return true
-			}
-		}
-		return false
-	})
+	var same sameVersionTags
 	out := map[string][]Release{}
 	for j, p := range g.Packages {
 		// chosen is the tag each version is taken from, by version.
@@ -155,6 +148,13 @@ func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, []string, 
 		for _, v := range order {
 			i := chosen[v]
 			rel := found[i*n+j]
+			var names []string
+			for k, t := range tags {
+				if semver.Compare(t.version, tags[i].version) == 0 && found[k*n+j] != nil && found[k*n+j].Version.String() == v {
+					names = append(names, t.name)
+				}
+			}
+			same.add(names, tags[i], p.Name)
 			for k, sibling := range g.Packages {
 				if k == j || found[i*n+k] == nil {
 					continue
@@ -171,7 +171,7 @@ func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, []string, 
 	for _, rels := range out {
 		sort.SliceStable(rels, func(i, j int) bool { return semver.Compare(rels[i].Version, rels[j].Version) < 0 })
 	}
-	return out, warnings, nil
+	return out, same.warnings(), nil
 }
 
 // tags lists the tags whose name reads as a version the recipe accepts,
@@ -219,29 +219,55 @@ func (g *GitHub) tags(ctx context.Context) ([]tag, error) {
 	return out, nil
 }
 
-// sameVersionWarnings warns of tags that read as one version, of those that
-// make a package version (made). The oldest of them is used, as for package
+// sameVersionTags gathers the tags that read as one version and hold the
+// same version of a package, which is taken from one of them, as for package
 // versions that come in several tags: a repository whose owner did not write
-// the recipe may add such tags, and they must not stop the recipe (kaikoga
-// 2026-11-19). The warning comes without a tagVersion rule too, for v1.2.3
-// beside 1.2.3 (kaikoga 2026-11-20). A tag that makes no package version is
-// left out, as it is not what is used.
-func sameVersionWarnings(tags []tag, made func(i int) bool) []string {
-	var warnings []string
-	for i := 0; i < len(tags); {
-		var names []string
-		j := i
-		for ; j < len(tags) && semver.Compare(tags[i].version, tags[j].version) == 0; j++ {
-			if made(j) {
-				names = append(names, tags[j].name)
-			}
-		}
-		if len(names) > 1 {
-			warnings = append(warnings, fmt.Sprintf("tags %s read as version %s, and %s is used; the recipe needs a tagVersion that tells them apart", joinNames(names), tags[i].version, names[0]))
-		}
-		i = j
+// the recipe may add such tags, and they must not stop the recipe, but they
+// are warned of (kaikoga 2026-11-19). The warning comes without a tagVersion
+// rule too, for v1.2.3 beside 1.2.3 (kaikoga 2026-11-20). It names the tag
+// each package is taken from, and the packages, as a tag may hold only some
+// of them.
+type sameVersionTags struct {
+	keys  []string
+	found map[string]*sameVersionTag
+}
+
+type sameVersionTag struct {
+	names    []string
+	used     tag
+	packages []string
+}
+
+// add records that package pkg is taken from tag used, of the tags names.
+func (s *sameVersionTags) add(names []string, used tag, pkg string) {
+	if len(names) < 2 {
+		return
 	}
-	return warnings
+	key := strings.Join(names, "\x00") + "\x00\x00" + used.name
+	if s.found == nil {
+		s.found = map[string]*sameVersionTag{}
+	}
+	f, ok := s.found[key]
+	if !ok {
+		f = &sameVersionTag{names: names, used: used}
+		s.found[key] = f
+		s.keys = append(s.keys, key)
+	}
+	f.packages = append(f.packages, pkg)
+}
+
+func (s *sameVersionTags) warnings() []string {
+	var out []string
+	for _, key := range s.keys {
+		f := s.found[key]
+		verb := "is"
+		if len(f.packages) > 1 {
+			verb = "are"
+		}
+		out = append(out, fmt.Sprintf("tags %s read as version %s, and %s %s taken from %s; the recipe needs a tagVersion that tells them apart",
+			joinNames(f.names), f.used.version, joinNames(f.packages), verb, f.used.name))
+	}
+	return out
 }
 
 // joinNames lists names as "a and b" or "a, b and c".
