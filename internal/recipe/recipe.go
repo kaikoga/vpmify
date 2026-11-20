@@ -456,6 +456,8 @@ func (p *Package) checkOverlays() error {
 			return fmt.Errorf("overlays[%d]: %w", i, err)
 		}
 		o.Path = strings.Trim(o.Path, "/")
+		// The listing key is made of Overlays, as written but for the slashes.
+		p.Overlays[i].Path = o.Path
 		if o.Resolve != "" {
 			return fmt.Errorf("overlays[%d]: resolve is not supported yet; write url and commit", i)
 		}

@@ -207,6 +207,10 @@ func TestListingKey(t *testing.T) {
 	if key(`, "path": "A", "overlays": []`) != base {
 		t.Error("no overlays changed the key")
 	}
+	// Slashes around an overlay's folder are dropped in the key too.
+	if key(`, "path": "A", "overlays": [`+overlay("", "/Sub/", commitA)+`]`) != key(`, "path": "A", "overlays": [`+overlay("", "Sub", commitA)+`]`) {
+		t.Error("slashes around an overlay's path changed the key")
+	}
 	// So does another package in the source: update reads it too.
 	two := mustParse(t, `{"vpmifyFormat": 1, "id": "pkg", "sources": [{`+gitSourceHead+`, "packages": [{"name": "com.example.pkg", "path": "A"}, {"name": "b"}]}]}`)
 	if two.Sources[0].ListingKey() == base {

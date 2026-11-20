@@ -173,8 +173,8 @@ func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, []string, 
 	return out, warnings, nil
 }
 
-// tags lists the tags whose name reads as a version the recipe accepts, oldest first, and warns of tags that read as
-// one version.
+// tags lists the tags whose name reads as a version the recipe accepts,
+// oldest first, and warns of tags that read as one version.
 func (g *GitHub) tags(ctx context.Context) ([]tag, []string, error) {
 	readVersion := g.TagVersion
 	if readVersion == nil {
