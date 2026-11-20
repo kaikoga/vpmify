@@ -47,6 +47,65 @@
                   "com.vrmc.gltf": "={dependencies}"
                 }
               }
+            },
+            {
+              "versions": ">=0.32.0 <0.33.0",
+              "set": {
+                "dependencies": {
+                  "com.vrmc.univrm": "0.67.1",
+                  "com.vrmc.vrmshaders": "0.67.1",
+                  "com.vrmc.unigltf": "2.3.1",
+                  "com.unity.textmeshpro": "2.1.6"
+                }
+              }
+            },
+            {
+              "versions": ">=0.33.0 <0.35.0",
+              "set": {
+                "dependencies": {
+                  "com.vrmc.vrm": "0.88.0",
+                  "com.vrmc.univrm": "0.88.0",
+                  "com.vrmc.vrmshaders": "0.88.0",
+                  "com.vrmc.gltf": "0.88.0",
+                  "com.unity.textmeshpro": "2.1.6"
+                }
+              }
+            },
+            {
+              "versions": ">=0.35.0 <0.39.0",
+              "set": {
+                "dependencies": {
+                  "com.vrmc.vrm": "0.101.1",
+                  "com.vrmc.univrm": "0.101.1",
+                  "com.vrmc.vrmshaders": "0.101.1",
+                  "com.vrmc.gltf": "0.101.1",
+                  "com.unity.textmeshpro": "3.0.6"
+                }
+              }
+            },
+            {
+              "versions": ">=0.39.0 <0.41.0",
+              "set": {
+                "dependencies": {
+                  "com.vrmc.vrm": "0.107.0",
+                  "com.vrmc.univrm": "0.107.0",
+                  "com.vrmc.vrmshaders": "0.107.0",
+                  "com.vrmc.gltf": "0.107.0",
+                  "com.unity.textmeshpro": "3.0.6"
+                }
+              }
+            },
+            {
+              "versions": ">=0.41.0 <0.42.0",
+              "set": {
+                "dependencies": {
+                  "com.vrmc.vrm": "0.108.0",
+                  "com.vrmc.univrm": "0.108.0",
+                  "com.vrmc.vrmshaders": "0.108.0",
+                  "com.vrmc.gltf": "0.108.0",
+                  "com.unity.textmeshpro": "3.0.6"
+                }
+              }
             }
           ]
         },
