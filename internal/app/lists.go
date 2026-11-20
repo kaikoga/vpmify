@@ -103,7 +103,7 @@ func (l *pkgList) usable(rel source.Release) bool {
 }
 
 // fingerprint returns the fingerprint of rel built with the overrides
-// expanded for it.
+// expanded for it and its overlays.
 func (l *pkgList) fingerprint(rel source.Release, expanded []map[string]json.RawMessage) string {
 	var overlays []recipe.BuiltOverlay
 	for _, o := range rel.Overlays {

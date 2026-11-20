@@ -83,7 +83,7 @@ type Package struct {
 	Overrides      []Override      `json:"overrides,omitempty"`
 	// Overlays put content from other repositories into folders of the
 	// package (Git sources). GitHub's archives leave a Git submodule out as an
-	// empty folder, and UniVRM before v0.125.0 has MToon as one. An overlay
+	// empty folder, and UniVRM before v0.124.2 has MToon as one. An overlay
 	// is not a Git submodule but another source unpacked into a subfolder,
 	// which the recipe names (kaikoga 2026-11-20).
 	Overlays []Overlay `json:"overlays,omitempty"`
