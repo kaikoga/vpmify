@@ -99,7 +99,7 @@ type tag struct {
 // (kaikoga 2026-11-19). Each release keeps the versions the other packages
 // have in its tag.
 func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, []string, error) {
-	tags, warnings, err := g.tags(ctx)
+	tags, err := g.tags(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -123,6 +123,14 @@ func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, []string, 
 	if err := errors.Join(errs...); err != nil {
 		return nil, nil, err
 	}
+	warnings := sameVersionWarnings(tags, func(i int) bool {
+		for j := range n {
+			if found[i*n+j] != nil {
+				return true
+			}
+		}
+		return false
+	})
 	out := map[string][]Release{}
 	for j, p := range g.Packages {
 		// chosen is the tag each version is taken from, by version.
@@ -167,8 +175,8 @@ func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, []string, 
 }
 
 // tags lists the tags whose name reads as a version the recipe accepts,
-// oldest first, and warns of tags that read as one version.
-func (g *GitHub) tags(ctx context.Context) ([]tag, []string, error) {
+// oldest first.
+func (g *GitHub) tags(ctx context.Context) ([]tag, error) {
 	readVersion := g.TagVersion
 	if readVersion == nil {
 		readVersion = func(name string) (semver.Version, bool) {
@@ -179,11 +187,11 @@ func (g *GitHub) tags(ctx context.Context) ([]tag, []string, error) {
 	u := fmt.Sprintf("%s/%s/%s.git/info/refs?service=git-upload-pack", g.GitBase, g.Owner, g.Repo)
 	data, err := g.Client.GetBytes(ctx, u)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	refs, err := parseRefAdvertisement(data)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%s: %w", u, err)
+		return nil, fmt.Errorf("%s: %w", u, err)
 	}
 	var out []tag
 	for name, commit := range refs {
@@ -208,18 +216,40 @@ func (g *GitHub) tags(ctx context.Context) ([]tag, []string, error) {
 		}
 		return naturalLess(out[i].name, out[j].name)
 	})
-	// Two tags that read as one version are warned of, and the older is used,
-	// as for package versions that come in several tags: a repository whose
-	// owner did not write the recipe may add such tags, and they must not
-	// stop the recipe (kaikoga 2026-11-19). The warning comes without a
-	// tagVersion rule too, for v1.2.3 beside 1.2.3 (kaikoga 2026-11-20).
+	return out, nil
+}
+
+// sameVersionWarnings warns of tags that read as one version, of those that
+// make a package version (made). The oldest of them is used, as for package
+// versions that come in several tags: a repository whose owner did not write
+// the recipe may add such tags, and they must not stop the recipe (kaikoga
+// 2026-11-19). The warning comes without a tagVersion rule too, for v1.2.3
+// beside 1.2.3 (kaikoga 2026-11-20). A tag that makes no package version is
+// left out, as it is not what is used.
+func sameVersionWarnings(tags []tag, made func(i int) bool) []string {
 	var warnings []string
-	for i := 1; i < len(out); i++ {
-		if semver.Compare(out[i-1].version, out[i].version) == 0 {
-			warnings = append(warnings, fmt.Sprintf("tags %s and %s both read as version %s, and %s is used; the recipe needs a tagVersion that tells them apart", out[i-1].name, out[i].name, out[i].version, out[i-1].name))
+	for i := 0; i < len(tags); {
+		var names []string
+		j := i
+		for ; j < len(tags) && semver.Compare(tags[i].version, tags[j].version) == 0; j++ {
+			if made(j) {
+				names = append(names, tags[j].name)
+			}
 		}
+		if len(names) > 1 {
+			warnings = append(warnings, fmt.Sprintf("tags %s read as version %s, and %s is used; the recipe needs a tagVersion that tells them apart", joinNames(names), tags[i].version, names[0]))
+		}
+		i = j
 	}
-	return out, warnings, nil
+	return warnings
+}
+
+// joinNames lists names as "a and b" or "a, b and c".
+func joinNames(names []string) string {
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
 // naturalLess orders names with their runs of digits compared by value, so

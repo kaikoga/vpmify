@@ -111,7 +111,7 @@ The example reads the tag `0.15.2.2` as 0.15.2002, and the tag `0.15.2` as 0.15.
 - A tag whose result is not SemVer is not read, nor is a tag with a group longer than its padding (a fourth group of 4 digits in the example).
 - Leading zeros of the numbers are dropped.
 
-When two tags read as one version (also without `tagVersion`, when the repository has both `v1.2.3` and `1.2.3`), Vpmify warns and uses the one whose name comes first. Write a `tagVersion` that tells them apart.
+When two tags that hold a package of the source read as one version (also without `tagVersion`, when the repository has both `v1.2.3` and `1.2.3`), Vpmify warns and uses the one whose name comes first. Write a `tagVersion` that tells them apart.
 
 ## Ranges
 

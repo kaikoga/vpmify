@@ -111,8 +111,8 @@ func TestGitHubTagVersion(t *testing.T) {
 	if want := []string{"0.15.2 tag 0.15.2.1"}; !reflect.DeepEqual(summary, want) {
 		t.Errorf("releases = %q, want %q", summary, want)
 	}
-	if len(warnings) != 3 || !strings.Contains(warnings[0], "tags 0.15.2.1 and 0.15.2.2 both read as version 0.15.2, and 0.15.2.1 is used") ||
-		!strings.Contains(warnings[2], "tags 0.15.2.9 and 0.15.2.10") {
+	// One warning per version names every tag of it, and the one used.
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "tags 0.15.2.1, 0.15.2.2, 0.15.2.9 and 0.15.2.10 read as version 0.15.2, and 0.15.2.1 is used") {
 		t.Errorf("warnings = %q", warnings)
 	}
 }
@@ -270,7 +270,32 @@ func TestGitHubWarnsOfTagsThatReadAsOneVersionWithoutARule(t *testing.T) {
 	if want := []string{"1.0.0 tag 1.0.0", "1.1.0 tag v1.1.0"}; !reflect.DeepEqual(summary, want) {
 		t.Errorf("releases = %q, want %q", summary, want)
 	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0], "tags 1.0.0 and v1.0.0 both read as version 1.0.0, and 1.0.0 is used") {
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "tags 1.0.0 and v1.0.0 read as version 1.0.0, and 1.0.0 is used") {
+		t.Errorf("warnings = %q", warnings)
+	}
+}
+
+// A tag that makes no package version is not used, and not in the warning:
+// v2.0.0 is used though 2.0.0 is older, and 3.0.0 beside v3.0.0 warns of
+// nothing.
+func TestGitHubWarnsOnlyOfTagsThatMakeAVersion(t *testing.T) {
+	gh := testutil.NewFakeGitHub("owner", "repo")
+	gh.Tag("2.0.0", map[string]string{"package.json": manifest("com.example.other", "2.0.0")})
+	gh.Tag("v2.0.0", map[string]string{"package.json": manifest("com.example.pkg", "2.0.0")})
+	gh.Tag("v2.0.0-old", map[string]string{"package.json": manifest("com.example.pkg", "2.0.0")})
+	gh.Tag("3.0.0", map[string]string{"README.md": ""})
+	gh.Tag("v3.0.0", map[string]string{"README.md": ""})
+	src := newSource(t, gh, `{"vpmifyFormat": 1, "id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
+  "tagVersion": {"match": "v?(\\d+\\.\\d+\\.\\d+)(-old)?", "version": "{1}"},
+  "packages": [{"name": "com.example.pkg"}]}]}`)
+	all, warnings, err := src.Releases(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := all["com.example.pkg"]; len(got) != 1 || got[0].Origin != "tag v2.0.0" {
+		t.Errorf("releases = %+v", got)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "tags v2.0.0 and v2.0.0-old read as version 2.0.0, and v2.0.0 is used") {
 		t.Errorf("warnings = %q", warnings)
 	}
 }
