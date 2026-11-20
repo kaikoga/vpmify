@@ -11,6 +11,21 @@
           "name": "com.vrmc.vrmshaders",
           "paths": [
             { "tags": "<0.125.0", "path": "Assets/VRMShaders" }
+          ],
+          "overlays": [
+            { "tags": ">=0.56.0 <0.59.0", "path": "MToon", "url": "https://github.com/Santarh/MToon", "commit": "4ee8bb0b65a9bbca40b0e050e1f4cc417923af16" },
+            { "tags": ">=0.59.0 <0.64.0", "path": "MToon", "url": "https://github.com/Santarh/MToon", "commit": "41a3744e7ccd16b4ba1cbcb2f703779bb0b1cfb9" },
+            { "tags": ">=0.64.0 <0.66.0", "path": "MToon", "url": "https://github.com/Santarh/MToon", "commit": "7e3a473b10e2ceb8a7ee130e1924fe567950b15a" },
+            { "tags": ">=0.66.0 <0.67.6", "path": "MToon", "url": "https://github.com/Santarh/MToon", "commit": "cbf459cc899b00fe0d2e2c05d91ff83f8befaa23" },
+            { "tags": ">=0.67.6 <0.67.8", "path": "MToon", "url": "https://github.com/Santarh/MToon", "commit": "f9e84d2525e572c51372de1f1d23986ba2f2612c" },
+            { "tags": ">=0.67.8 <0.68.0", "path": "MToon", "url": "https://github.com/Santarh/MToon", "commit": "186ddee11fa3732ffcbfd3a4639be8c06f6456e1" },
+            { "tags": ">=0.68.0 <0.71.0", "path": "MToon", "url": "https://github.com/Santarh/MToon", "commit": "cbf459cc899b00fe0d2e2c05d91ff83f8befaa23" },
+            { "tags": ">=0.71.0 <0.73.0", "path": "MToon", "url": "https://github.com/Santarh/MToon", "commit": "bef0e20b5c81f3a4cdeb1b5de9efadc366be71e6" },
+            { "tags": ">=0.73.0 <0.77.0", "path": "VRM/MToon", "url": "https://github.com/Santarh/MToon", "commit": "bef0e20b5c81f3a4cdeb1b5de9efadc366be71e6" },
+            { "tags": ">=0.77.0 <0.80.0", "path": "VRM/MToon", "url": "https://github.com/Santarh/MToon", "commit": "f9e84d2525e572c51372de1f1d23986ba2f2612c" },
+            { "tags": ">=0.80.0 <0.98.0", "path": "VRM/MToon", "url": "https://github.com/Santarh/MToon", "commit": "e7b15eed3be9aec5400ec31f21ce664350368d3f" },
+            { "tags": ">=0.98.0 <0.107.0", "path": "VRM/MToon", "url": "https://github.com/Santarh/MToon", "commit": "f451d61513b137e8e39338d328ffca73d8744f0a" },
+            { "tags": ">=0.107.0 <0.124.2", "path": "VRM/MToon", "url": "https://github.com/Santarh/MToon", "commit": "42b03163459ac8e6b7aee08070d0f4f912035069" }
           ]
         },
         {
