@@ -204,4 +204,21 @@ func TestOverridesMerge(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "keywords is not an object") {
 		t.Errorf("merge into an array: err = %v", err)
 	}
+
+	// null removes a key, and makes no field where there is none.
+	null := map[string]json.RawMessage{"z": raw(`null`), "nowhere": raw(`null`)}
+	if err := ApplyOverrides(dir, []recipe.Edit{{Merge: map[string]map[string]json.RawMessage{"dependencies": null, "samples": null}}}); err != nil {
+		t.Fatal(err)
+	}
+	var m struct {
+		Dependencies map[string]string `json:"dependencies"`
+		Samples      json.RawMessage   `json:"samples"`
+	}
+	got, _ = os.ReadFile(p)
+	if err := json.Unmarshal(got, &m); err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]string{"b": "2.0.0", "a": "2.0.0"}; !reflect.DeepEqual(m.Dependencies, want) || m.Samples != nil {
+		t.Errorf("dependencies = %v, want %v; samples = %s", m.Dependencies, want, m.Samples)
+	}
 }

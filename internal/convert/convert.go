@@ -163,7 +163,8 @@ func CheckManifest(dir, name, version string) error {
 // ApplyOverrides writes the edits into package.json at the root of dir, in
 // order, and in each its set before its merge. A null value in set removes
 // the field. merge adds keys to a field, which it makes when package.json
-// has none or null there; a field that is not an object cannot take them.
+// has none or null there, and a null value removes the key; a field that is
+// not an object cannot take them.
 // Other fields, and the keys already in a field, keep their order.
 func ApplyOverrides(dir string, edits []recipe.Edit) error {
 	if len(edits) == 0 {
@@ -193,13 +194,23 @@ func ApplyOverrides(dir string, edits []recipe.Edit) error {
 				continue
 			}
 			field := ojson.New()
-			if raw, ok := obj.Get(key); ok && string(raw) != "null" {
+			raw, had := obj.Get(key)
+			had = had && string(raw) != "null"
+			if had {
 				if field, err = ojson.Parse(raw); err != nil {
 					return fmt.Errorf("package.json %s is not an object, so the recipe cannot merge into it", key)
 				}
 			}
 			for _, k := range sortedKeys(add) {
+				if string(add[k]) == "null" {
+					field.Delete(k)
+					continue
+				}
 				field.Set(k, add[k])
+			}
+			// Removing keys from a field that is not there makes no field.
+			if !had && len(field.Keys()) == 0 {
+				continue
 			}
 			raw, err := field.MarshalJSON()
 			if err != nil {

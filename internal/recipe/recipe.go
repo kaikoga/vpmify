@@ -139,9 +139,9 @@ type Override struct {
 // Edit is what an override does to package.json. Set replaces a field, and
 // a null value removes it. Merge adds keys to a field that is an object, or
 // replaces their values, and makes the field when package.json has none, so
-// that a recipe adds a dependency without copying upstream's (kaikoga
-// 2026-11-20); a field whose keys must go takes Set. In one override Set
-// comes before Merge.
+// that a recipe adds a dependency without copying upstream's; a null value
+// removes the key, as it removes the field in Set (kaikoga 2026-11-20). In
+// one override Set comes before Merge.
 type Edit struct {
 	Set   map[string]json.RawMessage            `json:"set,omitempty"`
 	Merge map[string]map[string]json.RawMessage `json:"merge,omitempty"`
@@ -377,16 +377,9 @@ func (p *Package) check(s *Source, siblings map[string]bool) error {
 				return fmt.Errorf("overrides[%d] must not set %q", i, k)
 			}
 		}
-		for field, keys := range o.Merge {
+		for field := range o.Merge {
 			if protectedFields[field] {
 				return fmt.Errorf("overrides[%d] must not merge into %q", i, field)
-			}
-			for k, raw := range keys {
-				// What null does in merge is not decided: it may come to
-				// remove the key, as it removes the field in set.
-				if string(raw) == "null" {
-					return fmt.Errorf("overrides[%d].merge.%s.%s is null: merge adds keys, and set replaces the field", i, field, k)
-				}
 			}
 		}
 		if keys, ok := o.Merge["vpmDependencies"]; ok {
@@ -731,12 +724,14 @@ func (p *Package) ExpandedOverridesFor(v semver.Version, upstream, sameTag map[s
 			merged := make(map[string]string, len(deps)+len(keys))
 			maps.Copy(merged, deps)
 			for name, raw := range keys {
-				var value string
-				if err := json.Unmarshal(raw, &value); err != nil {
+				// null removes the key, and what is not a version string
+				// names no version.
+				var value *string
+				if err := json.Unmarshal(raw, &value); err != nil || value == nil {
 					delete(merged, name)
 					continue
 				}
-				merged[name] = value
+				merged[name] = *value
 			}
 			deps = merged
 		}
@@ -782,6 +777,10 @@ func (p *Package) ExpandedOverridesFor(v semver.Version, upstream, sameTag map[s
 		if keys, ok := e.Merge["vpmDependencies"]; ok {
 			expanded := make(map[string]json.RawMessage, len(keys))
 			for name, raw := range keys {
+				if string(raw) == "null" {
+					expanded[name] = raw
+					continue
+				}
 				var value string
 				if err := json.Unmarshal(raw, &value); err != nil {
 					return nil, err

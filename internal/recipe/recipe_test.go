@@ -287,11 +287,31 @@ func TestExpandedOverrides(t *testing.T) {
 	}
 }
 
+// null in merge removes the key: {dependencies} no longer reads it, and in
+// vpmDependencies it goes to the conversion as it is.
+func TestMergeNullRemovesTheKey(t *testing.T) {
+	_, p := onlyPackage(t, gitRecipe(`, "overrides": [
+    {"merge": {"vpmDependencies": {"a": "={dependencies}", "b": null}}},
+    {"versions": ">=2.0.0", "merge": {"dependencies": {"a": null}}}
+  ]`))
+	upstream := map[string]string{"a": "0.1.0"}
+	edits, err := p.ExpandedOverridesFor(version(t, "1.0.0"), upstream, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged := edits[0].Merge["vpmDependencies"]
+	if string(merged["a"]) != `"=0.1.0"` || string(merged["b"]) != `null` {
+		t.Errorf("merge vpmDependencies = %s", merged)
+	}
+	if _, err := p.ExpandedOverridesFor(version(t, "2.0.0"), upstream, nil); err == nil || !strings.Contains(err.Error(), "no UPM dependency on a") {
+		t.Errorf("2.0.0: err = %v", err)
+	}
+}
+
 func TestMergeRejected(t *testing.T) {
 	cases := []struct{ name, overrides, want string }{
 		{"neither", `{"versions": ">=1.0.0"}`, "neither set nor merge"},
 		{"not an object", `{"merge": {"dependencies": "1.0.0"}}`, "merge"},
-		{"null key", `{"merge": {"dependencies": {"a": null}}}`, "merge.dependencies.a is null"},
 		{"version", `{"merge": {"version": {"a": "b"}}}`, `must not merge into "version"`},
 		{"unknown placeholder", `{"merge": {"vpmDependencies": {"a": "={self}"}}}`, "merge.vpmDependencies"},
 		{"sameTag on itself", `{"merge": {"vpmDependencies": {"com.example.pkg": "={sameTag}"}}}`, "itself"},
