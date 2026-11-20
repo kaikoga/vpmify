@@ -169,6 +169,9 @@ func Load(path string) (*Recipe, error) {
 
 // Parse reads and checks a recipe.
 func Parse(data []byte) (*Recipe, error) {
+	// Editors on Windows may save UTF-8 with a byte order mark, which
+	// encoding/json does not take.
+	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var r Recipe

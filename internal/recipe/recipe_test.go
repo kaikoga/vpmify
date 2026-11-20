@@ -122,6 +122,12 @@ func TestParseRejects(t *testing.T) {
 	}
 }
 
+func TestParseTakesByteOrderMark(t *testing.T) {
+	if r, err := Parse([]byte("\xef\xbb\xbf" + gitRecipe(``))); err != nil || r.ID != "pkg" {
+		t.Errorf("recipe = %+v, err = %v", r, err)
+	}
+}
+
 func TestExamplesParse(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join("..", "..", "examples", "*.json"))
 	if err != nil || len(files) == 0 {
