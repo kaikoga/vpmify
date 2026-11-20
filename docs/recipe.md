@@ -45,7 +45,7 @@ recipe
       └─ overrides[]
 ```
 
-- Vpmify ignores the fields that are not described here. You may add `$schema`, or fields for your own notes. A misspelled field name is not an error either: the recipe is read as if the field were not there. A range (`versions`, `tags`) that is not there means every version, so take care with the spelling.
+- Vpmify ignores the fields that are not described here. You may add `$schema`, or fields for your own notes. A misspelled field name is not an error either: the recipe is read as if the field were not there. Field names are case-sensitive, so `Versions` is a misspelling of `versions`. A range (`versions`, `tags`) that is not there means every version, so take care with the spelling.
 - A package name may come only once in a recipe.
 
 ## Recipe

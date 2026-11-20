@@ -204,7 +204,7 @@ func (v *VersionFromTag) UnmarshalJSON(data []byte) error {
 	var obj struct {
 		Tags string `json:"tags"`
 	}
-	if err := json.Unmarshal(data, &obj); err != nil {
+	if err := unmarshalExact(data, &obj); err != nil {
 		return fmt.Errorf(`versionFromTag: want true or {"tags": "<range>"}: %w`, err)
 	}
 	if obj.Tags == "" {

@@ -216,7 +216,7 @@ func Parse(data []byte) (*Recipe, error) {
 	var head struct {
 		Format *int `json:"vpmifyFormat"`
 	}
-	if err := json.Unmarshal(data, &head); err != nil {
+	if err := unmarshalExact(data, &head); err != nil {
 		var typeErr *json.UnmarshalTypeError
 		if !errors.As(err, &typeErr) {
 			return nil, err
@@ -235,7 +235,7 @@ func Parse(data []byte) (*Recipe, error) {
 		return nil, fmt.Errorf("the recipe is in format %d, and this Vpmify reads up to format %d: a newer Vpmify is needed", *head.Format, Format)
 	}
 	var r Recipe
-	if err := json.Unmarshal(data, &r); err != nil {
+	if err := unmarshalExact(data, &r); err != nil {
 		return nil, err
 	}
 	if err := r.check(); err != nil {
