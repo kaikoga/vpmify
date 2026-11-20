@@ -172,13 +172,13 @@ func TestGitHubReleases(t *testing.T) {
 	gh.Tag("v1.2.0", map[string]string{"Packages/Pkg/package.json": manifest("com.example.pkg", "2.0.0")})
 	// Renamed: another package now.
 	gh.Tag("v1.3.0", map[string]string{"Packages/Pkg/package.json": manifest("com.example.renamed", "1.3.0")})
-	// Not SemVer, and not matching the pattern.
+	// Not SemVer, with and without the "v".
 	gh.Tag("v0.28", map[string]string{"Assets/Pkg/package.json": manifest("com.example.pkg", "0.28.0")})
 	gh.Tag("Samples", map[string]string{"Assets/Pkg/package.json": manifest("com.example.pkg", "0.0.1")})
 
 	src := newSource(t, gh, `{
   "id": "pkg",
-  "sources": [{"type": "github", "url": "https://github.com/owner/repo.git", "tagPattern": "v*", "tags": ">=0.9.0",
+  "sources": [{"type": "github", "url": "https://github.com/owner/repo.git", "tags": ">=0.9.0",
     "packages": [{"name": "com.example.pkg",
       "paths": [{"tags": ">=1.1.0", "path": "Packages/Pkg"}, {"tags": "<1.1.0", "path": "Assets/Pkg"}]}]}]
 }`)
@@ -227,7 +227,7 @@ func TestGitHubOverlaysFollowTheTag(t *testing.T) {
 	gh.Tag("v1.0.0", map[string]string{"package.json": manifest("com.example.pkg", "1.0.0")})
 	gh.Tag("v1.1.0", map[string]string{"package.json": manifest("com.example.pkg", "3.0.0")})
 	const a, b = "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222"
-	recipeJSON := `{"id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo", "tagPattern": "v*",
+	recipeJSON := `{"id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
   "packages": [{"name": "com.example.pkg", "overlays": [
     {"tags": "<1.1.0", "path": "Sub", "url": "https://github.com/other/sub.git", "commit": "` + a + `"},
     {"tags": ">=1.1.0", "path": "Lib/Sub", "url": "https://github.com/other/sub", "commit": "` + b + `"}]}]}]}`

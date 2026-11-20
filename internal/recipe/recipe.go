@@ -43,14 +43,15 @@ type Source struct {
 	Type string `json:"type"`
 	// Registry is for npm-compatible registries.
 	Registry string `json:"registry,omitempty"`
-	// URL, TagPattern, TagVersion and Tags are for Git repositories.
-	// TagPattern is a glob on tag names (default "*"). Tags is a range on the
-	// version of the tag (its name with a leading "v" dropped, or as
+	// URL, TagVersion and Tags are for Git repositories. Tags is a range on
+	// the version of the tag (its name with a leading "v" dropped, or as
 	// TagVersion reads it), which limits the tags Vpmify reads; it differs
 	// from Package.Versions, the range on the package's version, because a
-	// repository's tags need not follow its packages' versions.
+	// repository's tags need not follow its packages' versions. There is no
+	// pattern on tag names beside them: a tag that does not read as a version
+	// is not read, and TagVersion's match chooses among names (kaikoga
+	// 2026-11-20).
 	URL        string      `json:"url,omitempty"`
-	TagPattern string      `json:"tagPattern,omitempty"`
 	TagVersion *TagVersion `json:"tagVersion,omitempty"`
 	Tags       string      `json:"tags,omitempty"`
 	Packages   []*Package  `json:"packages"`
@@ -227,8 +228,8 @@ func (s *Source) check() error {
 		if u, err := url.Parse(s.Registry); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 			return fmt.Errorf("registry %q is not an http(s) URL", s.Registry)
 		}
-		if s.URL != "" || s.TagPattern != "" || s.TagVersion != nil || s.Tags != "" {
-			return fmt.Errorf("npm source takes no url, tagPattern, tagVersion or tags")
+		if s.URL != "" || s.TagVersion != nil || s.Tags != "" {
+			return fmt.Errorf("npm source takes no url, tagVersion or tags")
 		}
 	case SourceGitHub:
 		if s.URL == "" {
@@ -239,9 +240,6 @@ func (s *Source) check() error {
 		}
 		if s.Registry != "" {
 			return fmt.Errorf("github source takes no registry")
-		}
-		if _, err := path.Match(s.TagPattern, ""); err != nil {
-			return fmt.Errorf("tagPattern: %w", err)
 		}
 		if s.TagVersion != nil {
 			rule, err := parseTagVersion(s.TagVersion)
@@ -515,19 +513,16 @@ func (p *Package) OverlaysFor(v semver.Version) []Overlay {
 }
 
 // sourceFields are the fields of a source without its packages.
-// TagVersion is omitted when empty, so that the keys and fingerprints of
-// recipes without it stay what they were before it came.
 type sourceFields struct {
 	Type       string      `json:"type"`
 	Registry   string      `json:"registry"`
 	URL        string      `json:"url"`
-	TagPattern string      `json:"tagPattern"`
 	Tags       string      `json:"tags"`
 	TagVersion *TagVersion `json:"tagVersion,omitempty"`
 }
 
 func (s *Source) fields() sourceFields {
-	return sourceFields{s.Type, s.Registry, s.URL, s.TagPattern, s.Tags, s.TagVersion}
+	return sourceFields{s.Type, s.Registry, s.URL, s.Tags, s.TagVersion}
 }
 
 // ListingKey identifies what decides the versions the source's version list

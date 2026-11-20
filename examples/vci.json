@@ -4,7 +4,6 @@
     {
       "type": "github",
       "url": "https://github.com/virtual-cast/VCI.git",
-      "tagPattern": "v*",
       "tags": ">=0.32.0",
       "packages": [
         {

@@ -59,7 +59,7 @@ const pkgNeedsBase = `,
 func gitRecipe(id, sourceExtra string, packages ...string) string {
 	return fmt.Sprintf(`{
   "id": %q,
-  "sources": [{"type": "github", "url": %q, "tagPattern": "v*"%s, "packages": [%s]}]
+  "sources": [{"type": "github", "url": %q%s, "packages": [%s]}]
 }`, id, monoURL, sourceExtra, strings.Join(packages, ", "))
 }
 

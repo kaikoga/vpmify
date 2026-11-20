@@ -4,7 +4,6 @@
     {
       "type": "github",
       "url": "https://github.com/vrm-c/UniVRM.git",
-      "tagPattern": "v*",
       "tags": ">=0.56.0",
       "packages": [
         {

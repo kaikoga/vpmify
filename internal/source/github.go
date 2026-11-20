@@ -31,7 +31,6 @@ import (
 type GitHub struct {
 	Owner, Repo string
 	Packages    []GitHubPackage
-	TagPattern  string
 	// TagVersion reads the version of a tag from its name; false means the
 	// tag is not read.
 	TagVersion func(name string) (semver.Version, bool)
@@ -72,10 +71,6 @@ func NewGitHub(s *recipe.Source, client *fetch.Client, cacheDir string) (*GitHub
 	if err != nil {
 		return nil, err
 	}
-	pattern := s.TagPattern
-	if pattern == "" {
-		pattern = "*"
-	}
 	var pkgs []GitHubPackage
 	for _, p := range s.Packages {
 		pkgs = append(pkgs, GitHubPackage{Name: p.Name, PathFor: p.PathFor, VersionFromTag: p.TakesTagVersion, OverlaysFor: p.OverlaysFor})
@@ -83,7 +78,6 @@ func NewGitHub(s *recipe.Source, client *fetch.Client, cacheDir string) (*GitHub
 	return &GitHub{
 		Owner: owner, Repo: repo,
 		Packages:           pkgs,
-		TagPattern:         pattern,
 		TagVersion:         s.TagVersionOf,
 		WarnSameTagVersion: s.HasTagVersionRule(),
 		AcceptTag:          s.AcceptsTag,
@@ -179,8 +173,7 @@ func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, []string, 
 	return out, warnings, nil
 }
 
-// tags lists the tags that match the pattern and whose name reads as a
-// version the recipe accepts, oldest first, and warns of tags that read as
+// tags lists the tags whose name reads as a version the recipe accepts, oldest first, and warns of tags that read as
 // one version.
 func (g *GitHub) tags(ctx context.Context) ([]tag, []string, error) {
 	readVersion := g.TagVersion
@@ -203,9 +196,6 @@ func (g *GitHub) tags(ctx context.Context) ([]tag, []string, error) {
 	for name, commit := range refs {
 		tagName, ok := strings.CutPrefix(name, "refs/tags/")
 		if !ok {
-			continue
-		}
-		if ok, _ := path.Match(g.TagPattern, tagName); !ok {
 			continue
 		}
 		v, ok := readVersion(tagName)

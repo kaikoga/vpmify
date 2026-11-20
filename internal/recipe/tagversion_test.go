@@ -81,7 +81,7 @@ func TestTagVersionRejects(t *testing.T) {
 		{"close brace", tagRecipe("1}.2"), "without '{'"},
 		{"bad match", `{"id": "pkg", "sources": [{` + gitSourceHead + `, "tagVersion": {"match": "(", "version": "1.0.0"}, "packages": [{"name": "p"}]}]}`, "match:"},
 		{"no version", `{"id": "pkg", "sources": [{` + gitSourceHead + `, "tagVersion": {"match": ".*"}, "packages": [{"name": "p"}]}]}`, "needs match and version"},
-		{"npm with tagVersion", `{"id": "pkg", "sources": [{"type": "npm", "registry": "https://r", "tagVersion": {"match": ".*", "version": "1.0.0"}, "packages": [{"name": "p"}]}]}`, "takes no url, tagPattern, tagVersion"},
+		{"npm with tagVersion", `{"id": "pkg", "sources": [{"type": "npm", "registry": "https://r", "tagVersion": {"match": ".*", "version": "1.0.0"}, "packages": [{"name": "p"}]}]}`, "takes no url, tagVersion"},
 		{"npm with versionFromTag", `{"id": "pkg", "sources": [{"type": "npm", "registry": "https://r", "packages": [{"name": "p", "versionFromTag": true}]}]}`, "versionFromTag"},
 	}
 	for _, c := range cases {
