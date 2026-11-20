@@ -23,12 +23,8 @@
           "name": "com.hikky.editortutorialsystem",
           "overrides": [
             {
-              "versions": ">=0.3.1 <1.2.2",
-              "set": { "dependencies": { "com.unity.ugui": "1.0.0" } }
-            },
-            {
-              "versions": ">=1.2.2 <=1.2.6",
-              "set": { "dependencies": { "com.unity.nuget.newtonsoft-json": "3.0.2", "com.unity.ugui": "1.0.0" } }
+              "versions": ">=0.3.1",
+              "merge": { "dependencies": { "com.unity.ugui": "1.0.0" } }
             }
           ]
         }

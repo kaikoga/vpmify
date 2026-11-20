@@ -1058,7 +1058,7 @@ func appendRelease(list []source.Release, rel source.Release) []source.Release {
 // overrides as expanded for it, and renames it into the store. A version
 // already in the store is swapped out only after the new one is complete,
 // so ALCOM never sees a half-built folder at the registered path.
-func (a *App) build(ctx context.Context, name string, rel source.Release, overrides []map[string]json.RawMessage, dir string) error {
+func (a *App) build(ctx context.Context, name string, rel source.Release, overrides []recipe.Edit, dir string) error {
 	archive, err := a.archive(ctx, rel.ArchiveURL, rel.CacheKey, rel.Digests, rel.Pinned)
 	if err != nil {
 		return err
@@ -1115,7 +1115,7 @@ func (a *App) build(ctx context.Context, name string, rel source.Release, overri
 		if err != nil {
 			return err
 		}
-		overrides = append([]map[string]json.RawMessage{{"version": version}}, overrides...)
+		overrides = append([]recipe.Edit{{Set: map[string]json.RawMessage{"version": version}}}, overrides...)
 	}
 	if err := convert.ApplyOverrides(pkg, overrides); err != nil {
 		return err

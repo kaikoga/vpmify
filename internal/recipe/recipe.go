@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"path"
@@ -121,16 +122,27 @@ type parsedPathRule struct {
 	path string
 }
 
-// Override sets top-level fields of package.json for the versions in range.
-// A null value removes the field.
+// Override changes top-level fields of package.json for the versions in
+// range.
 type Override struct {
-	Versions string                     `json:"versions,omitempty"`
-	Set      map[string]json.RawMessage `json:"set"`
+	Versions string `json:"versions,omitempty"`
+	Edit
+}
+
+// Edit is what an override does to package.json. Set replaces a field, and
+// a null value removes it. Merge adds keys to a field that is an object, or
+// replaces their values, and makes the field when package.json has none, so
+// that a recipe adds a dependency without copying upstream's (kaikoga
+// 2026-11-20); a field whose keys must go takes Set. In one override Set
+// comes before Merge.
+type Edit struct {
+	Set   map[string]json.RawMessage            `json:"set,omitempty"`
+	Merge map[string]map[string]json.RawMessage `json:"merge,omitempty"`
 }
 
 type parsedOverride struct {
 	versions semver.Range
-	set      map[string]json.RawMessage
+	Edit
 }
 
 // Overlay puts commit Commit of the GitHub repository URL into folder Path
@@ -347,8 +359,8 @@ func (p *Package) check(s *Source, siblings map[string]bool) error {
 		if err != nil {
 			return fmt.Errorf("overrides[%d].versions: %w", i, err)
 		}
-		if len(o.Set) == 0 {
-			return fmt.Errorf("overrides[%d].set is empty", i)
+		if len(o.Set) == 0 && len(o.Merge) == 0 {
+			return fmt.Errorf("overrides[%d] has neither set nor merge", i)
 		}
 		if err := checkVPMDependencies(o.Set["vpmDependencies"], s.Type == SourceGitHub, p.Name, siblings); err != nil {
 			return fmt.Errorf("overrides[%d].set.vpmDependencies: %w", i, err)
@@ -358,7 +370,28 @@ func (p *Package) check(s *Source, siblings map[string]bool) error {
 				return fmt.Errorf("overrides[%d] must not set %q", i, k)
 			}
 		}
-		p.overrides = append(p.overrides, parsedOverride{versions: rng, set: o.Set})
+		for field, keys := range o.Merge {
+			if protectedFields[field] {
+				return fmt.Errorf("overrides[%d] must not merge into %q", i, field)
+			}
+			for k, raw := range keys {
+				// What null does in merge is not decided: it may come to
+				// remove the key, as it removes the field in set.
+				if string(raw) == "null" {
+					return fmt.Errorf("overrides[%d].merge.%s.%s is null: merge adds keys, and set replaces the field", i, field, k)
+				}
+			}
+		}
+		if keys, ok := o.Merge["vpmDependencies"]; ok {
+			raw, err := json.Marshal(keys)
+			if err != nil {
+				return err
+			}
+			if err := checkVPMDependencies(raw, s.Type == SourceGitHub, p.Name, siblings); err != nil {
+				return fmt.Errorf("overrides[%d].merge.vpmDependencies: %w", i, err)
+			}
+		}
+		p.overrides = append(p.overrides, parsedOverride{versions: rng, Edit: o.Edit})
 	}
 	return nil
 }
@@ -600,13 +633,13 @@ func (p *Package) Accepts(v semver.Version) bool {
 	return p.versions.Contains(v)
 }
 
-// OverridesFor returns the field sets that apply to v, in recipe order, as
-// the recipe writes them.
-func (p *Package) OverridesFor(v semver.Version) []map[string]json.RawMessage {
-	var out []map[string]json.RawMessage
+// OverridesFor returns the edits that apply to v, in recipe order, as the
+// recipe writes them.
+func (p *Package) OverridesFor(v semver.Version) []Edit {
+	var out []Edit
 	for _, o := range p.overrides {
 		if o.versions.Contains(v) {
-			out = append(out, o.set)
+			out = append(out, o.Edit)
 		}
 	}
 	return out
@@ -670,74 +703,114 @@ func checkVPMDependencies(raw json.RawMessage, tagged bool, self string, sibling
 // the versions of the source's other packages in the tag v was taken from
 // that can be made available. A placeholder that cannot be filled in is an
 // error, and the version cannot be converted.
-func (p *Package) ExpandedOverridesFor(v semver.Version, upstream, sameTag map[string]string) ([]map[string]json.RawMessage, error) {
-	sets := p.OverridesFor(v)
+func (p *Package) ExpandedOverridesFor(v semver.Version, upstream, sameTag map[string]string) ([]Edit, error) {
+	edits := p.OverridesFor(v)
 	// {dependencies} reads the field as package.json has it once every
-	// override is applied, wherever in the overrides it is set.
-	for _, set := range sets {
-		raw, ok := set["dependencies"]
-		if !ok {
-			continue
+	// override is applied, wherever in the overrides it is set or merged
+	// into.
+	deps := upstream
+	for _, e := range edits {
+		if raw, ok := e.Set["dependencies"]; ok {
+			// null removes the field, and what is not an object of version
+			// strings names no version.
+			deps = nil
+			if err := json.Unmarshal(raw, &deps); err != nil {
+				deps = nil
+			}
 		}
-		// null removes the field, and what is not an object of version
-		// strings names no version.
-		upstream = nil
-		if err := json.Unmarshal(raw, &upstream); err != nil {
-			upstream = nil
+		if keys := e.Merge["dependencies"]; len(keys) > 0 {
+			merged := make(map[string]string, len(deps)+len(keys))
+			maps.Copy(merged, deps)
+			for name, raw := range keys {
+				var value string
+				if err := json.Unmarshal(raw, &value); err != nil {
+					delete(merged, name)
+					continue
+				}
+				merged[name] = value
+			}
+			deps = merged
 		}
 	}
-	var out []map[string]json.RawMessage
-	for _, set := range sets {
-		raw, ok := set["vpmDependencies"]
-		if !ok || string(raw) == "null" {
-			out = append(out, set)
-			continue
-		}
-		var deps map[string]string
-		if err := json.Unmarshal(raw, &deps); err != nil {
-			return nil, err
-		}
-		for name, value := range deps {
-			if strings.Contains(value, "{dependencies}") {
-				dep, ok := upstream[name]
-				if !ok {
-					return nil, fmt.Errorf("vpmDependencies %s uses {dependencies}, but package.json has no UPM dependency on %s", name, name)
-				}
-				value = strings.ReplaceAll(value, "{dependencies}", dep)
+	fill := func(name, value string) (string, error) {
+		if strings.Contains(value, "{dependencies}") {
+			dep, ok := deps[name]
+			if !ok {
+				return "", fmt.Errorf("vpmDependencies %s uses {dependencies}, but package.json has no UPM dependency on %s", name, name)
 			}
-			if strings.Contains(value, "{sameTag}") {
-				dep, ok := sameTag[name]
-				if !ok {
-					return nil, fmt.Errorf("vpmDependencies %s uses {sameTag}, but the same tag has no version of %s in its version list", name, name)
-				}
-				value = strings.ReplaceAll(value, "{sameTag}", dep)
+			value = strings.ReplaceAll(value, "{dependencies}", dep)
+		}
+		if strings.Contains(value, "{sameTag}") {
+			dep, ok := sameTag[name]
+			if !ok {
+				return "", fmt.Errorf("vpmDependencies %s uses {sameTag}, but the same tag has no version of %s in its version list", name, name)
 			}
-			deps[name] = strings.ReplaceAll(value, "{version}", v.String())
+			value = strings.ReplaceAll(value, "{sameTag}", dep)
 		}
-		// Without HTML escaping, ">=" stays as people write it in
-		// package.json instead of becoming ">=".
-		var buf bytes.Buffer
-		enc := json.NewEncoder(&buf)
-		enc.SetEscapeHTML(false)
-		if err := enc.Encode(deps); err != nil {
-			return nil, err
+		return strings.ReplaceAll(value, "{version}", v.String()), nil
+	}
+	var out []Edit
+	for _, e := range edits {
+		if raw, ok := e.Set["vpmDependencies"]; ok && string(raw) != "null" {
+			var values map[string]string
+			if err := json.Unmarshal(raw, &values); err != nil {
+				return nil, err
+			}
+			for name, value := range values {
+				filled, err := fill(name, value)
+				if err != nil {
+					return nil, err
+				}
+				values[name] = filled
+			}
+			expanded, err := marshalPlain(values)
+			if err != nil {
+				return nil, err
+			}
+			e.Set = maps.Clone(e.Set)
+			e.Set["vpmDependencies"] = expanded
 		}
-		expanded := json.RawMessage(bytes.TrimRight(buf.Bytes(), "\n"))
-		copied := make(map[string]json.RawMessage, len(set))
-		for k, val := range set {
-			copied[k] = val
+		if keys, ok := e.Merge["vpmDependencies"]; ok {
+			expanded := make(map[string]json.RawMessage, len(keys))
+			for name, raw := range keys {
+				var value string
+				if err := json.Unmarshal(raw, &value); err != nil {
+					return nil, err
+				}
+				filled, err := fill(name, value)
+				if err != nil {
+					return nil, err
+				}
+				if expanded[name], err = marshalPlain(filled); err != nil {
+					return nil, err
+				}
+			}
+			e.Merge = maps.Clone(e.Merge)
+			e.Merge["vpmDependencies"] = expanded
 		}
-		copied["vpmDependencies"] = expanded
-		out = append(out, copied)
+		out = append(out, e)
 	}
 	return out, nil
+}
+
+// marshalPlain writes v as JSON without HTML escaping, so that ">=" stays
+// as people write it in package.json instead of becoming a Unicode escape.
+func marshalPlain(v any) (json.RawMessage, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
 // convertRevision changes when Vpmify starts to convert differently, so that
 // versions made available by an older Vpmify are built again. 3: UPM
 // dependencies are no longer copied into vpmDependencies on their own. 4:
-// the fingerprint takes the archive and the expanded overrides.
-const convertRevision = 4
+// the fingerprint takes the archive and the expanded overrides. 5: the
+// overrides in it are edits, with set and merge.
+const convertRevision = 5
 
 // BuiltOverlay is an overlay as a version is built with it: the folder in
 // the package and the archive its content comes from.
@@ -754,17 +827,17 @@ type BuiltOverlay struct {
 // what they give through {sameTag} is, in expanded. Overlays are omitted
 // when there are none, so that versions built before they came keep their
 // fingerprints.
-func (s *Source) Fingerprint(p *Package, dir, cacheKey string, expanded []map[string]json.RawMessage, overlays []BuiltOverlay) string {
+func (s *Source) Fingerprint(p *Package, dir, cacheKey string, expanded []Edit, overlays []BuiltOverlay) string {
 	h := sha256.New()
 	// encoding/json writes map keys sorted, so this is stable.
 	data, _ := json.Marshal(struct {
-		Revision  int                          `json:"revision"`
-		Source    sourceFields                 `json:"source"`
-		Name      string                       `json:"name"`
-		Dir       string                       `json:"dir"`
-		Archive   string                       `json:"archive"`
-		Overrides []map[string]json.RawMessage `json:"overrides"`
-		Overlays  []BuiltOverlay               `json:"overlays,omitempty"`
+		Revision  int            `json:"revision"`
+		Source    sourceFields   `json:"source"`
+		Name      string         `json:"name"`
+		Dir       string         `json:"dir"`
+		Archive   string         `json:"archive"`
+		Overrides []Edit         `json:"overrides"`
+		Overlays  []BuiltOverlay `json:"overlays,omitempty"`
 	}{convertRevision, s.fields(), p.Name, dir, cacheKey, expanded, overlays})
 	h.Write(data)
 	return hex.EncodeToString(h.Sum(nil))[:16]
@@ -774,8 +847,8 @@ func (s *Source) Fingerprint(p *Package, dir, cacheKey string, expanded []map[st
 // upstream value.
 func (p *Package) Unity(v semver.Version, upstream string) string {
 	unity := upstream
-	for _, set := range p.OverridesFor(v) {
-		raw, ok := set["unity"]
+	for _, e := range p.OverridesFor(v) {
+		raw, ok := e.Set["unity"]
 		if !ok {
 			continue
 		}

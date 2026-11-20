@@ -6,7 +6,6 @@ package convert
 import (
 	"archive/tar"
 	"compress/gzip"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/kaikoga/vpmify/internal/fsutil"
 	"github.com/kaikoga/vpmify/internal/ojson"
+	"github.com/kaikoga/vpmify/internal/recipe"
 )
 
 // Result tells what extraction left out.
@@ -160,10 +160,13 @@ func CheckManifest(dir, name, version string) error {
 	return nil
 }
 
-// ApplyOverrides writes the field sets into package.json at the root of dir,
-// in order. A null value removes the field. Other fields keep their order.
-func ApplyOverrides(dir string, sets []map[string]json.RawMessage) error {
-	if len(sets) == 0 {
+// ApplyOverrides writes the edits into package.json at the root of dir, in
+// order, and in each its set before its merge. A null value in set removes
+// the field. merge adds keys to a field, which it makes when package.json
+// has none or null there; a field that is not an object cannot take them.
+// Other fields, and the keys already in a field, keep their order.
+func ApplyOverrides(dir string, edits []recipe.Edit) error {
+	if len(edits) == 0 {
 		return nil
 	}
 	p := filepath.Join(dir, "package.json")
@@ -175,12 +178,32 @@ func ApplyOverrides(dir string, sets []map[string]json.RawMessage) error {
 	if err != nil {
 		return fmt.Errorf("package.json: %w", err)
 	}
-	for _, set := range sets {
-		for _, key := range sortedKeys(set) {
-			raw := set[key]
+	for _, e := range edits {
+		for _, key := range sortedKeys(e.Set) {
+			raw := e.Set[key]
 			if string(raw) == "null" {
 				obj.Delete(key)
 				continue
+			}
+			obj.Set(key, raw)
+		}
+		for _, key := range sortedKeys(e.Merge) {
+			add := e.Merge[key]
+			if len(add) == 0 {
+				continue
+			}
+			field := ojson.New()
+			if raw, ok := obj.Get(key); ok && string(raw) != "null" {
+				if field, err = ojson.Parse(raw); err != nil {
+					return fmt.Errorf("package.json %s is not an object, so the recipe cannot merge into it", key)
+				}
+			}
+			for _, k := range sortedKeys(add) {
+				field.Set(k, add[k])
+			}
+			raw, err := field.MarshalJSON()
+			if err != nil {
+				return err
 			}
 			obj.Set(key, raw)
 		}
@@ -196,7 +219,7 @@ func ApplyOverrides(dir string, sets []map[string]json.RawMessage) error {
 	return fsutil.WriteFileAtomic(p, out, info.Mode().Perm())
 }
 
-func sortedKeys(m map[string]json.RawMessage) []string {
+func sortedKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)

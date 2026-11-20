@@ -12,100 +12,31 @@
           "path": "Assets/VCI",
           "overrides": [
             {
+              "set": { "vpmDependencies": { "com.thirdparty.effekseer": "={sameTag}", "com.thirdparty.naudio": "={sameTag}" } }
+            },
+            {
               "versions": "<0.33.0",
-              "set": {
-                "vpmDependencies": {
-                  "com.thirdparty.effekseer": "={sameTag}",
-                  "com.thirdparty.naudio": "={sameTag}",
-                  "com.vrmc.univrm": "={dependencies}",
-                  "com.vrmc.vrmshaders": "={dependencies}",
-                  "com.vrmc.unigltf": "={dependencies}"
-                }
-              }
+              "merge": { "vpmDependencies": { "com.vrmc.univrm": "={dependencies}", "com.vrmc.vrmshaders": "={dependencies}", "com.vrmc.unigltf": "={dependencies}" } }
+            },
+            {
+              "versions": ">=0.33.0",
+              "merge": { "vpmDependencies": { "com.vrmc.vrm": "={dependencies}", "com.vrmc.univrm": "={dependencies}", "com.vrmc.gltf": "={dependencies}" } }
             },
             {
               "versions": ">=0.33.0 <0.45.0",
-              "set": {
-                "vpmDependencies": {
-                  "com.thirdparty.effekseer": "={sameTag}",
-                  "com.thirdparty.naudio": "={sameTag}",
-                  "com.vrmc.vrm": "={dependencies}",
-                  "com.vrmc.univrm": "={dependencies}",
-                  "com.vrmc.vrmshaders": "={dependencies}",
-                  "com.vrmc.gltf": "={dependencies}"
-                }
-              }
+              "merge": { "vpmDependencies": { "com.vrmc.vrmshaders": "={dependencies}" } }
             },
             {
-              "versions": ">=0.45.0",
-              "set": {
-                "vpmDependencies": {
-                  "com.thirdparty.effekseer": "={sameTag}",
-                  "com.thirdparty.naudio": "={sameTag}",
-                  "com.vrmc.vrm": "={dependencies}",
-                  "com.vrmc.univrm": "={dependencies}",
-                  "com.vrmc.gltf": "={dependencies}"
-                }
-              }
+              "versions": "<0.35.0",
+              "merge": { "dependencies": { "com.unity.textmeshpro": "2.1.6" } }
             },
             {
-              "versions": ">=0.32.0 <0.33.0",
-              "set": {
-                "dependencies": {
-                  "com.vrmc.univrm": "0.67.1",
-                  "com.vrmc.vrmshaders": "0.67.1",
-                  "com.vrmc.unigltf": "2.3.1",
-                  "com.unity.textmeshpro": "2.1.6"
-                }
-              }
-            },
-            {
-              "versions": ">=0.33.0 <0.35.0",
-              "set": {
-                "dependencies": {
-                  "com.vrmc.vrm": "0.88.0",
-                  "com.vrmc.univrm": "0.88.0",
-                  "com.vrmc.vrmshaders": "0.88.0",
-                  "com.vrmc.gltf": "0.88.0",
-                  "com.unity.textmeshpro": "2.1.6"
-                }
-              }
-            },
-            {
-              "versions": ">=0.35.0 <0.39.0",
-              "set": {
-                "dependencies": {
-                  "com.vrmc.vrm": "0.101.1",
-                  "com.vrmc.univrm": "0.101.1",
-                  "com.vrmc.vrmshaders": "0.101.1",
-                  "com.vrmc.gltf": "0.101.1",
-                  "com.unity.textmeshpro": "3.0.6"
-                }
-              }
+              "versions": ">=0.35.0 <0.42.0",
+              "merge": { "dependencies": { "com.unity.textmeshpro": "3.0.6" } }
             },
             {
               "versions": ">=0.39.0 <0.41.0",
-              "set": {
-                "dependencies": {
-                  "com.vrmc.vrm": "0.107.2",
-                  "com.vrmc.univrm": "0.107.2",
-                  "com.vrmc.vrmshaders": "0.107.2",
-                  "com.vrmc.gltf": "0.107.2",
-                  "com.unity.textmeshpro": "3.0.6"
-                }
-              }
-            },
-            {
-              "versions": ">=0.41.0 <0.42.0",
-              "set": {
-                "dependencies": {
-                  "com.vrmc.vrm": "0.108.0",
-                  "com.vrmc.univrm": "0.108.0",
-                  "com.vrmc.vrmshaders": "0.108.0",
-                  "com.vrmc.gltf": "0.108.0",
-                  "com.unity.textmeshpro": "3.0.6"
-                }
-              }
+              "merge": { "dependencies": { "com.vrmc.vrm": "0.107.2", "com.vrmc.univrm": "0.107.2", "com.vrmc.vrmshaders": "0.107.2", "com.vrmc.gltf": "0.107.2" } }
             }
           ]
         },

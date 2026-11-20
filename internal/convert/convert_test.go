@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kaikoga/vpmify/internal/recipe"
 	"github.com/kaikoga/vpmify/internal/testutil"
 )
 
@@ -127,11 +128,11 @@ func TestOverridesAndManifest(t *testing.T) {
 	if err := CheckManifest(dir, "b", "3.4.0"); err == nil {
 		t.Error("name mismatch not detected")
 	}
-	sets := []map[string]json.RawMessage{
-		{"unity": json.RawMessage(`"6000.2"`), "unityRelease": json.RawMessage(`"6f2"`)},
-		{"description": json.RawMessage(`null`), "vpmDependencies": json.RawMessage(`{"b":"1.0.0"}`)},
+	edits := []recipe.Edit{
+		{Set: map[string]json.RawMessage{"unity": json.RawMessage(`"6000.2"`), "unityRelease": json.RawMessage(`"6f2"`)}},
+		{Set: map[string]json.RawMessage{"description": json.RawMessage(`null`), "vpmDependencies": json.RawMessage(`{"b":"1.0.0"}`)}},
 	}
-	if err := ApplyOverrides(dir, sets); err != nil {
+	if err := ApplyOverrides(dir, edits); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(filepath.Join(dir, "package.json"))
@@ -141,5 +142,66 @@ func TestOverridesAndManifest(t *testing.T) {
 	}
 	if !strings.HasSuffix(string(got), "}\n") {
 		t.Error("trailing newline lost")
+	}
+}
+
+// merge adds keys to an object and keeps the others, makes the field when
+// there is none or null, and comes after the set of its own override.
+func TestOverridesMerge(t *testing.T) {
+	raw := func(s string) json.RawMessage { return json.RawMessage(s) }
+	keys := func(pairs ...string) map[string]json.RawMessage {
+		m := map[string]json.RawMessage{}
+		for i := 0; i < len(pairs); i += 2 {
+			m[pairs[i]] = raw(`"` + pairs[i+1] + `"`)
+		}
+		return m
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "package.json")
+	orig := `{"name": "a", "version": "1.0.0", "dependencies": {"z": "1.0.0", "b": "1.0.0"}, "legacyFolders": null, "keywords": ["k"]}`
+	if err := os.WriteFile(p, []byte(orig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	edits := []recipe.Edit{
+		{Merge: map[string]map[string]json.RawMessage{
+			"dependencies":    keys("a", "2.0.0", "b", "2.0.0"),
+			"vpmDependencies": keys("c", ">=3.0.0"),
+			"legacyFolders":   keys("Assets/A", "guid"),
+		}},
+		{
+			Set:   map[string]json.RawMessage{"vpmDependencies": raw(`{"d":"4.0.0"}`)},
+			Merge: map[string]map[string]json.RawMessage{"vpmDependencies": keys("e", "5.0.0")},
+		},
+	}
+	if err := ApplyOverrides(dir, edits); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(p)
+	want := `{
+  "name": "a",
+  "version": "1.0.0",
+  "dependencies": {
+    "z": "1.0.0",
+    "b": "2.0.0",
+    "a": "2.0.0"
+  },
+  "legacyFolders": {
+    "Assets/A": "guid"
+  },
+  "keywords": [
+    "k"
+  ],
+  "vpmDependencies": {
+    "d": "4.0.0",
+    "e": "5.0.0"
+  }
+}`
+	if string(got) != want {
+		t.Errorf("package.json =\n%s\nwant\n%s", got, want)
+	}
+
+	err := ApplyOverrides(dir, []recipe.Edit{{Merge: map[string]map[string]json.RawMessage{"keywords": keys("a", "b")}}})
+	if err == nil || !strings.Contains(err.Error(), "keywords is not an object") {
+		t.Errorf("merge into an array: err = %v", err)
 	}
 }

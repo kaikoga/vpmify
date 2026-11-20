@@ -1,7 +1,6 @@
 package app
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -86,7 +85,7 @@ func find(lists []*pkgList, name string) *pkgList {
 // {sameTag} takes a version only when the version list holds it, so that a
 // version is converted only when what it depends on in its tag can be made
 // available too; an error means the version cannot be converted.
-func (l *pkgList) expand(rel source.Release) ([]map[string]json.RawMessage, error) {
+func (l *pkgList) expand(rel source.Release) ([]recipe.Edit, error) {
 	sameTag := map[string]string{}
 	for name, v := range rel.SameTag {
 		if l.listed[name][v] {
@@ -104,7 +103,7 @@ func (l *pkgList) usable(rel source.Release) bool {
 
 // fingerprint returns the fingerprint of rel built with the overrides
 // expanded for it and its overlays.
-func (l *pkgList) fingerprint(rel source.Release, expanded []map[string]json.RawMessage) string {
+func (l *pkgList) fingerprint(rel source.Release, expanded []recipe.Edit) string {
 	var overlays []recipe.BuiltOverlay
 	for _, o := range rel.Overlays {
 		overlays = append(overlays, recipe.BuiltOverlay{Path: o.Path, Archive: o.CacheKey})

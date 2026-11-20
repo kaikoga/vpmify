@@ -224,12 +224,12 @@ func TestExpandedOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sets) != 1 || string(sets[0]["vpmDependencies"]) != `{"a":">=1.2.0","b":"=0.3.0","c":">=4.5.6"}` ||
-		string(sets[0]["displayName"]) != `"{version} stays"` {
+	if len(sets) != 1 || string(sets[0].Set["vpmDependencies"]) != `{"a":">=1.2.0","b":"=0.3.0","c":">=4.5.6"}` ||
+		string(sets[0].Set["displayName"]) != `"{version} stays"` {
 		t.Errorf("sets = %s", sets)
 	}
 	// The recipe's own sets are left as written.
-	if raw := p.OverridesFor(version(t, "1.2.0"))[0]["vpmDependencies"]; !strings.Contains(string(raw), "{version}") {
+	if raw := p.OverridesFor(version(t, "1.2.0"))[0].Set["vpmDependencies"]; !strings.Contains(string(raw), "{version}") {
 		t.Errorf("OverridesFor changed: %s", raw)
 	}
 	if _, err := p.ExpandedOverridesFor(version(t, "1.2.0"), nil, map[string]string{"c": "4.5.6"}); err == nil || !strings.Contains(err.Error(), "no UPM dependency on b") {
@@ -255,7 +255,7 @@ func TestExpandedOverrides(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := string(sets[0]["vpmDependencies"]); got != `{"b":"`+c.want+`"}` {
+		if got := string(sets[0].Set["vpmDependencies"]); got != `{"b":"`+c.want+`"}` {
 			t.Errorf("%s: vpmDependencies = %s, want b %s", c.version, got, c.want)
 		}
 	}
@@ -263,6 +263,55 @@ func TestExpandedOverrides(t *testing.T) {
 		t.Errorf("3.0.0: err = %v", err)
 	}
 
+	// merge takes the placeholders in vpmDependencies too, and what it
+	// merges into "dependencies" is read by {dependencies}, with upstream's
+	// other keys kept.
+	_, p = mustParse(t, `{"vpmifyFormat": 1, "id": "pkg", "sources": [{`+gitSourceHead+`, "packages": [{"name": "c"},
+  {"name": "com.example.pkg", "overrides": [
+    {"merge": {"vpmDependencies": {"a": "={dependencies}", "b": "={dependencies}", "c": ">={sameTag}"}}},
+    {"versions": "<2.0.0", "merge": {"dependencies": {"b": "0.3.2"}}}
+  ]}]}]}`).Package("com.example.pkg")
+	upstream := map[string]string{"a": "0.1.0", "b": "0.3.0"}
+	edits, err := p.ExpandedOverridesFor(version(t, "1.2.0"), upstream, map[string]string{"c": "4.5.6"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged := edits[0].Merge["vpmDependencies"]
+	if len(merged) != 3 || string(merged["a"]) != `"=0.1.0"` || string(merged["b"]) != `"=0.3.2"` || string(merged["c"]) != `">=4.5.6"` || upstream["b"] != "0.3.0" {
+		t.Errorf("merge vpmDependencies = %s, upstream = %v", merged, upstream)
+	}
+}
+
+func TestMergeRejected(t *testing.T) {
+	cases := []struct{ name, overrides, want string }{
+		{"neither", `{"versions": ">=1.0.0"}`, "neither set nor merge"},
+		{"not an object", `{"merge": {"dependencies": "1.0.0"}}`, "merge"},
+		{"null key", `{"merge": {"dependencies": {"a": null}}}`, "merge.dependencies.a is null"},
+		{"version", `{"merge": {"version": {"a": "b"}}}`, `must not merge into "version"`},
+		{"unknown placeholder", `{"merge": {"vpmDependencies": {"a": "={self}"}}}`, "merge.vpmDependencies"},
+		{"sameTag on itself", `{"merge": {"vpmDependencies": {"com.example.pkg": "={sameTag}"}}}`, "itself"},
+	}
+	for _, c := range cases {
+		_, err := Parse([]byte(gitRecipe(`, "overrides": [` + c.overrides + `]`)))
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want it to mention %q", c.name, err, c.want)
+		}
+	}
+}
+
+func TestMergeKeepsListingKeyAndChangesFingerprint(t *testing.T) {
+	s, p := onlyPackage(t, gitRecipe(`, "overrides": [{"merge": {"dependencies": {"a": "1.0.0"}}}]`))
+	plain, _ := onlyPackage(t, gitRecipe(``))
+	if s.ListingKey() != plain.ListingKey() {
+		t.Error("merge changed the listing key")
+	}
+	edits, err := p.ExpandedOverridesFor(version(t, "1.0.0"), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Fingerprint(p, "", "commit1", edits, nil) == s.Fingerprint(p, "", "commit1", nil, nil) {
+		t.Error("merge kept the fingerprint")
+	}
 	for _, bad := range []string{
 		`{"vpmDependencies": {"a": ">={self}"}}`,
 		`{"vpmDependencies": ["a"]}`,
@@ -281,7 +330,7 @@ func TestFingerprint(t *testing.T) {
 	if s.Fingerprint(a, "A", "commit2", nil, nil) == base {
 		t.Error("another archive kept the fingerprint")
 	}
-	if s.Fingerprint(a, "A", "commit1", []map[string]json.RawMessage{{"vpmDependencies": json.RawMessage(`{"b":"=1.0.0"}`)}}, nil) == base {
+	if s.Fingerprint(a, "A", "commit1", []Edit{{Set: map[string]json.RawMessage{"vpmDependencies": json.RawMessage(`{"b":"=1.0.0"}`)}}}, nil) == base {
 		t.Error("another expanded {sameTag} kept the fingerprint")
 	}
 	// Another package of the source does not change it.
