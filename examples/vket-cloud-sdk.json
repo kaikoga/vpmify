@@ -1,0 +1,36 @@
+{
+  "id": "vket-cloud-sdk",
+  "sources": [
+    {
+      "type": "npm",
+      "registry": "https://registry.npmjs.com",
+      "packages": [
+        {
+          "name": "com.hikky.vketcloudsdk",
+          "overrides": [
+            {
+              "versions": ">=4.8.10 <12.3.0",
+              "set": { "vpmDependencies": { "com.needle.deeplink": ">=1.2.1" } }
+            },
+            {
+              "versions": ">=12.3.0",
+              "set": { "vpmDependencies": { "com.hikky.editortutorialsystem": ">=1.0.1", "com.needle.deeplink": ">=1.2.1" } }
+            }
+          ]
+        },
+        {
+          "name": "com.hikky.editortutorialsystem"
+        }
+      ]
+    },
+    {
+      "type": "npm",
+      "registry": "https://package.openupm.com",
+      "packages": [
+        {
+          "name": "com.needle.deeplink"
+        }
+      ]
+    }
+  ]
+}
