@@ -182,12 +182,6 @@ func (s *Source) TagVersionOf(name string) (semver.Version, bool) {
 	return v, true
 }
 
-// HasTagVersionRule reports whether the source reads tags by a tagVersion
-// rule.
-func (s *Source) HasTagVersionRule() bool {
-	return s.tagVersion != nil
-}
-
 // VersionFromTag says in which tags a package takes the version of the tag
 // in place of the one its package.json has. A recipe writes true, for every
 // tag, or {"tags": "<range>"}, a range on the version of the tag as

@@ -34,14 +34,8 @@ type GitHub struct {
 	// TagVersion reads the version of a tag from its name; false means the
 	// tag is not read.
 	TagVersion func(name string) (semver.Version, bool)
-	// WarnSameTagVersion warns of two tags that read as one version, for a
-	// recipe's own tagVersion rule, which should tell its tags apart. The
-	// older tag is used, as for package versions that come in several tags;
-	// a repository whose owner did not write the recipe may add such tags,
-	// and they must not stop the recipe (kaikoga 2026-11-19).
-	WarnSameTagVersion bool
-	AcceptTag          func(semver.Version) bool
-	Client             *fetch.Client
+	AcceptTag  func(semver.Version) bool
+	Client     *fetch.Client
 	// CacheDir keeps each commit's package.json, which never changes.
 	CacheDir string
 
@@ -79,7 +73,6 @@ func NewGitHub(s *recipe.Source, client *fetch.Client, cacheDir string) (*GitHub
 		Owner: owner, Repo: repo,
 		Packages:           pkgs,
 		TagVersion:         s.TagVersionOf,
-		WarnSameTagVersion: s.HasTagVersionRule(),
 		AcceptTag:          s.AcceptsTag,
 		Client:             client,
 		CacheDir:           cacheDir,
@@ -215,12 +208,15 @@ func (g *GitHub) tags(ctx context.Context) ([]tag, []string, error) {
 		}
 		return naturalLess(out[i].name, out[j].name)
 	})
+	// Two tags that read as one version are warned of, and the older is used,
+	// as for package versions that come in several tags: a repository whose
+	// owner did not write the recipe may add such tags, and they must not
+	// stop the recipe (kaikoga 2026-11-19). The warning comes without a
+	// tagVersion rule too, for v1.2.3 beside 1.2.3 (kaikoga 2026-11-20).
 	var warnings []string
-	if g.WarnSameTagVersion {
-		for i := 1; i < len(out); i++ {
-			if semver.Compare(out[i-1].version, out[i].version) == 0 {
-				warnings = append(warnings, fmt.Sprintf("tags %s and %s both read as version %s, and %s is used; the recipe's tagVersion needs updating to tell them apart", out[i-1].name, out[i].name, out[i].version, out[i-1].name))
-			}
+	for i := 1; i < len(out); i++ {
+		if semver.Compare(out[i-1].version, out[i].version) == 0 {
+			warnings = append(warnings, fmt.Sprintf("tags %s and %s both read as version %s, and %s is used; the recipe needs a tagVersion that tells them apart", out[i-1].name, out[i].name, out[i].version, out[i-1].name))
 		}
 	}
 	return out, warnings, nil

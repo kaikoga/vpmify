@@ -250,6 +250,31 @@ func TestGitHubOverlaysFollowTheTag(t *testing.T) {
 	}
 }
 
+// Without a tagVersion rule, v1.0.0 and 1.0.0 read as one version: the
+// older by name is used, with a warning (kaikoga 2026-11-20).
+func TestGitHubWarnsOfTagsThatReadAsOneVersionWithoutARule(t *testing.T) {
+	gh := testutil.NewFakeGitHub("owner", "repo")
+	gh.Tag("v1.0.0", map[string]string{"package.json": manifest("com.example.pkg", "1.0.0")})
+	gh.Tag("1.0.0", map[string]string{"package.json": manifest("com.example.pkg", "1.0.0")})
+	gh.Tag("v1.1.0", map[string]string{"package.json": manifest("com.example.pkg", "1.1.0")})
+	src := newSource(t, gh, `{"vpmifyFormat": 1, "id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
+  "packages": [{"name": "com.example.pkg"}]}]}`)
+	all, warnings, err := src.Releases(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var summary []string
+	for _, r := range all["com.example.pkg"] {
+		summary = append(summary, r.Version.String()+" "+r.Origin)
+	}
+	if want := []string{"1.0.0 tag 1.0.0", "1.1.0 tag v1.1.0"}; !reflect.DeepEqual(summary, want) {
+		t.Errorf("releases = %q, want %q", summary, want)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "tags 1.0.0 and v1.0.0 both read as version 1.0.0, and 1.0.0 is used") {
+		t.Errorf("warnings = %q", warnings)
+	}
+}
+
 func TestGitHubSameTag(t *testing.T) {
 	gh := testutil.NewFakeGitHub("owner", "repo")
 	// The base's numbers differ from the tag's.
