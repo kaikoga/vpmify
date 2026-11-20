@@ -340,6 +340,9 @@ func (p *Package) checkPaths() error {
 	if err := checkFolder(p.Path); err != nil {
 		return fmt.Errorf("path: %w", err)
 	}
+	// "Assets/Pkg/" is the folder "Assets/Pkg": the slashes would make
+	// another URL of its package.json, and another listing key.
+	p.Path = strings.Trim(p.Path, "/")
 	for i, rule := range p.Paths {
 		if rule.Path == nil {
 			return fmt.Errorf(`paths[%d] has no "path" ("" is the repository root)`, i)
@@ -347,6 +350,9 @@ func (p *Package) checkPaths() error {
 		if err := checkFolder(*rule.Path); err != nil {
 			return fmt.Errorf("paths[%d]: %w", i, err)
 		}
+		trimmed := strings.Trim(*rule.Path, "/")
+		rule.Path = &trimmed
+		p.Paths[i].Path = &trimmed
 		tags, err := semver.ParseRange(rule.Tags)
 		if err != nil {
 			return fmt.Errorf("paths[%d].tags: %w", i, err)

@@ -70,6 +70,18 @@ func TestPathFor(t *testing.T) {
 	if got, ok := rootRule.PathFor(version(t, "1.0.0")); got != "" || !ok {
 		t.Errorf(`"path": "": PathFor = %q %v`, got, ok)
 	}
+
+	// Slashes around a folder are dropped, and the listing key with them.
+	plain, _ := onlyPackage(t, gitRecipe(`, "path": "Packages/Pkg"`))
+	slashed, sp := onlyPackage(t, gitRecipe(`, "path": "/Packages/Pkg/"`))
+	if got, _ := sp.PathFor(version(t, "1.0.0")); got != "Packages/Pkg" || slashed.ListingKey() != plain.ListingKey() {
+		t.Errorf("slashed path: PathFor = %q, same key = %v", got, slashed.ListingKey() == plain.ListingKey())
+	}
+	plain, _ = onlyPackage(t, gitRecipe(`, "paths": [{"path": "Packages/Pkg"}]`))
+	slashed, sp = onlyPackage(t, gitRecipe(`, "paths": [{"path": "/Packages/Pkg/"}]`))
+	if got, _ := sp.PathFor(version(t, "1.0.0")); got != "Packages/Pkg" || slashed.ListingKey() != plain.ListingKey() {
+		t.Errorf("slashed paths: PathFor = %q, same key = %v", got, slashed.ListingKey() == plain.ListingKey())
+	}
 }
 
 func TestParseRejects(t *testing.T) {
