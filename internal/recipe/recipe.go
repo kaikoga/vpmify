@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"maps"
@@ -211,17 +212,23 @@ func Parse(data []byte) (*Recipe, error) {
 	// Editors on Windows may save UTF-8 with a byte order mark, which
 	// encoding/json does not take.
 	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
+	// The recipe is read with encoding/json/v2, which takes a key only when it
+	// spells a field exactly and refuses a key that comes twice in an object,
+	// where encoding/json takes a key that differs in case and uses the last
+	// of the two: a reader in another language, such as a Vpmify rewritten in
+	// Rust, must read a recipe as this one does (kaikoga 2026-11-21).
+	//
 	// The format is read first, so that a recipe this Vpmify cannot read says
 	// so instead of failing on whatever the newer format changed.
 	var head struct {
 		Format *int `json:"vpmifyFormat"`
 	}
-	if err := unmarshalExact(data, &head); err != nil {
-		var typeErr *json.UnmarshalTypeError
-		if !errors.As(err, &typeErr) {
+	if err := jsonv2.Unmarshal(data, &head); err != nil {
+		var semErr *jsonv2.SemanticError
+		if !errors.As(err, &semErr) {
 			return nil, err
 		}
-		if typeErr.Field != "vpmifyFormat" {
+		if semErr.JSONPointer != "/vpmifyFormat" {
 			return nil, fmt.Errorf("not a Vpmify recipe: not a JSON object")
 		}
 		return nil, fmt.Errorf("vpmifyFormat must be a whole number")
@@ -235,7 +242,7 @@ func Parse(data []byte) (*Recipe, error) {
 		return nil, fmt.Errorf("the recipe is in format %d, and this Vpmify reads up to format %d: a newer Vpmify is needed", *head.Format, Format)
 	}
 	var r Recipe
-	if err := unmarshalExact(data, &r); err != nil {
+	if err := jsonv2.Unmarshal(data, &r); err != nil {
 		return nil, err
 	}
 	if err := r.check(); err != nil {

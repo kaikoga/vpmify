@@ -2,6 +2,7 @@ package recipe
 
 import (
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -204,7 +205,7 @@ func (v *VersionFromTag) UnmarshalJSON(data []byte) error {
 	var obj struct {
 		Tags string `json:"tags"`
 	}
-	if err := unmarshalExact(data, &obj); err != nil {
+	if err := jsonv2.Unmarshal(data, &obj); err != nil {
 		return fmt.Errorf(`versionFromTag: want true or {"tags": "<range>"}: %w`, err)
 	}
 	if obj.Tags == "" {

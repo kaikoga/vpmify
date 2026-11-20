@@ -148,8 +148,8 @@ func TestParseIgnoresUnknownFields(t *testing.T) {
 }
 
 // A key is a field only when it is spelled as the field exactly; one that
-// differs in case is ignored as unknown, which encoding/json alone would not
-// do (kaikoga 2026-11-21).
+// differs in case is ignored as unknown. A key that comes twice in an object
+// is refused (kaikoga 2026-11-21).
 func TestParseMatchesKeysExactly(t *testing.T) {
 	_, p := onlyPackage(t, gitRecipe(`, "versions": ">=1.0.0", "Versions": ">=2.0.0", "OnDemand": true, "Path": "A",
   "overrides": [{"set": {"Description": "a < b"}}]`))
@@ -168,6 +168,9 @@ func TestParseMatchesKeysExactly(t *testing.T) {
 		// set in an embedded struct of Override.
 		{"set", gitRecipe(`, "overrides": [{"Set": {"unity": "2022.3"}}]`), "neither set nor merge"},
 		{"source", `{"vpmifyFormat": 1, "id": "pkg", "Sources": [{"type": "npm", "registry": "https://r", "packages": [{"name": "p"}]}]}`, "no sources"},
+		{"twice", gitRecipe(`, "versions": ">=1.0.0", "versions": ">=2.0.0"`), "duplicate"},
+		{"twice in set", gitRecipe(`, "overrides": [{"set": {"unity": "2022.3", "unity": "2019.4"}}]`), "duplicate"},
+		{"format twice", `{"vpmifyFormat": 1, "vpmifyFormat": 1, "id": "pkg", "sources": []}`, "duplicate"},
 	} {
 		if _, err := Parse([]byte(c.recipe)); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: err = %v, want it to mention %q", c.name, err, c.want)
