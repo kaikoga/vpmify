@@ -22,6 +22,7 @@ The top-level object.
 - `vpmifyFormat` (integer, required): the format the recipe is written in. A JSON file without it is not a recipe. A value below 1 is an error. A value above the newest format this Vpmify reads is refused, with a message that a newer Vpmify is needed.
 - `id` (string, required): the identifier of the recipe. It is made of lowercase letters `a-z`, digits `0-9`, `.`, `_` and `-`, and starts with a letter or a digit. Write it in reverse domain form with the domain of whoever writes the recipe (`com.example.univrm`); Vpmify does not check the form. Adding a recipe replaces the recipe that has the same `id`.
 - `displayName` (string, optional): the name people read. It is in the JSON results (`--json`) of `recipe add` and `recipe list`.
+- `url` (string, optional): the URL the recipe is published at, for people and tools that read the recipe. Vpmify does not read it.
 - `sources` (array of [sources](#source), required): one or more. An element that is `null` is an error, as is a `null` element of `packages`.
 
 A package name may come only once in a recipe, across all its sources.
