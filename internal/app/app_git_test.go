@@ -208,6 +208,19 @@ func TestPullLeavesOnDemandPackagesToDependenciesAndNames(t *testing.T) {
 		f.writeFile("dep.json", gitRecipe("dep", "", gitPackage("com.example.pkg", "Packages/Pkg", pkgNeedsBase), base))); err != nil {
 		t.Fatal(err, f.log)
 	}
+	// The version lists say which packages are onDemand, for the GUI to
+	// know what a pull that names no package chooses from.
+	list, err := f.app.Versions("mono", VersionsOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	onDemand := map[string]bool{}
+	for _, p := range list.Packages {
+		onDemand[p.Package] = p.OnDemand
+	}
+	if want := map[string]bool{"com.example.pkg": false, "com.example.base": true}; !reflect.DeepEqual(onDemand, want) {
+		t.Errorf("onDemand = %v, want %v", onDemand, want)
+	}
 
 	// Nothing depends on base in mono: it is left, with --all too.
 	if got, want := pull(PullOptions{All: true}, "mono"), []string{"mono com.example.pkg 1.0.0 false", "mono com.example.pkg 1.1.0 false"}; !reflect.DeepEqual(got, want) {

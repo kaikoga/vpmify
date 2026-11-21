@@ -1657,7 +1657,10 @@ type PackageVersions struct {
 	// has one. The version lists do not keep it, so it is empty while no
 	// version is available.
 	DisplayName string `json:"displayName,omitempty"`
-	Source      string `json:"source"`
+	// OnDemand is the recipe's onDemand: a pull that names no package does
+	// not choose from this one.
+	OnDemand bool   `json:"onDemand,omitempty"`
+	Source   string `json:"source"`
 	// Updated is when the version list was read from upstream.
 	Updated  time.Time     `json:"updated"`
 	Versions []VersionInfo `json:"versions"`
@@ -1721,7 +1724,7 @@ func (a *App) Versions(ref string, opt VersionsOptions) (*VersionList, error) {
 	for _, l := range lists {
 		name := l.pkg.Name
 		available := st.AvailableVersions(id, name)
-		pv := PackageVersions{Package: name, Source: l.src.Describe(), Updated: l.updated, Versions: []VersionInfo{}}
+		pv := PackageVersions{Package: name, OnDemand: l.pkg.OnDemand, Source: l.src.Describe(), Updated: l.updated, Versions: []VersionInfo{}}
 		for i := len(l.releases) - 1; i >= 0; i-- {
 			rel := l.releases[i]
 			v := rel.Version.String()

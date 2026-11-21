@@ -23,6 +23,7 @@ const versionsUpdated = byId<HTMLParagraphElement>("versions-updated");
 const versionsElement = byId<HTMLTableSectionElement>("versions");
 const noVersionsElement = byId<HTMLParagraphElement>("no-versions");
 const prereleasesElement = byId<HTMLInputElement>("prereleases");
+const pullNewestElement = byId<HTMLButtonElement>("pull-newest");
 const entriesElement = byId<HTMLTableSectionElement>("entries");
 const emptyElement = byId<HTMLParagraphElement>("empty");
 const settingsErrorElement = byId<HTMLParagraphElement>("settings-error");
@@ -182,10 +183,14 @@ async function act(fn: () => Promise<unknown>) {
     await refresh();
 }
 
+// newestChoosable says whether the newest button has a version to choose;
+// showVersions sets it, and setBusy keeps the button off without one.
+let newestChoosable = false;
+
 function setBusy(busy: boolean) {
     spinnerElement.hidden = !busy;
     for (const b of document.querySelectorAll<HTMLButtonElement>("button")) {
-        b.disabled = busy;
+        b.disabled = busy || (b === pullNewestElement && !newestChoosable);
     }
 }
 
@@ -284,6 +289,8 @@ async function showVersions() {
     versionsElement.replaceChildren();
     versionsUpdated.textContent = "";
     noVersionsElement.hidden = true;
+    newestChoosable = false;
+    pullNewestElement.disabled = true;
     let result;
     try {
         result = await VpmifyService.Versions(id, prereleasesElement.checked);
@@ -306,6 +313,11 @@ async function showVersions() {
         available = [];
     }
     let shown = 0;
+    // The newest button pulls the recipe without naming a package, which
+    // chooses only from the versions shown here (prereleases only when the
+    // box shows them) that can be converted, of packages not onDemand.
+    newestChoosable = (list.packages ?? []).some((p) => !p.onDemand && (p.versions ?? []).some((v) => !v.unusable));
+    pullNewestElement.disabled = !newestChoosable || !spinnerElement.hidden;
     for (const p of list.packages ?? []) {
         const ofPackage = available.filter((e) => e.package === p.package);
         // A heading row for each package, as a recipe may have several.
