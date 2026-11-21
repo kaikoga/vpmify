@@ -195,6 +195,7 @@ The values of `tags` and `versions`.
 ## How pull chooses versions
 
 - A `pull` that names no version takes, for each package it chooses, the newest stable version in `versions` that can be converted. With `pull --prerelease` (in the GUI, when prereleases are shown), it takes the newest version, prerelease or not. A version with a placeholder that cannot be filled in is passed over.
+- When a package has no version such a `pull` may choose (only prereleases, without `--prerelease`, for example), the `pull` warns and goes on with the other packages without failing. When the user named the package (`<id>/<package>`), it is an error.
 - When the version such a `pull` chooses has no empty folder for an [overlay](#overlay), which shows only when upstream's archive is unpacked, it is not passed over for an older one: the `pull` does not make it available, warns, and goes on with the other versions without failing. Other failures to convert it are errors.
 - A version the user names is taken alone: naming it does not take the newest version too.
 - Prereleases are taken too when the user names them, and as [dependencies](#how-dependencies-are-followed).

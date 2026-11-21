@@ -515,8 +515,9 @@ func TestPullRefusesAVersionListOfAnotherRecipe(t *testing.T) {
 	}
 }
 
-// A version named outright is placed even when the recipe's range is
-// empty, as when upstream has only prereleases.
+// When upstream has only prereleases, a pull that names no package warns,
+// one that names the package fails, and a version named outright is
+// placed.
 func TestPullNamedVersionWithAnEmptyRange(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0-beta.1", "2021.3")
@@ -524,14 +525,27 @@ func TestPullNamedVersionWithAnEmptyRange(t *testing.T) {
 	if _, err := f.app.Add(ctx, f.writeRecipe("")); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if _, err := f.app.Pull(ctx, nil, PullOptions{}); err == nil || !strings.Contains(err.Error(), "no version in the version list matches") {
-		t.Errorf("err = %v", err)
+	// A pull that names no package warns; one that names it fails. Both
+	// point at --prerelease.
+	res, err := f.app.Pull(ctx, nil, PullOptions{})
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0].Warning, "--prerelease") || len(res.UpToDate) != 0 {
+		t.Errorf("unnamed: warnings = %v, up to date = %v", res.Warnings, res.UpToDate)
+	}
+	if _, err := f.app.Pull(ctx, []string{"kit/" + pkgName}, PullOptions{}); err == nil || !strings.Contains(err.Error(), "--prerelease") {
+		t.Errorf("named: err = %v", err)
 	}
 	if _, err := f.app.Pull(ctx, []string{"kit@1.0.0-beta.1"}, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if got, want := f.available(), []string{"1.0.0-beta.1@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed = %v, want %v", got, want)
+	}
+	// Once a version is available, the pull still warns rather than fails.
+	if res, err := f.app.Pull(ctx, nil, PullOptions{}); err != nil || len(res.Warnings) != 1 {
+		t.Errorf("again: err = %v, warnings = %v", err, res.Warnings)
 	}
 }
 

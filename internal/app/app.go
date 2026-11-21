@@ -598,7 +598,8 @@ type PullResult struct {
 	// that could not be made available.
 	Errors []Failure `json:"errors"`
 	// Warnings are the versions chosen without being named that could not
-	// be converted, which Pull passed over.
+	// be converted, which Pull passed over, and the packages chosen without
+	// being named that had no version to choose.
 	Warnings []Warning `json:"warnings"`
 }
 
@@ -825,6 +826,13 @@ func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pu
 	for _, l := range lists {
 		n, err := a.pullPackage(ctx, st, id, l, req.chooses(l.pkg), req.all, req.prerelease, req.byUser, extra[l.pkg.Name], fresh, res)
 		built += n
+		var noChoice *noChoiceError
+		if errors.As(err, &noChoice) && !req.only[l.pkg.Name] {
+			w := fmt.Sprintf("%s: %v", l.pkg.Name, err)
+			a.logf("%s: warning: %s", id, w)
+			res.Warnings = append(res.Warnings, Warning{Recipe: id, Warning: w})
+			continue
+		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", l.pkg.Name, err))
 		}
@@ -860,7 +868,7 @@ func (a *App) pullPackage(ctx context.Context, st *state.State, id string, l *pk
 		case len(accepted) > 0:
 			selected = []source.Release{newest(accepted)}
 		case len(extra) == 0:
-			chooseErr = fmt.Errorf("no version in the version list matches the recipe")
+			chooseErr = &noChoiceError{prerelease: prerelease}
 		}
 	}
 	for _, v := range extra {
@@ -948,6 +956,21 @@ func (a *App) pullPackage(ctx context.Context, st *state.State, id string, l *pk
 		built++
 	}
 	return built, chooseErr
+}
+
+// noChoiceError is a package a pull chose from that has no version it may
+// choose. pullRecipe warns of it when the pull named no package, so that a
+// package upstream releases only as prereleases does not fail the others
+// of its recipe, and fails when the user named the package.
+type noChoiceError struct {
+	prerelease bool
+}
+
+func (e *noChoiceError) Error() string {
+	if e.prerelease {
+		return "the version list has no version that can be converted"
+	}
+	return "the version list has no stable version that can be converted; pull it with --prerelease, or name a version"
 }
 
 // overlayFolderError is a version whose package has no empty folder where an
