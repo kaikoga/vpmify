@@ -1,4 +1,4 @@
-// Package fetch downloads metadata and archives over HTTP(S).
+// Package fetch downloads metadata and archives over https.
 package fetch
 
 import (
@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -19,21 +20,87 @@ import (
 	"time"
 )
 
-// Client is an HTTP client with Vpmify's defaults.
+// The limits NewClient sets. They are far above what real packages need,
+// so that only an upstream that means harm, or is broken, reaches them.
+const (
+	// DefaultMaxMetadata limits the files read to make version lists, such
+	// as an npm registry's document of a package.
+	DefaultMaxMetadata = 64 << 20
+	// DefaultMaxArchive limits one archive. A package that ships machine
+	// learning data can pass 1 GB.
+	DefaultMaxArchive = 8 << 30
+)
+
+// Client is an HTTP client with Vpmify's defaults. It reads only https
+// URLs, and follows redirects only to https URLs.
 type Client struct {
 	HTTP      *http.Client
 	UserAgent string
+	// MaxMetadata is the most bytes GetJSON and GetBytesIfExists read.
+	MaxMetadata int64
+	// MaxArchive is the most bytes Download saves.
+	MaxArchive int64
 }
 
 // NewClient returns a client with a generous timeout for large archives.
 func NewClient(userAgent string) *Client {
 	return &Client{
-		HTTP:      &http.Client{Timeout: 10 * time.Minute},
-		UserAgent: userAgent,
+		HTTP:        &http.Client{Timeout: 10 * time.Minute, CheckRedirect: checkRedirect},
+		UserAgent:   userAgent,
+		MaxMetadata: DefaultMaxMetadata,
+		MaxArchive:  DefaultMaxArchive,
 	}
 }
 
-func (c *Client) get(ctx context.Context, url, accept string) (*http.Response, error) {
+// checkRedirect keeps net/http's limit of ten redirects and refuses one to
+// another scheme than https, which would let anyone on the way change what
+// is read.
+func checkRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if req.URL.Scheme != "https" {
+		return fmt.Errorf("refused a redirect to %s: only https is read", req.URL.Redacted())
+	}
+	return nil
+}
+
+// ErrTooLarge is wrapped by the errors of a body longer than its limit.
+var ErrTooLarge = errors.New("too large")
+
+// limitReader passes on at most max bytes of r, and fails with ErrTooLarge
+// when r has more. Nothing past max is passed on, so a reader that stops
+// at a complete value, as a JSON decoder does, cannot succeed on a body
+// over the limit.
+type limitReader struct {
+	r    io.Reader
+	max  int64
+	read int64
+}
+
+func (l *limitReader) Read(p []byte) (int, error) {
+	if l.read >= l.max {
+		var one [1]byte
+		n, err := l.r.Read(one[:])
+		if n > 0 {
+			return 0, fmt.Errorf("%w: more than %d bytes", ErrTooLarge, l.max)
+		}
+		return 0, err
+	}
+	if int64(len(p)) > l.max-l.read {
+		p = p[:l.max-l.read]
+	}
+	n, err := l.r.Read(p)
+	l.read += int64(n)
+	return n, err
+}
+
+// do sends a GET to url, which must be https. A response that says it is
+// longer than max is refused before its body is read.
+func (c *Client) do(ctx context.Context, url, accept string, max int64) (*http.Response, error) {
+	if !strings.HasPrefix(url, "https://") {
+		return nil, fmt.Errorf("GET %s: only https URLs are read", url)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -48,6 +115,22 @@ func (c *Client) get(ctx context.Context, url, accept string) (*http.Response, e
 	if err != nil {
 		return nil, err
 	}
+	if resp.StatusCode == http.StatusOK && resp.ContentLength > max {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("GET %s: %w: %d bytes, more than %d", url, ErrTooLarge, resp.ContentLength, max)
+	}
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{&limitReader{r: resp.Body, max: max}, resp.Body}
+	return resp, nil
+}
+
+func (c *Client) get(ctx context.Context, url, accept string, max int64) (*http.Response, error) {
+	resp, err := c.do(ctx, url, accept, max)
+	if err != nil {
+		return nil, err
+	}
 	if resp.StatusCode != http.StatusOK {
 		_ = resp.Body.Close()
 		return nil, fmt.Errorf("GET %s: %s", url, resp.Status)
@@ -57,7 +140,7 @@ func (c *Client) get(ctx context.Context, url, accept string) (*http.Response, e
 
 // GetJSON decodes the JSON at url into dst.
 func (c *Client) GetJSON(ctx context.Context, url string, dst any) error {
-	resp, err := c.get(ctx, url, "application/json")
+	resp, err := c.get(ctx, url, "application/json", c.MaxMetadata)
 	if err != nil {
 		return err
 	}
@@ -68,26 +151,23 @@ func (c *Client) GetJSON(ctx context.Context, url string, dst any) error {
 	return nil
 }
 
-// GetBytes returns the body at url.
-func (c *Client) GetBytes(ctx context.Context, url string) ([]byte, error) {
-	resp, err := c.get(ctx, url, "")
+// GetBytes returns the body at url, which may be at most max bytes long.
+func (c *Client) GetBytes(ctx context.Context, url string, max int64) ([]byte, error) {
+	resp, err := c.get(ctx, url, "", max)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	return io.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("GET %s: %w", url, err)
+	}
+	return data, nil
 }
 
 // GetBytesIfExists returns the body at url, or found=false on 404.
 func (c *Client) GetBytesIfExists(ctx context.Context, url string) (data []byte, found bool, err error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, false, err
-	}
-	if c.UserAgent != "" {
-		req.Header.Set("User-Agent", c.UserAgent)
-	}
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.do(ctx, url, "", c.MaxMetadata)
 	if err != nil {
 		return nil, false, err
 	}
@@ -95,7 +175,10 @@ func (c *Client) GetBytesIfExists(ctx context.Context, url string) (data []byte,
 	switch resp.StatusCode {
 	case http.StatusOK:
 		data, err := io.ReadAll(resp.Body)
-		return data, err == nil, err
+		if err != nil {
+			return nil, false, fmt.Errorf("GET %s: %w", url, err)
+		}
+		return data, true, nil
 	case http.StatusNotFound:
 		return nil, false, nil
 	}
@@ -106,7 +189,7 @@ func (c *Client) GetBytesIfExists(ctx context.Context, url string) (data []byte,
 // writes to a temporary file next to dest and renames it, so a broken
 // download never sits at dest.
 func (c *Client) Download(ctx context.Context, url, dest string, digests Digests) error {
-	resp, err := c.get(ctx, url, "")
+	resp, err := c.get(ctx, url, "", c.MaxArchive)
 	if err != nil {
 		return err
 	}

@@ -9,6 +9,7 @@ It describes format 1 (`"vpmifyFormat": 1`).
 ## The file
 
 - A recipe is a JSON file in UTF-8. A byte order mark at the start is allowed.
+- A recipe read from a URL is read only over `https`, and may be at most 10 MiB.
 - The top level is an object: the recipe.
 - Field names are case-sensitive. A field name that comes twice in one object is an error.
 - Fields that are not described here are ignored, so a recipe may carry `$schema` or fields for notes. A misspelled field is ignored too, without an error.
@@ -38,7 +39,7 @@ Where packages come from. `type` decides which other fields the source takes.
 An npm-compatible registry, such as npmjs or OpenUPM.
 
 - `type`: `"npm"`
-- `registry` (string, required): the URL of the registry, with the scheme `https` or `http` and a host.
+- `registry` (string, required): the URL of the registry, with the scheme `https` and a host. Plain `http` is refused.
 - `packages` (array of [packages](#package), required): one or more.
 
 An npm source takes no `url`, `tagVersion` or `tags`; a non-empty one is an error.

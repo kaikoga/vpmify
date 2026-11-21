@@ -181,7 +181,7 @@ func (g *GitHub) tags(ctx context.Context) ([]tag, error) {
 		readVersion = recipe.PlainTagVersion
 	}
 	u := fmt.Sprintf("%s/%s/%s.git/info/refs?service=git-upload-pack", g.GitBase, g.Owner, g.Repo)
-	data, err := g.Client.GetBytes(ctx, u)
+	data, err := g.Client.GetBytes(ctx, u, g.Client.MaxMetadata)
 	if err != nil {
 		return nil, err
 	}

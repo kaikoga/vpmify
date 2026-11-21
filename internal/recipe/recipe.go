@@ -282,8 +282,10 @@ func (s *Source) check() error {
 		if s.Registry == "" {
 			return fmt.Errorf("npm source needs registry")
 		}
-		if u, err := url.Parse(s.Registry); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-			return fmt.Errorf("registry %q is not an http(s) URL", s.Registry)
+		// Plain http is refused: the digests come from the same registry, so
+		// anyone on the way could change both.
+		if u, err := url.Parse(s.Registry); err != nil || u.Scheme != "https" || u.Host == "" {
+			return fmt.Errorf("registry %q is not an https URL", s.Registry)
 		}
 		if s.URL != "" || s.TagVersion != nil || s.Tags != "" {
 			return fmt.Errorf("npm source takes no url, tagVersion or tags")

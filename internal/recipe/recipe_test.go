@@ -105,7 +105,8 @@ func TestParseRejects(t *testing.T) {
 		// Where a source comes from is checked when the recipe is read, so
 		// that add saves no recipe update cannot read.
 		{"source elsewhere than GitHub", `{"vpmifyFormat": 1, "id": "pkg", "sources": [{"type": "github", "url": "https://gitlab.com/owner/repo", "packages": [{"name": "p"}]}]}`, "want https://github.com/<owner>/<repo>"},
-		{"registry that is no URL", `{"vpmifyFormat": 1, "id": "pkg", "sources": [{"type": "npm", "registry": "ftp://r", "packages": [{"name": "p"}]}]}`, "not an http(s) URL"},
+		{"registry that is no URL", `{"vpmifyFormat": 1, "id": "pkg", "sources": [{"type": "npm", "registry": "ftp://r", "packages": [{"name": "p"}]}]}`, "not an https URL"},
+		{"registry over plain http", `{"vpmifyFormat": 1, "id": "pkg", "sources": [{"type": "npm", "registry": "http://r", "packages": [{"name": "p"}]}]}`, "not an https URL"},
 		{"no packages", `{"vpmifyFormat": 1, "id": "pkg", "sources": [{` + gitSourceHead + `, "packages": []}]}`, "no packages"},
 		{"twice in a recipe", `{"vpmifyFormat": 1, "id": "pkg", "sources": [{` + gitSourceHead + `, "packages": [{"name": "p"}]},
   {"type": "npm", "registry": "https://r", "packages": [{"name": "p"}]}]}`, "comes twice"},

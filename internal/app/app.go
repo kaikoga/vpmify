@@ -120,7 +120,14 @@ type DraftPackage struct {
 	Versions string `json:"versions,omitempty"`
 }
 
-// isURLRef reports whether a recipe reference names a URL rather than a file.
+// maxRecipeSize limits a recipe read from a URL. The largest recipe that
+// Vpmify's examples have is a few kilobytes; a recipe with many overlays
+// grows, but not to this.
+const maxRecipeSize = 10 << 20
+
+// isURLRef reports whether a recipe reference names a URL rather than a
+// file. An http URL counts, so that the fetch refuses it rather than a file
+// of that name being read.
 func isURLRef(ref string) bool {
 	return strings.HasPrefix(ref, "https://") || strings.HasPrefix(ref, "http://")
 }
@@ -130,7 +137,7 @@ func (a *App) readRecipeRef(ctx context.Context, ref string) (Draft, error) {
 	var err error
 	origin := ref
 	if isURLRef(ref) {
-		data, err = a.Client.GetBytes(ctx, ref)
+		data, err = a.Client.GetBytes(ctx, ref, maxRecipeSize)
 	} else {
 		if abs, aerr := filepath.Abs(ref); aerr == nil {
 			origin = abs
@@ -384,7 +391,7 @@ func (a *App) rereadRecipe(ctx context.Context, id, origin string) []string {
 		a.logf("%s: warning: %s", id, w)
 		return []string{w}
 	}
-	data, err := a.Client.GetBytes(ctx, origin)
+	data, err := a.Client.GetBytes(ctx, origin, maxRecipeSize)
 	if err != nil {
 		return warn("%v", err)
 	}
@@ -1146,10 +1153,11 @@ func (a *App) build(ctx context.Context, name string, rel source.Release, overri
 	defer os.RemoveAll(work)
 	pkg := filepath.Join(work, "package")
 
-	res, err := convert.ExtractTarGz(archive, pkg, rel.Dir)
+	res, err := convert.ExtractTarGz(archive, pkg, rel.Dir, convert.MaxPackageSize)
 	if err != nil {
 		return err
 	}
+	written := res.Written
 	for _, s := range res.Skipped {
 		a.logf("  skipped %s (not a regular file)", s)
 	}
@@ -1161,10 +1169,11 @@ func (a *App) build(ctx context.Context, name string, rel source.Release, overri
 		if err != nil || len(entries) > 0 {
 			return fmt.Errorf("overlay %s: the package has no empty folder %s", o.Path, o.Path)
 		}
-		res, err := convert.ExtractTarGz(overlayArchives[i], target, "")
+		res, err := convert.ExtractTarGz(overlayArchives[i], target, "", convert.MaxPackageSize-written)
 		if err != nil {
 			return fmt.Errorf("overlay %s: %w", o.Path, err)
 		}
+		written += res.Written
 		for _, s := range res.Skipped {
 			a.logf("  skipped %s/%s (not a regular file)", o.Path, s)
 		}

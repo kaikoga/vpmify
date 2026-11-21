@@ -24,7 +24,7 @@ import (
 
 const pkgName = "com.example.kit"
 
-const registryURL = "http://registry.test"
+const registryURL = "https://registry.test"
 
 // registry is a fake npm registry for one package. It answers through the
 // client's transport, so tests open no port.
@@ -497,7 +497,7 @@ func TestPullRefusesAVersionListOfAnotherRecipe(t *testing.T) {
 		t.Fatal(err, f.log)
 	}
 	// The user edits the recipe to read another registry.
-	edited := npmRecipe("kit", "http://mirror.test", pkgName, "")
+	edited := npmRecipe("kit", "https://mirror.test", pkgName, "")
 	if err := os.WriteFile(filepath.Join(f.app.Layout.Recipes(), "kit.json"), []byte(edited), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -930,6 +930,33 @@ func TestUpdateDoesNotReadRecipeFromFileAgain(t *testing.T) {
 	}
 	if got := f.versionCount(); got != 1 {
 		t.Errorf("versions = %d, want 1 from the saved recipe", got)
+	}
+}
+
+func TestAddRefusesRecipesOverPlainHTTP(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	// A file named like the URL, which must not be read in its place.
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.MkdirAll(filepath.Join(dir, "http:", "registry.test"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "http:", "registry.test", "kit.json"), []byte(npmRecipe("kit", registryURL, pkgName, "")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.app.Add(context.Background(), "http://registry.test/kit.json"); err == nil || !strings.Contains(err.Error(), "only https") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestAddRefusesRecipeOverTheLimit(t *testing.T) {
+	f := newFixture(t)
+	content := npmRecipe("kit", registryURL, pkgName, `, "note": "`+strings.Repeat("x", maxRecipeSize)+`"`)
+	reads := 0
+	f.serveRecipe(&content, &reads)
+	if _, err := f.app.Add(context.Background(), recipeURL); !errors.Is(err, fetch.ErrTooLarge) {
+		t.Errorf("err = %v", err)
 	}
 }
 

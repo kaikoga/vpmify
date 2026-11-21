@@ -52,7 +52,7 @@ func TestExtractStripsTopFolder(t *testing.T) {
 		"package":                   "", // a stray top-level file is dropped
 	}))
 	dest := filepath.Join(t.TempDir(), "out")
-	if _, err := ExtractTarGz(archive, dest, ""); err != nil {
+	if _, err := ExtractTarGz(archive, dest, "", MaxPackageSize); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"Editor/Sub/B.cs", "Runtime/A.cs", "Runtime/A.cs.meta", "package.json", "package.json.meta"}
@@ -70,7 +70,7 @@ func TestExtractSubpath(t *testing.T) {
 		"repo-abc/Packages/UniGLTF/package.json": `{}`,
 	}))
 	dest := filepath.Join(t.TempDir(), "out")
-	if _, err := ExtractTarGz(archive, dest, "/Packages/VRM/"); err != nil {
+	if _, err := ExtractTarGz(archive, dest, "/Packages/VRM/", MaxPackageSize); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"Runtime/V.cs", "package.json"}
@@ -83,7 +83,7 @@ func TestExtractRejectsEscape(t *testing.T) {
 	archive := writeArchive(t, testutil.TarGz(map[string]string{
 		"package/../../evil": "x",
 	}))
-	if _, err := ExtractTarGz(archive, filepath.Join(t.TempDir(), "out"), ""); err == nil {
+	if _, err := ExtractTarGz(archive, filepath.Join(t.TempDir(), "out"), "", MaxPackageSize); err == nil {
 		t.Error("no error for an entry outside the package")
 	}
 }
@@ -94,7 +94,7 @@ func TestExtractRejectsBackslashEscape(t *testing.T) {
 	}))
 	root := t.TempDir()
 	dest := filepath.Join(root, "work", "build", "package")
-	_, err := ExtractTarGz(archive, dest, "")
+	_, err := ExtractTarGz(archive, dest, "", MaxPackageSize)
 	if runtime.GOOS == "windows" && err == nil {
 		t.Error("no error for an entry that leaves the package through backslashes")
 	}
@@ -105,6 +105,20 @@ func TestExtractRejectsBackslashEscape(t *testing.T) {
 	}
 }
 
+func TestExtractStopsAtLimit(t *testing.T) {
+	archive := writeArchive(t, testutil.TarGz(map[string]string{
+		"package/a.txt": "12345",
+		"package/b.txt": "67890",
+	}))
+	res, err := ExtractTarGz(archive, filepath.Join(t.TempDir(), "out"), "", 10)
+	if err != nil || res.Written != 10 {
+		t.Errorf("at the limit: written = %d, err = %v", res.Written, err)
+	}
+	if _, err := ExtractTarGz(archive, filepath.Join(t.TempDir(), "out"), "", 9); err == nil || !strings.Contains(err.Error(), "larger than 9 bytes") {
+		t.Errorf("over the limit: err = %v", err)
+	}
+}
+
 func TestExtractSkipsLinks(t *testing.T) {
 	archive := writeArchive(t, testutil.TarGzEntries([]testutil.Entry{
 		{Name: "package/package.json", Body: "{}"},
@@ -112,7 +126,7 @@ func TestExtractSkipsLinks(t *testing.T) {
 		{Name: "package/tool.sh", Body: "#!/bin/sh", Mode: 0o755},
 	}))
 	dest := filepath.Join(t.TempDir(), "out")
-	res, err := ExtractTarGz(archive, dest, "")
+	res, err := ExtractTarGz(archive, dest, "", MaxPackageSize)
 	if err != nil {
 		t.Fatal(err)
 	}

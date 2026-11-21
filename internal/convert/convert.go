@@ -19,17 +19,26 @@ import (
 	"github.com/kaikoga/vpmify/internal/recipe"
 )
 
-// Result tells what extraction left out.
+// MaxPackageSize limits the files of one package version, its overlays
+// included. It is far above what real packages need (one that ships
+// machine learning data passes 2 GB), so that only an archive that means
+// harm, or is broken, reaches it; a small archive can hold far more than it
+// is.
+const MaxPackageSize = 16 << 30
+
+// Result tells what extraction did.
 type Result struct {
 	// Skipped lists entries that were not regular files or folders.
 	Skipped []string
+	// Written is how many bytes of files were written.
+	Written int64
 }
 
-// ExtractTarGz extracts a gzipped tar into dest. It drops the first path
-// component of every entry (npm tarballs put everything under "package/",
-// GitHub tarballs under "<repo>-<hash>/"), then keeps only the entries under
-// subpath, with subpath dropped too.
-func ExtractTarGz(archive, dest, subpath string) (Result, error) {
+// ExtractTarGz extracts a gzipped tar into dest, writing at most max bytes
+// of files. It drops the first path component of every entry (npm tarballs
+// put everything under "package/", GitHub tarballs under "<repo>-<hash>/"),
+// then keeps only the entries under subpath, with subpath dropped too.
+func ExtractTarGz(archive, dest, subpath string, max int64) (Result, error) {
 	var res Result
 	f, err := os.Open(archive)
 	if err != nil {
@@ -98,9 +107,15 @@ func ExtractTarGz(archive, dest, subpath string) (Result, error) {
 			if hdr.FileInfo().Mode()&0o111 != 0 {
 				mode = 0o755
 			}
+			// tar reads exactly hdr.Size bytes of an entry, so the header
+			// tells the size before anything is written.
+			if hdr.Size > max-res.Written {
+				return res, fmt.Errorf("%s: the package is larger than %d bytes", archive, max)
+			}
 			if err := writeFile(target, tr, mode); err != nil {
 				return res, err
 			}
+			res.Written += hdr.Size
 		case tar.TypeXGlobalHeader, tar.TypeXHeader:
 		default:
 			res.Skipped = append(res.Skipped, rel)
