@@ -1,5 +1,5 @@
 import {Browser, Events} from "@wailsio/runtime";
-import {type PendingAdd, VpmifyService} from "../bindings/github.com/kaikoga/vpmify/gui";
+import {type PendingAdd, VpmifyService, type VersionsResult} from "../bindings/github.com/kaikoga/vpmify/gui";
 import type {Entry, PackageVersions, RecipeInfo} from "../bindings/github.com/kaikoga/vpmify/internal/app";
 import {Busy, Log, Pending} from "../bindings/events";
 import {applyStatic, currentLang, type Key, type Lang, setLang, t} from "./i18n";
@@ -35,7 +35,7 @@ const confirmDialog = byId<HTMLDialogElement>("confirm-dialog");
 const pendingDialog = byId<HTMLDialogElement>("pending-dialog");
 const aboutSource = byId<HTMLAnchorElement>("about-source");
 
-// selected is the recipe shown on the right.
+// selected is the recipe chosen in the list on the left.
 let selected: string | null = null;
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text?: string): HTMLElementTagNameMap[K] {
@@ -102,6 +102,9 @@ interface Removal {
 // confirmRemoval removes only when the user confirms, as removing is
 // destructive.
 function confirmRemoval(r: Removal) {
+    // The recipes waiting to be added are asked about again once this
+    // dialog closes.
+    hidePending();
     confirmDialog.replaceChildren(el("h3", "", r.title), el("p", "", r.before));
     if (r.entries.length > 0) {
         const table = el("table");
@@ -172,15 +175,15 @@ function confirmVersionRemoval(e: Entry) {
     });
 }
 
-function confirmPackageRemoval(id: string, p: PackageVersions, entries: Entry[]) {
-    const params = {label: nameLabel(p.package, p.displayName || entries[0]?.displayName)};
+function confirmPackageRemoval(id: string, name: string, displayName: string | undefined, entries: Entry[]) {
+    const params = {label: nameLabel(name, displayName)};
     confirmRemoval({
         title: t("remove.package.title", params),
         before: t("remove.package.before", params),
         entries,
         after: t("remove.package.after"),
         confirm: t("remove.package.confirm"),
-        run: () => VpmifyService.RemoveVersions(`${id}/${p.package}`, ""),
+        run: () => VpmifyService.RemoveVersions(`${id}/${name}`, ""),
     });
 }
 
@@ -216,7 +219,11 @@ function setBusy(value: boolean) {
     for (const b of document.querySelectorAll<HTMLButtonElement>("button[data-op]")) {
         b.disabled = busy || (b === pullNewestElement && !newestChoosable);
     }
-    if (!busy) {
+    if (busy) {
+        // The dialog would cover the cancel button; it comes back when the
+        // operations end.
+        hidePending();
+    } else {
         showPending().catch(showError);
     }
 }
@@ -231,6 +238,17 @@ function setLogOpen(open: boolean) {
     logToggle.textContent = t(open ? "log.shrink" : "log.expand");
 }
 
+// hiding says that the GUI itself closes the dialog of the recipes waiting
+// to be added; when the dialog closes otherwise, they are asked about again.
+let hiding = false;
+
+function hidePending() {
+    if (pendingDialog.open) {
+        hiding = true;
+        pendingDialog.close();
+    }
+}
+
 // showPending asks about the oldest recipes waiting to be added. It waits
 // while the removal dialog is open, and while an operation runs, as the
 // dialog would cover the cancel button.
@@ -238,9 +256,7 @@ async function showPending() {
     const pending = (await VpmifyService.Pending()) ?? [];
     const p = pending[0];
     if (!p) {
-        if (pendingDialog.open) {
-            pendingDialog.close();
-        }
+        hidePending();
         return;
     }
     if (confirmDialog.open || busy) {
@@ -286,13 +302,13 @@ function renderPending(p: PendingAdd, more: number) {
     }
     const actions = el("div", "actions");
     actions.append(button(t(p.error ? "pending.dismiss" : "pending.dontAdd"), () => {
-        pendingDialog.close();
+        hidePending();
         act(() => VpmifyService.DiscardAdd(p.token));
     }));
     if (!p.error) {
         const first = p.recipes?.[0]?.id ?? null;
         actions.append(button(t("pending.add"), () => {
-            pendingDialog.close();
+            hidePending();
             act(async () => {
                 await VpmifyService.ConfirmAdd(p.token);
                 selected = first;
@@ -310,9 +326,6 @@ let recipeNames = new Map<string, string>();
 // could not be listed.
 function showRecipes(recipes: RecipeInfo[], entries: Entry[] | null) {
     recipeNames = new Map(recipes.filter((r) => r.displayName).map((r) => [r.id, r.displayName!]));
-    if (!recipes.some((r) => r.id === selected)) {
-        selected = recipes[0]?.id ?? null;
-    }
     recipesElement.replaceChildren();
     for (const r of recipes) {
         const li = el("li");
@@ -343,12 +356,14 @@ function showRecipes(recipes: RecipeInfo[], entries: Entry[] | null) {
 // shownRecipe is the recipe shown on the right, which its buttons act on.
 let shownRecipe: RecipeInfo | null = null;
 
-async function showRecipe(recipes: RecipeInfo[], entries: Entry[] | null) {
-    const r = recipes.find((x) => x.id === selected);
-    shownRecipe = r ?? null;
-    noRecipesElement.hidden = recipes.length > 0;
+// showRecipe shows recipe r on the right, with what Versions returned for it
+// or why it failed.
+function showRecipe(r: RecipeInfo | null, hasRecipes: boolean, entries: Entry[] | null, versions: VersionsResult | null, versionsFailure: string) {
+    shownRecipe = r;
+    noRecipesElement.hidden = hasRecipes;
     recipeElement.hidden = !r;
     if (!r) {
+        shown = null;
         return;
     }
     recipeLabel.replaceChildren(label(r.id, r.displayName));
@@ -358,11 +373,11 @@ async function showRecipe(recipes: RecipeInfo[], entries: Entry[] | null) {
     recipePackages.textContent = String((r.packages ?? []).length);
     const ofRecipe = entries?.filter((e) => e.recipe === r.id) ?? [];
     recipeAvailable.textContent = entries === null ? "" : ofRecipe.length > 0 ? String(ofRecipe.length) : t("recipe.noneAvailable");
-    await showVersions(r.id, ofRecipe);
+    showVersions(r.id, ofRecipe, versions, versionsFailure);
 }
 
-// shown is what showVersions read, which renderPackages draws again when
-// the user opens or closes a package.
+// shown is what showVersions was given, which renderPackages draws again
+// when the user opens or closes a package.
 let shown: { id: string, packages: PackageVersions[], entries: Entry[] } | null = null;
 
 // open is the packages whose versions are shown, by "<id>/<package>"; seen
@@ -376,27 +391,12 @@ const showAll = new Set<string>();
 
 // showVersions shows the versions of recipe id; entries are its available
 // versions.
-async function showVersions(id: string, entries: Entry[]) {
-    shown = null;
-    packagesElement.replaceChildren();
-    versionsError.hidden = true;
-    noVersionsElement.hidden = true;
-    newestChoosable = false;
-    pullNewestElement.disabled = true;
-    let result;
-    try {
-        result = await VpmifyService.Versions(id, prereleasesElement.checked);
-    } catch (err) {
-        versionsError.hidden = false;
-        versionsError.textContent = String(err);
-        return;
-    }
+function showVersions(id: string, entries: Entry[], versions: VersionsResult | null, failure: string) {
     // The packages whose source has no usable list are left out, with why.
-    if (result.error) {
-        versionsError.hidden = false;
-        versionsError.textContent = result.error;
-    }
-    const packages = result.list?.packages ?? [];
+    const why = failure || versions?.error || "";
+    versionsError.hidden = !why;
+    versionsError.textContent = why;
+    const packages = versions?.list?.packages ?? [];
     // The newest button pulls the recipe without naming a package, which
     // chooses only from the versions shown here (prereleases only when the
     // box shows them) that can be converted, of packages not onDemand.
@@ -407,14 +407,21 @@ async function showVersions(id: string, entries: Entry[]) {
 }
 
 function renderPackages() {
-    packagesElement.replaceChildren();
     if (!shown) {
+        packagesElement.replaceChildren();
         return;
     }
-    for (const p of shown.packages) {
-        packagesElement.append(packageBlock(shown.id, p, shown.entries.filter((e) => e.package === p.package)));
+    const {id, packages, entries} = shown;
+    const blocks = packages.map((p) => packageBlock(id, p.package, p, entries.filter((e) => e.package === p.package)));
+    // Packages with available versions but no version list, as when their
+    // source could not be read, still show those versions.
+    const listed = new Set(packages.map((p) => p.package));
+    const unlisted = [...new Set(entries.map((e) => e.package))].filter((name) => !listed.has(name));
+    for (const name of unlisted) {
+        blocks.push(packageBlock(id, name, null, entries.filter((e) => e.package === name)));
     }
-    noVersionsElement.hidden = shown.packages.length > 0 || shown.entries.length > 0;
+    packagesElement.replaceChildren(...blocks);
+    noVersionsElement.hidden = blocks.length > 0;
 }
 
 // VersionRow is one row of a package's versions.
@@ -429,15 +436,19 @@ interface VersionRow {
     entry?: Entry;
 }
 
-function packageBlock(id: string, p: PackageVersions, entries: Entry[]): HTMLDivElement {
-    const key = `${id}/${p.package}`;
+// packageBlock shows package name of recipe id: its version list p, which
+// is null when there is none, and its available versions entries.
+function packageBlock(id: string, name: string, p: PackageVersions | null, entries: Entry[]): HTMLDivElement {
+    const key = `${id}/${name}`;
     if (!seen.has(key)) {
         seen.add(key);
         if (entries.length > 0) {
             open.add(key);
         }
     }
+    const displayName = p?.displayName || entries[0]?.displayName;
     const box = el("div", "pkg");
+    box.dataset.key = key;
     const head = el("div", "pkg-head");
     head.append(button(open.has(key) ? "▼" : "▶", () => {
         if (!open.delete(key)) {
@@ -445,23 +456,26 @@ function packageBlock(id: string, p: PackageVersions, entries: Entry[]): HTMLDiv
         }
         renderPackages();
     }, {className: "twisty"}));
-    const versions = p.versions ?? [];
+    const versions = p?.versions ?? [];
     const info = el("div");
-    let sub = t("package.info", {
-        source: p.source,
-        updated: new Date(p.updated).toLocaleString(currentLang()),
-        count: versions.length,
-    });
-    if (p.onDemand) {
-        sub += " · " + t("package.onDemand");
+    info.append(label(name, displayName));
+    if (p) {
+        let sub = t("package.info", {
+            source: p.source,
+            updated: new Date(p.updated).toLocaleString(currentLang()),
+            count: versions.length,
+        });
+        if (p.onDemand) {
+            sub += " · " + t("package.onDemand");
+        }
+        info.append(el("div", "sub", sub));
     }
-    info.append(label(p.package, p.displayName), el("div", "sub", sub));
     head.append(info);
     const summary = el("div", "summary");
     if (entries.length > 0) {
         summary.append(
             el("span", "ok", t("package.available", {count: entries.length})),
-            button(t("package.removeAll"), () => confirmPackageRemoval(id, p, entries), {op: true, className: "small danger"}),
+            button(t("package.removeAll"), () => confirmPackageRemoval(id, name, displayName, entries), {op: true, className: "small danger"}),
         );
     } else {
         summary.append(el("span", "muted", t("package.noneAvailable")));
@@ -518,7 +532,7 @@ function packageBlock(id: string, p: PackageVersions, entries: Entry[]): HTMLDiv
             op.textContent = r.unusable;
             op.className = "op note";
         } else if (!r.available) {
-            op.append(button(t("version.get"), () => act(() => VpmifyService.Pull([`${id}/${p.package}@${r.version}`], false)), {op: true, className: "small"}));
+            op.append(button(t("version.get"), () => act(() => VpmifyService.Pull([`${id}/${name}@${r.version}`], false)), {op: true, className: "small"}));
         }
     }
     if (rows.length > folded.length) {
@@ -556,22 +570,53 @@ function showAvailable(entries: Entry[] | null, error: string) {
     emptyElement.hidden = entries === null || entries.length > 0;
 }
 
+// generation counts the refreshes. A refresh reads everything before it
+// draws, and draws nothing when a newer one has started, so that the
+// recipe chosen on the left and what the right shows stay the same one,
+// and the right keeps its scroll while it is drawn again.
+let generation = 0;
+
 async function refresh() {
+    const g = ++generation;
     let entries: Entry[] | null = null;
-    let listError = "";
+    let listFailure = "";
     try {
         entries = (await VpmifyService.List()).entries ?? [];
     } catch (err) {
-        listError = String(err);
+        listFailure = String(err);
     }
+    let recipes: RecipeInfo[] = [];
+    let recipesFailure: unknown = null;
     try {
-        const recipes = (await VpmifyService.Recipes()) ?? [];
-        showRecipes(recipes, entries);
-        await showRecipe(recipes, entries);
+        recipes = (await VpmifyService.Recipes()) ?? [];
     } catch (err) {
-        showError(err);
+        recipesFailure = err;
     }
-    showAvailable(entries, listError);
+    if (g !== generation) {
+        return;
+    }
+    if (!recipes.some((r) => r.id === selected)) {
+        selected = recipes[0]?.id ?? null;
+    }
+    const id = selected;
+    let versions: VersionsResult | null = null;
+    let versionsFailure = "";
+    if (id !== null) {
+        try {
+            versions = await VpmifyService.Versions(id, prereleasesElement.checked);
+        } catch (err) {
+            versionsFailure = String(err);
+        }
+    }
+    if (g !== generation) {
+        return;
+    }
+    if (recipesFailure !== null) {
+        showError(recipesFailure);
+    }
+    showRecipes(recipes, entries);
+    showRecipe(recipes.find((r) => r.id === id) ?? null, recipes.length > 0 || recipesFailure !== null, entries, versions, versionsFailure);
+    showAvailable(entries, listFailure);
     await showPending().catch(showError);
 }
 
@@ -600,15 +645,17 @@ cancelElement.addEventListener("click", () => VpmifyService.Cancel().catch(showE
 byId("choose").addEventListener("click", () => act(() => VpmifyService.ChooseRecipeFiles()));
 byId("update-all").addEventListener("click", () => act(() => VpmifyService.Update([])));
 byId("update").addEventListener("click", () => {
-    if (selected !== null) {
-        act(() => VpmifyService.Update([selected!]));
+    if (shownRecipe) {
+        const id = shownRecipe.id;
+        act(() => VpmifyService.Update([id]));
     }
 });
 pullNewestElement.addEventListener("click", () => {
-    if (selected !== null) {
+    if (shownRecipe) {
+        const id = shownRecipe.id;
         // The newest of the versions the list shows, prereleases too when
         // it shows them.
-        act(() => VpmifyService.Pull([selected!], prereleasesElement.checked));
+        act(() => VpmifyService.Pull([id], prereleasesElement.checked));
     }
 });
 byId("remove-recipe").addEventListener("click", () => {
@@ -616,18 +663,21 @@ byId("remove-recipe").addEventListener("click", () => {
         confirmRecipeRemoval(shownRecipe);
     }
 });
-byId("expand-all").addEventListener("click", () => {
-    for (const p of shown?.packages ?? []) {
-        open.add(`${shown!.id}/${p.package}`);
+// openAll opens or closes every package shown.
+function openAll(value: boolean) {
+    for (const b of packagesElement.querySelectorAll<HTMLElement>(".pkg")) {
+        const key = b.dataset.key!;
+        if (value) {
+            open.add(key);
+        } else {
+            open.delete(key);
+        }
     }
     renderPackages();
-});
-byId("collapse-all").addEventListener("click", () => {
-    for (const p of shown?.packages ?? []) {
-        open.delete(`${shown!.id}/${p.package}`);
-    }
-    renderPackages();
-});
+}
+
+byId("expand-all").addEventListener("click", () => openAll(true));
+byId("collapse-all").addEventListener("click", () => openAll(false));
 byId("reload").addEventListener("click", () => act(async () => {}));
 logToggle.addEventListener("click", () => setLogOpen(!logFooter.classList.contains("open")));
 // The webview does not navigate away from the app; the link opens in the
@@ -637,8 +687,15 @@ aboutSource.addEventListener("click", (event) => {
     Browser.OpenURL(aboutSource.href).catch(showError);
 });
 // The recipes waiting to be added stay until the user adds or discards
-// them, which Escape would skip.
+// them. Escape is refused, and when the webview closes the dialog anyway,
+// as Chromium does for an Escape pressed again, the dialog comes back.
 pendingDialog.addEventListener("cancel", (event) => event.preventDefault());
+pendingDialog.addEventListener("close", () => {
+    if (!hiding) {
+        showPending().catch(showError);
+    }
+    hiding = false;
+});
 confirmDialog.addEventListener("close", () => {
     confirmDialog.replaceChildren();
     showPending().catch(showError);
@@ -648,8 +705,6 @@ languageElement.addEventListener("change", () => {
     setLang(languageElement.value as Lang);
     applyStatic();
     setLogOpen(logFooter.classList.contains("open"));
-    // An open dialog keeps the language it was written in.
-    closeConfirm();
     showAbout().catch(showError);
     refresh();
 });

@@ -101,8 +101,10 @@
         </section>
     </div>
 </div>
-<dialog id="confirm-dialog" class="danger"></dialog>
-<dialog id="pending-dialog"></dialog>
+<!-- A modal dialog is drawn outside .app, so files dropped on it would be
+     ignored without a drop target of its own. -->
+<dialog id="confirm-dialog" class="danger" data-file-drop-target></dialog>
+<dialog id="pending-dialog" data-file-drop-target></dialog>
 <script type="module" src="/src/main.ts"></script>
 </body>
 </html>
