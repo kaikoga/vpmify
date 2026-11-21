@@ -913,6 +913,27 @@ func TestUpdateKeepsRecipeThatCannotBeReadAgain(t *testing.T) {
 	}
 }
 
+func TestUpdateKeepsRereadWarningWhenSourcesFail(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	ctx := context.Background()
+	content := npmRecipe("kit", registryURL, pkgName, "")
+	reads := 0
+	f.serveRecipe(&content, &reads)
+	if _, err := f.app.Add(ctx, recipeURL); err != nil {
+		t.Fatal(err, f.log)
+	}
+
+	f.reg.down = true
+	res, err := f.app.Update(ctx, nil)
+	if err == nil {
+		t.Fatal("err = nil with the registry down")
+	}
+	if len(res.Recipes) != 1 || len(res.Recipes[0].Warnings) != 1 || !strings.Contains(res.Recipes[0].Warnings[0], "could not read the recipe again") {
+		t.Errorf("recipes = %+v, want kit with the reread warning", res.Recipes)
+	}
+}
+
 func TestUpdateDoesNotReadRecipeFromFileAgain(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")

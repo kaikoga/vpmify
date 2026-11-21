@@ -3,6 +3,7 @@ package convert
 import (
 	"archive/tar"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -114,7 +115,7 @@ func TestExtractStopsAtLimit(t *testing.T) {
 	if err != nil || res.Written != 10 {
 		t.Errorf("at the limit: written = %d, err = %v", res.Written, err)
 	}
-	if _, err := ExtractTarGz(archive, filepath.Join(t.TempDir(), "out"), "", 9); err == nil || !strings.Contains(err.Error(), "larger than 9 bytes") {
+	if _, err := ExtractTarGz(archive, filepath.Join(t.TempDir(), "out"), "", 9); !errors.Is(err, ErrTooLarge) {
 		t.Errorf("over the limit: err = %v", err)
 	}
 }

@@ -36,7 +36,8 @@ const (
 type Client struct {
 	HTTP      *http.Client
 	UserAgent string
-	// MaxMetadata is the most bytes GetJSON and GetBytesIfExists read.
+	// MaxMetadata is the most bytes GetJSON and GetBytesIfExists read. A
+	// caller of GetBytes that reads such a file passes it too.
 	MaxMetadata int64
 	// MaxArchive is the most bytes Download saves.
 	MaxArchive int64
@@ -69,21 +70,26 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
 var ErrTooLarge = errors.New("too large")
 
 // limitReader passes on at most max bytes of r, and fails with ErrTooLarge
-// when r has more. Nothing past max is passed on, so a reader that stops
-// at a complete value, as a JSON decoder does, cannot succeed on a body
-// over the limit.
+// when r has more, on that read and every later one. Nothing past max is
+// passed on, so a reader that stops at a complete value, as a JSON decoder
+// does, cannot succeed on a body over the limit.
 type limitReader struct {
 	r    io.Reader
 	max  int64
 	read int64
+	err  error
 }
 
 func (l *limitReader) Read(p []byte) (int, error) {
+	if l.err != nil {
+		return 0, l.err
+	}
 	if l.read >= l.max {
 		var one [1]byte
 		n, err := l.r.Read(one[:])
 		if n > 0 {
-			return 0, fmt.Errorf("%w: more than %d bytes", ErrTooLarge, l.max)
+			l.err = fmt.Errorf("%w: more than %d bytes", ErrTooLarge, l.max)
+			return 0, l.err
 		}
 		return 0, err
 	}

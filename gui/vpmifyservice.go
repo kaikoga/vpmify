@@ -145,7 +145,8 @@ func (s *VpmifyService) Versions(id string, all bool) (VersionsResult, error) {
 	return res, nil
 }
 
-// Update reads the version lists of the recipes again.
+// Update reads the recipes added from URLs again, and the version lists of
+// the recipes.
 func (s *VpmifyService) Update(ctx context.Context, ids []string) error {
 	return s.run(func() error {
 		_, err := s.core.Update(ctx, ids)

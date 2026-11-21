@@ -97,6 +97,19 @@ func TestRefusesBodiesOverTheLimit(t *testing.T) {
 	}
 }
 
+func TestLimitReaderKeepsFailing(t *testing.T) {
+	l := &limitReader{r: strings.NewReader("12345678901"), max: 10}
+	buf := make([]byte, 20)
+	if n, err := l.Read(buf); n != 10 || err != nil {
+		t.Fatalf("first read: n = %d, err = %v", n, err)
+	}
+	for i := range 3 {
+		if n, err := l.Read(buf); n != 0 || !errors.Is(err, ErrTooLarge) {
+			t.Errorf("read %d after the limit: n = %d, err = %v", i, n, err)
+		}
+	}
+}
+
 func TestGetJSONStopsAtTheLimit(t *testing.T) {
 	c := newTestClient(func(w http.ResponseWriter, req *http.Request) {
 		_, _ = io.WriteString(w, `{"name": "`+strings.Repeat("x", 100)+`"}`)

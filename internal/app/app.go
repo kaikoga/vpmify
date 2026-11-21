@@ -216,7 +216,7 @@ type AddResult struct {
 	UpdateResult
 }
 
-// Add reads recipes from file paths or http(s) URLs, saves them among the
+// Add reads recipes from file paths or https URLs, saves them among the
 // user's recipes, and reads their version lists. It converts nothing; Pull
 // does. Nothing is saved unless every recipe reads well.
 func (a *App) Add(ctx context.Context, refs ...string) (*AddResult, error) {
@@ -227,7 +227,7 @@ func (a *App) Add(ctx context.Context, refs ...string) (*AddResult, error) {
 	return a.AddDrafts(ctx, drafts)
 }
 
-// ReadRecipes reads recipes from file paths or http(s) URLs as Add does,
+// ReadRecipes reads recipes from file paths or https URLs as Add does,
 // without saving them.
 func (a *App) ReadRecipes(ctx context.Context, refs ...string) ([]Draft, error) {
 	var drafts []Draft
@@ -364,7 +364,9 @@ func (a *App) update(ctx context.Context, ids []string, reread bool) (*UpdateRes
 		if len(rereadWarnings) > 0 {
 			u.Warnings = append(rereadWarnings, u.Warnings...)
 		}
-		if len(u.Packages) > 0 {
+		// A recipe whose sources all failed still says why it was not read
+		// again, which may be the same cause.
+		if len(u.Packages) > 0 || len(u.Warnings) > 0 {
 			res.Recipes = append(res.Recipes, u)
 		}
 		if err != nil {

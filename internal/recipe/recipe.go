@@ -283,8 +283,11 @@ func (s *Source) check() error {
 			return fmt.Errorf("npm source needs registry")
 		}
 		// Plain http is refused: the digests come from the same registry, so
-		// anyone on the way could change both.
-		if u, err := url.Parse(s.Registry); err != nil || u.Scheme != "https" || u.Host == "" {
+		// anyone on the way could change both. The prefix is checked as well
+		// as the scheme: url.Parse lowercases the scheme, but the registry's
+		// URLs are made from the string, and the fetch reads only a
+		// lowercase https prefix.
+		if u, err := url.Parse(s.Registry); err != nil || u.Scheme != "https" || u.Host == "" || !strings.HasPrefix(s.Registry, "https://") {
 			return fmt.Errorf("registry %q is not an https URL", s.Registry)
 		}
 		if s.URL != "" || s.TagVersion != nil || s.Tags != "" {

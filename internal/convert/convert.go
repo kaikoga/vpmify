@@ -6,6 +6,7 @@ package convert
 import (
 	"archive/tar"
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -25,6 +26,11 @@ import (
 // harm, or is broken, reaches it; a small archive can hold far more than it
 // is.
 const MaxPackageSize = 16 << 30
+
+// ErrTooLarge is wrapped by the error of an extraction that would write
+// more than its limit. The limit is not in the message: for an overlay it
+// is what the package left of MaxPackageSize.
+var ErrTooLarge = errors.New("the package's files are larger than Vpmify takes")
 
 // Result tells what extraction did.
 type Result struct {
@@ -110,7 +116,7 @@ func ExtractTarGz(archive, dest, subpath string, max int64) (Result, error) {
 			// tar reads exactly hdr.Size bytes of an entry, so the header
 			// tells the size before anything is written.
 			if hdr.Size > max-res.Written {
-				return res, fmt.Errorf("%s: the package is larger than %d bytes", archive, max)
+				return res, fmt.Errorf("%s: %w", archive, ErrTooLarge)
 			}
 			if err := writeFile(target, tr, mode); err != nil {
 				return res, err
