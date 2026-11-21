@@ -40,18 +40,28 @@ type VpmifyService struct {
 	// emit sends an event to the front end; nil until the app exists.
 	emit func(name string, data any)
 
-	// op runs one operation on the core at a time, as the CLI does in one
-	// process; the core's lock only keeps processes apart.
-	op sync.Mutex
-
-	mu      sync.Mutex
-	busy    int
-	pending []PendingAdd
-	next    int
+	mu sync.Mutex
+	// op is held by the one operation running on the core, as the CLI runs
+	// one in a process; the core's lock only keeps processes apart. It is a
+	// channel rather than a sync.Mutex so that waiting for it can be
+	// canceled.
+	op chan struct{}
+	// ops is the context of the operations running and waiting, which
+	// cancelOps cancels.
+	ops       context.Context
+	cancelOps context.CancelFunc
+	busy      int
+	pending   []PendingAdd
+	next      int
 	// reading counts the links being read for a card, which have no card
 	// yet but will.
 	reading int
 }
+
+// errCanceled is returned by run when Cancel stopped the operation. The
+// methods the front end calls return nothing for it instead of an error,
+// since the user asked for it; Cancel says so in the log.
+var errCanceled = errors.New("canceled")
 
 // maxLinkCards is how many cards may wait for the user before more links
 // are ignored. A web page can send links at any time, and each card keeps
@@ -98,11 +108,28 @@ func (s *VpmifyService) send(name string, data any) {
 	}
 }
 
+// initOps makes op and ops on first use, so that a VpmifyService made
+// without NewVpmifyService works. s.mu must be held.
+func (s *VpmifyService) initOps() {
+	if s.op == nil {
+		s.op = make(chan struct{}, 1)
+	}
+	if s.ops == nil {
+		s.ops, s.cancelOps = context.WithCancel(context.Background())
+	}
+}
+
 // run runs fn as the only operation on the core, and tells the front end
-// while one is running or waiting.
-func (s *VpmifyService) run(fn func() error) error {
+// while one is running or waiting. fn gets a context that Cancel cancels
+// as well as ctx. It returns errCanceled when canceled before fn started,
+// or when fn failed after being canceled, since then the failure is most
+// likely the cancel; an fn that does not watch its context, such as a
+// removal, finishes and returns as it would.
+func (s *VpmifyService) run(ctx context.Context, fn func(context.Context) error) error {
 	s.mu.Lock()
+	s.initOps()
 	s.busy++
+	op, ops := s.op, s.ops
 	s.mu.Unlock()
 	s.send(eventBusy, true)
 	defer func() {
@@ -112,9 +139,53 @@ func (s *VpmifyService) run(fn func() error) error {
 		s.mu.Unlock()
 		s.send(eventBusy, busy)
 	}()
-	s.op.Lock()
-	defer s.op.Unlock()
-	return fn()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer context.AfterFunc(ops, cancel)()
+	select {
+	case op <- struct{}{}:
+	case <-ctx.Done():
+		return errCanceled
+	}
+	defer func() { <-op }()
+	// The cancel that stopped the operation before this one frees op, and
+	// may come first: select picks at random between ready cases, and
+	// AfterFunc cancels ctx in a goroutine of its own. ops is canceled by
+	// the time Cancel returns.
+	if ctx.Err() != nil || ops.Err() != nil {
+		return errCanceled
+	}
+	err := fn(ctx)
+	if err != nil && ctx.Err() != nil {
+		return errCanceled
+	}
+	return err
+}
+
+// Cancel stops the operations running and waiting to run. The core stops
+// an operation at its next download or version, so the one running may take
+// a moment. One waiting for another Vpmify process to release the core's
+// lock stops only once it gets the lock, as the core waits without a
+// context.
+func (s *VpmifyService) Cancel() {
+	s.mu.Lock()
+	s.initOps()
+	busy := s.busy > 0
+	s.cancelOps()
+	s.ops, s.cancelOps = context.WithCancel(context.Background())
+	s.mu.Unlock()
+	if busy {
+		s.send(eventLog, "canceled")
+	}
+}
+
+// quiet turns errCanceled into no error, for the methods the front end
+// calls.
+func quiet(err error) error {
+	if errors.Is(err, errCanceled) {
+		return nil
+	}
+	return err
 }
 
 // List returns what `vpmify package list` shows.
@@ -157,54 +228,57 @@ func (s *VpmifyService) Versions(id string, all bool) (VersionsResult, error) {
 // Update reads the recipes added from URLs again, and the version lists of
 // the recipes.
 func (s *VpmifyService) Update(ctx context.Context, ids []string) error {
-	return s.run(func() error {
+	return quiet(s.run(ctx, func(ctx context.Context) error {
 		_, err := s.core.Update(ctx, ids)
 		return err
-	})
+	}))
 }
 
 // Pull makes versions available as `vpmify package pull` does: targets are "<id>"
 // or "<id>/<package>", either with "@<version>". prerelease is
 // `--prerelease`.
 func (s *VpmifyService) Pull(ctx context.Context, targets []string, prerelease bool) error {
-	return s.run(func() error {
+	return quiet(s.run(ctx, func(ctx context.Context) error {
 		_, err := s.core.Pull(ctx, targets, vpmify.PullOptions{Prerelease: prerelease})
 		return err
-	})
+	}))
 }
 
 // RemoveVersions unregisters and deletes available versions as `vpmify
 // package remove` does: ref is "<id>" or "<id>/<package>", and version is
 // one version, or "" for every version. The front end asks the user first.
-func (s *VpmifyService) RemoveVersions(ref, version string) error {
-	return s.run(func() error {
+func (s *VpmifyService) RemoveVersions(ctx context.Context, ref, version string) error {
+	return quiet(s.run(ctx, func(context.Context) error {
 		_, err := s.core.RemoveVersions(ref, version)
 		return err
-	})
+	}))
 }
 
 // RecipeRemoval returns what removing recipe id would remove, for the user
-// to confirm.
-func (s *VpmifyService) RecipeRemoval(id string) (vpmify.RemoveResult, error) {
+// to confirm, or nil when canceled before it was read.
+func (s *VpmifyService) RecipeRemoval(ctx context.Context, id string) (*vpmify.RemoveResult, error) {
 	var res *vpmify.RemoveResult
-	err := s.run(func() error {
+	err := s.run(ctx, func(context.Context) error {
 		var err error
 		res, err = s.core.RemoveRecipe(id, false)
 		return err
 	})
-	if res == nil {
-		return vpmify.RemoveResult{}, err
+	if errors.Is(err, errCanceled) {
+		return nil, nil
 	}
-	return *res, err
+	if res == nil {
+		return &vpmify.RemoveResult{}, err
+	}
+	return res, err
 }
 
 // RemoveRecipe removes recipe id with its available versions, as `vpmify
 // recipe remove` does, after the user confirmed what RecipeRemoval showed.
-func (s *VpmifyService) RemoveRecipe(id string) error {
-	return s.run(func() error {
+func (s *VpmifyService) RemoveRecipe(ctx context.Context, id string) error {
+	return quiet(s.run(ctx, func(context.Context) error {
 		_, err := s.core.RemoveRecipe(id, true)
 		return err
-	})
+	}))
 }
 
 // PendingAdd is a set of recipes read from one link or one choice of files,
@@ -238,10 +312,10 @@ func (s *VpmifyService) ConfirmAdd(ctx context.Context, token string) error {
 	if p.Error != "" {
 		return errors.New(p.Error)
 	}
-	return s.run(func() error {
+	return quiet(s.run(ctx, func(ctx context.Context) error {
 		_, err := s.core.AddDrafts(ctx, p.Recipes)
 		return err
-	})
+	}))
 }
 
 // DiscardAdd drops a pending set without adding it.
@@ -312,13 +386,18 @@ func (s *VpmifyService) receiveFiles(ctx context.Context, files []string) {
 	s.readForConfirmation(ctx, files, files)
 }
 
+// readForConfirmation reads the recipes for a card. A canceled read makes
+// no card: the user stopped it, and a card would only say so.
 func (s *VpmifyService) readForConfirmation(ctx context.Context, from, refs []string) {
 	var drafts []vpmify.Draft
-	err := s.run(func() error {
+	err := s.run(ctx, func(ctx context.Context) error {
 		var err error
 		drafts, err = s.core.ReadRecipes(ctx, refs...)
 		return err
 	})
+	if errors.Is(err, errCanceled) {
+		return
+	}
 	p := PendingAdd{From: from, Recipes: drafts}
 	if err != nil {
 		p.Error = err.Error()

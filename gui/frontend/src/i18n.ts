@@ -3,6 +3,7 @@
 
 const en = {
     "app.working": "Working",
+    "app.cancel": "Cancel",
     "app.addFiles": "Add recipe files…",
     "app.dropHint": "Recipe files dropped on this window are added too, after you confirm.",
     "app.language": "Language",
@@ -81,6 +82,7 @@ export type Key = keyof typeof en;
 // The texts of the removal cards follow kaikoga's draft (2026-11-19).
 const ja: Record<Key, string> = {
     "app.working": "処理中",
+    "app.cancel": "キャンセル",
     "app.addFiles": "レシピのファイルを追加…",
     "app.dropHint": "この窓にドロップしたレシピのファイルも、確認してから追加します。",
     "app.language": "言語",

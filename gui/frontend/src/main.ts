@@ -12,6 +12,7 @@ const errorElement = byId<HTMLParagraphElement>("error");
 const confirmSection = byId<HTMLElement>("confirm-section");
 const confirmElement = byId<HTMLDivElement>("confirm");
 const spinnerElement = byId<HTMLSpanElement>("spinner");
+const cancelElement = byId<HTMLButtonElement>("cancel");
 const languageElement = byId<HTMLSelectElement>("language");
 const pendingSection = byId<HTMLElement>("pending-section");
 const pendingElement = byId<HTMLDivElement>("pending");
@@ -127,6 +128,10 @@ async function confirmRecipeRemoval(id: string) {
         showError(err);
         return;
     }
+    // Canceled before it was read.
+    if (!preview) {
+        return;
+    }
     const entries = preview.removed ?? [];
     confirmRemoval({
         title: t("remove.recipe.title", {id}),
@@ -189,8 +194,11 @@ let newestChoosable = false;
 
 function setBusy(busy: boolean) {
     spinnerElement.hidden = !busy;
+    cancelElement.hidden = !busy;
     for (const b of document.querySelectorAll<HTMLButtonElement>("button")) {
-        b.disabled = busy || (b === pullNewestElement && !newestChoosable);
+        if (b !== cancelElement) {
+            b.disabled = busy || (b === pullNewestElement && !newestChoosable);
+        }
     }
 }
 
@@ -398,6 +406,9 @@ async function refresh() {
     await showAvailable();
 }
 
+// Stops what runs and waits; the service says so in the log, not as an
+// error, since the user asked for it.
+cancelElement.addEventListener("click", () => VpmifyService.Cancel().catch(showError));
 byId("choose").addEventListener("click", () => act(() => VpmifyService.ChooseRecipeFiles()));
 byId("update-all").addEventListener("click", () => act(() => VpmifyService.Update([])));
 byId("update").addEventListener("click", () => {
