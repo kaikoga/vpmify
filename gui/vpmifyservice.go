@@ -59,8 +59,8 @@ type VpmifyService struct {
 	busy      int
 	pending   []PendingAdd
 	next      int
-	// reading counts the links being read for a card, which have no card
-	// yet but will.
+	// reading counts the links being read for the user to confirm, which
+	// do not wait in pending yet but will.
 	reading int
 }
 
@@ -69,9 +69,10 @@ type VpmifyService struct {
 // since the user asked for it; run says so in the log.
 var errCanceled = errors.New("canceled")
 
-// maxLinkCards is how many cards may wait for the user before more links
-// are ignored. A web page can send links at any time, and each card keeps
-// the recipes it read; people who mean to add recipes do not reach it.
+// maxLinkCards is how many sets of recipes may wait for the user before
+// more links are ignored. A web page can send links at any time, and each
+// set keeps the recipes it read; people who mean to add recipes do not
+// reach it.
 const maxLinkCards = 20
 
 func NewVpmifyService() (*VpmifyService, error) {
@@ -89,7 +90,7 @@ func NewVpmifyService() (*VpmifyService, error) {
 	return s, nil
 }
 
-// AboutResult is what the About dialog shows. The release files are
+// AboutResult is what the About tab shows. The release files are
 // distributed under the license with the third-party notices, which the GUI
 // shows here instead of as files beside it.
 type AboutResult struct {
@@ -430,8 +431,9 @@ func (s *VpmifyService) receiveFiles(ctx context.Context, files []string) {
 	s.readForConfirmation(ctx, files, files)
 }
 
-// readForConfirmation reads the recipes for a card. A canceled read makes
-// no card: the user stopped it, and a card would only say so.
+// readForConfirmation reads the recipes for the user to confirm. A
+// canceled read leaves nothing to confirm: the user stopped it, and asking
+// would only say so.
 func (s *VpmifyService) readForConfirmation(ctx context.Context, from, refs []string) {
 	var drafts []vpmify.Draft
 	err := s.run(ctx, func(ctx context.Context) error {
