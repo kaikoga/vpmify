@@ -169,8 +169,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 // movedCommands are the commands that took no namespace before the commands
-// were split into recipe and package (kaikoga 2026-11-19), with where they
-// went, so that a user of the old form learns the new one.
+// were split into recipe and package, with where they went, so that a user
+// of the old form learns the new one.
 var movedCommands = map[string]string{
 	"add":      "`vpmify recipe add`",
 	"update":   "`vpmify recipe update`",
@@ -230,8 +230,8 @@ func runRecipe(ctx context.Context, a *app.App, out output, args []string) int {
 		}
 		return out.result(recipeListResult{Recipes: nonNil(recipes)}, err)
 	case "remove":
-		// Removing without asking, as vrc-get removes a repository
-		// (kaikoga 2026-11-19); the GUI asks.
+		// Removing without asking, as vrc-get removes a repository; the GUI
+		// asks.
 		ids, _, perr := splitFlags(rest)
 		if perr != nil || len(ids) != 1 {
 			return out.usageError("recipe remove takes one recipe id")

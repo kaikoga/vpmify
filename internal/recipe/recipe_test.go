@@ -132,8 +132,7 @@ func TestParseRejects(t *testing.T) {
 	}
 }
 
-// Fields Vpmify does not know are ignored at every level (kaikoga
-// 2026-11-20).
+// Fields Vpmify does not know are ignored at every level.
 func TestParseIgnoresUnknownFields(t *testing.T) {
 	r, err := Parse([]byte(`{"$schema": "https://example.com/recipe.schema.json", "vpmifyFormat": 1, "id": "pkg", "comment": "why",
   "sources": [{` + gitSourceHead + `, "comment": 1, "packages": [{"name": "p", "comment": [], "versionFromTag": {"tags": "<1.0.0", "comment": ""},
@@ -149,7 +148,7 @@ func TestParseIgnoresUnknownFields(t *testing.T) {
 
 // A key is a field only when it is spelled as the field exactly; one that
 // differs in case is ignored as unknown. A key that comes twice in an object
-// is refused (kaikoga 2026-11-21).
+// is refused.
 func TestParseMatchesKeysExactly(t *testing.T) {
 	_, p := onlyPackage(t, gitRecipe(`, "versions": ">=1.0.0", "Versions": ">=2.0.0", "OnDemand": true, "Path": "A",
   "overrides": [{"set": {"Description": "a < b"}}]`))

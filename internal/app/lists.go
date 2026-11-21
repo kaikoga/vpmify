@@ -125,8 +125,8 @@ func (l *pkgList) accepted() []source.Release {
 
 // newest returns the newest of the accepted releases, which must not be
 // empty: the one version pull makes available without being told, whatever
-// Unity it needs (kaikoga 2026-11-19). Before, pull took the newest for each
-// value of "unity", which also built versions for Unity versions nobody had.
+// Unity it needs. Taking the newest for each value of "unity" instead would
+// also build versions for Unity versions nobody has.
 // A project on an older Unity sees the newest among the versions ALCOM marks
 // incompatible, and the user names an older version to pull.
 func newest(accepted []source.Release) source.Release {

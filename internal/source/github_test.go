@@ -91,7 +91,7 @@ func TestGitHubTagVersion(t *testing.T) {
 	}
 
 	// A rule that reads two tags as one version warns, and the older tag is
-	// used (kaikoga 2026-11-19): the recipe needs updating, but a tag the
+	// used: the recipe needs updating, but a tag the
 	// repository adds must not stop it. Names order the tags, numbers by
 	// value: 0.15.2.9 is older than 0.15.2.10.
 	gh.Tag("0.15.2.9", map[string]string{"package.json": manifest("com.example.pkg", "0.15.2")})
@@ -251,7 +251,7 @@ func TestGitHubOverlaysFollowTheTag(t *testing.T) {
 }
 
 // Without a tagVersion rule, v1.0.0 and 1.0.0 read as one version: the
-// older by name is used, with a warning (kaikoga 2026-11-20).
+// older by name is used, with a warning.
 func TestGitHubWarnsOfTagsThatReadAsOneVersionWithoutARule(t *testing.T) {
 	gh := testutil.NewFakeGitHub("owner", "repo")
 	gh.Tag("v1.0.0", map[string]string{"package.json": manifest("com.example.pkg", "1.0.0")})

@@ -30,7 +30,7 @@ func TestTagVersionOf(t *testing.T) {
 			"Samples":   "",
 			// Longer than its padding, it would read as 0.15.21000, after
 			// 0.15.3.0's 0.15.3000; it is not read, as a tag that is not
-			// SemVer is not without a rule (kaikoga 2026-11-19).
+			// SemVer is not without a rule.
 			"0.15.2.1000": "",
 		}},
 		{"{2}.{3}.{4}", map[string]string{"0.15.2.2": "15.2.2", "0.14.3": "14.3.0"}},

@@ -184,7 +184,7 @@ func TestPullAddsTheDependencyItWrites(t *testing.T) {
 
 // An onDemand package is not chosen by a pull that names no package, with
 // --all either: it comes as a dependency, or when the user names it or a
-// version (kaikoga 2026-11-20).
+// version.
 func TestPullLeavesOnDemandPackagesToDependenciesAndNames(t *testing.T) {
 	f := newFixture(t)
 	gh := monorepo("1.0.0", "1.1.0")
@@ -483,7 +483,7 @@ func TestSameTag(t *testing.T) {
 }
 
 // A stable pkg first seen in a release candidate's tag depends on the
-// release's base, not the candidate's prerelease (kaikoga 2026-11-19).
+// release's base, not the candidate's prerelease.
 func TestSameTagOfAStableVersionIsTheRelease(t *testing.T) {
 	f := newFixture(t)
 	gh := testutil.NewFakeGitHub("owner", "mono")
@@ -560,7 +560,7 @@ func TestPullNamesVersionsByPackage(t *testing.T) {
 }
 
 // Two recipes may provide one package: each has its own folders, and ALCOM
-// chooses among the versions both register (kaikoga 2026-11-19).
+// chooses among the versions both register.
 func TestRecipesThatShareAPackage(t *testing.T) {
 	f := newFixture(t)
 	gh := monorepo("1.0.0", "1.1.0")
@@ -817,8 +817,8 @@ func TestPullOfAVersionSkipsPackagesThatCannotConvertIt(t *testing.T) {
 }
 
 // A package whose package.json does not tell its tags apart takes the
-// version of the tag, which Vpmify writes into package.json (kaikoga
-// 2026-11-19, for Warudo-Mod-Tool).
+// version of the tag, which Vpmify writes into package.json, as for
+// Warudo-Mod-Tool.
 func TestVersionFromTagIsWrittenIntoPackageJSON(t *testing.T) {
 	f := newFixture(t)
 	gh := testutil.NewFakeGitHub("owner", "mono")
@@ -856,7 +856,7 @@ func TestVersionFromTagIsWrittenIntoPackageJSON(t *testing.T) {
 
 // Tags that a recipe's rule reads as one version are a warning for whoever
 // keeps the recipe, in the log and the result, and the version list is
-// still read, from the older tag (kaikoga 2026-11-19).
+// still read, from the older tag.
 func TestTagsOfOneVersionWarn(t *testing.T) {
 	f := newFixture(t)
 	gh := testutil.NewFakeGitHub("owner", "mono")

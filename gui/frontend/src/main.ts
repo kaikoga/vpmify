@@ -57,7 +57,7 @@ function button(label: string, onClick: () => void): HTMLButtonElement {
 }
 
 // packageLabel names a package with its display name first, as ALCOM shows
-// both (kaikoga 2026-11-19).
+// both.
 function packageLabel(name: string, displayName?: string): string {
     return displayName ? `${displayName} (${name})` : name;
 }
@@ -73,8 +73,8 @@ interface Removal {
     run: () => Promise<unknown>;
 }
 
-// confirmRemoval shows a card that removes only when the user confirms
-// (kaikoga 2026-11-19: removing is destructive, so the GUI asks).
+// confirmRemoval shows a card that removes only when the user confirms, as
+// removing is destructive.
 function confirmRemoval(r: Removal) {
     confirmElement.replaceChildren();
     const title = document.createElement("h3");

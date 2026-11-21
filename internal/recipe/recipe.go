@@ -23,9 +23,8 @@ import (
 // Source types.
 const (
 	SourceNPM = "npm"
-	// SourceGitHub is a repository on github.com. It is not a plain Git
-	// source: it reads files through GitHub's own endpoints. A plain Git
-	// source would be another type (kaikoga 2026-11-18).
+	// SourceGitHub is a repository on github.com, read through GitHub's own
+	// endpoints rather than as a plain Git source, which would be another type.
 	SourceGitHub = "github"
 )
 
@@ -33,18 +32,16 @@ const (
 // A recipe has sources so that one recipe can make a package available
 // together with the packages it depends on, and a source has packages so
 // that packages released together from one repository can name each other's
-// version in the same tag (kaikoga 2026-11-19). Which versions to make
-// available is not part of it: the user chooses that with each command
-// (kaikoga 2026-11-18).
+// version in the same tag. Which versions to make available is not part of
+// it: the user chooses that with each command.
 type Recipe struct {
 	// Format is the format the recipe is written in, which its writer
 	// declares. A file without it is not a recipe, and a recipe in a format
-	// newer than Format needs a newer Vpmify (kaikoga 2026-11-20).
+	// newer than Format needs a newer Vpmify.
 	Format int `json:"vpmifyFormat"`
 	// ID names the recipe in commands and in the store. It is in reverse
 	// domain form, with the domain of whoever writes the recipe, as the ids
-	// of VPM repositories are (kaikoga 2026-11-20); Vpmify does not check
-	// the form.
+	// of VPM repositories are; Vpmify does not check the form.
 	ID string `json:"id"`
 	// DisplayName is the name people read, as package.json has one beside
 	// its name.
@@ -55,7 +52,7 @@ type Recipe struct {
 // Format is the newest recipe format this Vpmify reads. It goes up when a
 // recipe written for the new format would be built wrongly by a Vpmify that
 // does not know it, since fields Vpmify does not know are ignored without a
-// word (kaikoga 2026-11-20): they hold what a recipe may say beside what
+// word: they hold what a recipe may say beside what
 // Vpmify reads, such as "$schema".
 const Format = 1
 
@@ -70,8 +67,7 @@ type Source struct {
 	// from Package.Versions, the range on the package's version, because a
 	// repository's tags need not follow its packages' versions. There is no
 	// pattern on tag names beside them: a tag that does not read as a version
-	// is not read, and TagVersion's match chooses among names (kaikoga
-	// 2026-11-20).
+	// is not read, and TagVersion's match chooses among names.
 	URL        string      `json:"url,omitempty"`
 	TagVersion *TagVersion `json:"tagVersion,omitempty"`
 	Tags       string      `json:"tags,omitempty"`
@@ -101,7 +97,7 @@ type Package struct {
 	// names no package, so that ALCOM does not list a package upstream no
 	// longer releases beside the ones it does (UniVRM's com.vrmc.vrmshaders).
 	// Its versions still come when an available version depends on them, or
-	// when the user names the package or a version (kaikoga 2026-11-20).
+	// when the user names the package or a version.
 	OnDemand bool `json:"onDemand,omitempty"`
 	// VersionFromTag makes the version of the tag the package's version, in
 	// place of the one its package.json has, for a repository whose
@@ -114,7 +110,7 @@ type Package struct {
 	// package (Git sources). GitHub's archives leave a Git submodule out as an
 	// empty folder, and UniVRM before v0.124.2 has MToon as one. An overlay
 	// is not a Git submodule but another source unpacked into a subfolder,
-	// which the recipe names (kaikoga 2026-11-20).
+	// which the recipe names.
 	Overlays []Overlay `json:"overlays,omitempty"`
 
 	versions  semver.Range
@@ -147,8 +143,8 @@ type Override struct {
 // a null value removes it. Merge adds keys to a field that is an object, or
 // replaces their values, and makes the field when package.json has none, so
 // that a recipe adds a dependency without copying upstream's; a null value
-// removes the key, as it removes the field in Set (kaikoga 2026-11-20). In
-// one override Set comes before Merge.
+// removes the key, as it removes the field in Set. In one override Set comes
+// before Merge.
 type Edit struct {
 	Set   map[string]json.RawMessage            `json:"set,omitempty"`
 	Merge map[string]map[string]json.RawMessage `json:"merge,omitempty"`
@@ -162,8 +158,8 @@ type parsedOverride struct {
 // Overlay puts commit Commit of the GitHub repository URL into folder Path
 // of the package, for the tags in range. Tags is a range on the tag's
 // version, as in paths. Path is relative to the package's folder, so that
-// it stays when paths moves the package (kaikoga 2026-11-20); the folder
-// must be in the archive, empty.
+// it stays when paths moves the package; the folder must be in the archive,
+// empty.
 //
 // Resolve "submodule" (the commit the tag's submodule at Path points at)
 // and a missing URL (the submodule's) are planned but not read yet.
@@ -213,10 +209,9 @@ func Parse(data []byte) (*Recipe, error) {
 	// encoding/json does not take.
 	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
 	// The recipe is read with encoding/json/v2, which takes a key only when it
-	// spells a field exactly and refuses a key that comes twice in an object,
-	// where encoding/json takes a key that differs in case and uses the last
-	// of the two: a reader in another language, such as a Vpmify rewritten in
-	// Rust, must read a recipe as this one does (kaikoga 2026-11-21).
+	// spells a field exactly and refuses a key that comes twice in an object
+	// (encoding/json takes a key that differs in case, and the last of two),
+	// so that a reader in another language can read a recipe the same way.
 	//
 	// The format is read first, so that a recipe this Vpmify cannot read says
 	// so instead of failing on whatever the newer format changed.
@@ -605,9 +600,9 @@ func (s *Source) fields() sourceFields {
 
 // ListingKey identifies what decides the versions the source's version list
 // holds: the source, and each package's name, folders, range (Versions),
-// VersionFromTag and Overlays, which `update` applies when it reads upstream
-// (kaikoga 2026-11-18; overlays are applied there because the list keeps no
-// tag versions, and so that pull reads the list alone, kaikoga 2026-11-20).
+// VersionFromTag and Overlays, which `update` applies when it reads upstream.
+// Overlays are applied there because the list keeps no tag versions, and so
+// that pull reads the list alone.
 // A version list kept from an update whose key differs is stale. Prerelease
 // and Overrides are not in it, because they are applied to the list when it
 // is read; {sameTag} is too, from the versions the list keeps for each tag.
@@ -662,7 +657,7 @@ func (p *Package) OverridesFor(v semver.Version) []Edit {
 
 // Placeholders in the values of vpmDependencies in overrides. Vpmify writes
 // only the dependencies a recipe names, and takes no UPM dependency on its
-// own (kaikoga 2026-11-18): which UPM dependency a VPM package needs, and in
+// own: which UPM dependency a VPM package needs, and in
 // which version, is the recipe's call.
 var (
 	placeholderPattern = regexp.MustCompile(`\{[^{}]*\}`)
@@ -672,12 +667,11 @@ var (
 		// The version the package's UPM "dependencies" give the same package,
 		// for a dependency whose numbers differ: the upstream package.json's,
 		// or what the recipe's overrides set in their place, so that a recipe
-		// that corrects a UPM dependency writes the version once (kaikoga
-		// 2026-11-20).
+		// that corrects a UPM dependency writes the version once.
 		"{dependencies}": true,
 		// The version the same package has in the same tag, for packages of
 		// one repository whose numbers differ and whose UPM dependencies
-		// cannot be trusted (kaikoga 2026-11-19). Only a package of the same
+		// cannot be trusted. Only a package of the same
 		// source can be named: there is no tag across sources.
 		"{sameTag}": true,
 	}

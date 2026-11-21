@@ -1,7 +1,7 @@
 // Package app ties the parts together: it reads recipes, converts versions
 // into the store, and registers them with ALCOM, which makes them
 // available. Vpmify does not say "place" for this, so as not to mix the
-// store with a project the package is installed in (kaikoga 2026-11-18).
+// store with a project the package is installed in.
 package app
 
 import (
@@ -156,8 +156,7 @@ func (a *App) readRecipeRef(ctx context.Context, ref string) (Draft, error) {
 }
 
 // checkDrafts refuses two drafts with one id: saving both would keep only
-// the last. Two recipes may provide one package; each has its own folders
-// (kaikoga 2026-11-19).
+// the last. Two recipes may provide one package; each has its own folders.
 func checkDrafts(drafts []Draft) error {
 	ids := map[string]string{}
 	for _, d := range drafts {
@@ -206,8 +205,7 @@ type AddResult struct {
 
 // Add reads recipes from file paths or http(s) URLs, saves them among the
 // user's recipes, and reads their version lists. It converts nothing; Pull
-// does (kaikoga 2026-11-18). Nothing is saved unless every recipe reads
-// well.
+// does. Nothing is saved unless every recipe reads well.
 func (a *App) Add(ctx context.Context, refs ...string) (*AddResult, error) {
 	drafts, err := a.ReadRecipes(ctx, refs...)
 	if err != nil {
@@ -344,7 +342,7 @@ func (a *App) update(ctx context.Context, ids []string) (*UpdateResult, error) {
 
 // updateRecipe reads the version list of each of recipe id's sources. A
 // source that fails keeps the list it had, if it is still for what the
-// source is, and the others go on (kaikoga 2026-11-19).
+// source is, and the others go on.
 func (a *App) updateRecipe(ctx context.Context, id string) (RecipeUpdate, error) {
 	u := RecipeUpdate{ID: id, Packages: []PackageUpdate{}, Warnings: []string{}}
 	r, err := a.loadRecipe(id)
@@ -398,8 +396,7 @@ func (a *App) readSource(ctx context.Context, id string, s *recipe.Source, old *
 	var ups []PackageUpdate
 	for _, p := range s.Packages {
 		// The package's range is the rule for what Vpmify takes from the
-		// source, so the list keeps only the versions in it (kaikoga
-		// 2026-11-18).
+		// source, so the list keeps only the versions in it.
 		releases := []source.Release{}
 		for _, rel := range upstream[p.Name] {
 			if p.InRange(rel.Version) {
@@ -485,7 +482,7 @@ type PullOptions struct {
 // ("<id>/<name>@<version>" of that package). The named recipes' available
 // versions that the recipe now builds differently are built again; other
 // recipes' are not, because a recipe's output depends only on the recipe
-// (kaikoga 2026-11-18). Pull never removes a version, and reads no version
+// itself. Pull never removes a version, and reads no version
 // list from upstream; Update does. The result is nil when Pull stopped
 // before trying any recipe.
 func (a *App) Pull(ctx context.Context, args []string, opt PullOptions) (*PullResult, error) {
@@ -600,7 +597,7 @@ func (a *App) pull(ctx context.Context, targets []target, opt PullOptions) (*Pul
 }
 
 // providers maps each package name to the recipes that provide it, in id
-// order. Several recipes may provide one package (kaikoga 2026-11-19).
+// order. Several recipes may provide one package.
 type providers map[string][]string
 
 // managedNames returns the providers of every package the user's recipes
@@ -863,7 +860,7 @@ func (a *App) noteUnwrittenDependencies(name string, rel source.Release, dir str
 // addDependencies makes available, for each available version whose
 // vpmDependencies name a package a recipe provides, a version of that
 // package that satisfies it when none is available, so that ALCOM can
-// install the dependent (kaikoga 2026-11-18). A pull that names only the
+// install the dependent. A pull that names only the
 // dependent would otherwise leave it pointing at nothing. What it does goes
 // to res, and what it cannot do to fails.
 func (a *App) addDependencies(ctx context.Context, st *state.State, managed providers, res *PullResult, fails *failures) {
@@ -973,7 +970,7 @@ func satisfied(st *state.State, name string, rng semver.Range) bool {
 // dependencyProvider picks the recipe and the version to add for n: the
 // dependent's own recipe first, and then the others that provide the
 // package in id order, the first whose version list has a version that
-// satisfies it (kaikoga 2026-11-19). A recipe whose version list cannot be
+// satisfies it. A recipe whose version list cannot be
 // used is passed over, and the user is told.
 func (a *App) dependencyProvider(n unmet, managed providers) (string, string, error) {
 	candidates := managed[n.dep]
@@ -1355,9 +1352,8 @@ type Entry struct {
 	Recipe  string `json:"recipe"`
 	Package string `json:"package"`
 	// DisplayName is the "displayName" of the version as converted, which
-	// the GUI shows with the package's name, as ALCOM does (kaikoga
-	// 2026-11-19). It is empty when the version has none, or its folder
-	// cannot be read.
+	// the GUI shows with the package's name, as ALCOM does. It is empty when
+	// the version has none, or its folder cannot be read.
 	DisplayName string `json:"displayName,omitempty"`
 	Version     string `json:"version"`
 	Unity       string `json:"unity,omitempty"`
@@ -1520,7 +1516,7 @@ type PackageVersions struct {
 }
 
 // VersionsOptions narrow what Versions lists. With none set it lists every
-// stable version in the version list (kaikoga 2026-11-18).
+// stable version in the version list.
 type VersionsOptions struct {
 	// All lists prereleases too.
 	All bool

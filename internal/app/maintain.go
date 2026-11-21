@@ -439,8 +439,7 @@ func orphansIn(dir string, depth int, keep map[string]bool) (out []string, kept 
 // differingCopies returns a problem for each package version that two or
 // more recipes make with different package.json. ALCOM tells them apart by
 // name and version only, so it uses one of them, and which one depends on
-// how the package is installed; Vpmify leaves that to ALCOM and only says so
-// (kaikoga 2026-11-19).
+// how the package is installed; Vpmify leaves that to ALCOM and only says so.
 func differingCopies(st *state.State) []*Problem {
 	type copyOf struct{ recipe, manifest string }
 	byVersion := map[string][]copyOf{}

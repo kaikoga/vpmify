@@ -93,12 +93,11 @@ type tag struct {
 // accepts, from one listing of the tags, and lists one release per package
 // version. When a version appears in several tags, the oldest tag wins:
 // that is where the version was first published, and what Vpmify converts
-// never changes when newer tags keep the same version (kaikoga 2026-11-18).
+// never changes when newer tags keep the same version.
 // A stable version is taken from the oldest stable tag that has it when
 // there is one, so that it is built from the release and its {sameTag}
-// names the release's packages, not a release candidate's prereleases
-// (kaikoga 2026-11-19). Each release keeps the versions the other packages
-// have in its tag.
+// names the release's packages, not a release candidate's prereleases.
+// Each release keeps the versions the other packages have in its tag.
 func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, []string, error) {
 	tags, err := g.tags(ctx)
 	if err != nil {
@@ -220,8 +219,8 @@ func (g *GitHub) tags(ctx context.Context) ([]tag, error) {
 // same version of a package, which is taken from one of them, as for package
 // versions that come in several tags: a repository whose owner did not write
 // the recipe may add such tags, and they must not stop the recipe, but they
-// are warned of (kaikoga 2026-11-19). The warning comes without a tagVersion
-// rule too, for v1.2.3 beside 1.2.3 (kaikoga 2026-11-20). It names the tag
+// are warned of. The warning comes without a tagVersion rule too, for v1.2.3
+// beside 1.2.3. It names the tag
 // each package is taken from, and the packages, as a tag may hold only some
 // of them.
 type sameVersionTags struct {

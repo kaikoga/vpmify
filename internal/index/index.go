@@ -2,7 +2,7 @@
 // upstream for one recipe: what each version is and where its archive is.
 // `vpmify package pull` and `vpmify recipe versions` read only these lists,
 // so what they show and make available does not change until the next
-// update (kaikoga 2026-11-18).
+// update.
 package index
 
 import (
@@ -27,8 +27,7 @@ var ErrNoIndex = errors.New("no version list")
 
 // Index is the version lists of one recipe, one per source. A source's list
 // is read as a whole, and the lists of a recipe's sources are not: one
-// upstream that fails leaves the other sources' lists new (kaikoga
-// 2026-11-19).
+// upstream that fails leaves the other sources' lists new.
 type Index struct {
 	Format  int     `json:"format"`
 	Sources []*List `json:"sources"`

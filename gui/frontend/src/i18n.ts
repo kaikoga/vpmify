@@ -1,5 +1,5 @@
-// The GUI is released in English and Japanese (kaikoga 2026-11-19). Errors
-// from the Go core stay in English.
+// The GUI is released in English and Japanese. Errors from the Go core stay
+// in English.
 
 const en = {
     "app.working": "Working",

@@ -616,8 +616,7 @@ func TestDoctorIgnoresFileBrowserClutter(t *testing.T) {
 	}
 }
 
-// A second recipe for one package has its own folders, and ALCOM gets both
-// (kaikoga 2026-11-19).
+// A second recipe for one package has its own folders, and ALCOM gets both.
 func TestASecondRecipeForOnePackageHasItsOwnFolders(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")

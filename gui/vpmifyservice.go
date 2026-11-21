@@ -66,7 +66,7 @@ func NewVpmifyService() (*VpmifyService, error) {
 
 // AboutResult is what the About dialog shows. The release files are
 // distributed under the license with the third-party notices, which the GUI
-// shows here instead of as files beside it (kaikoga 2026-11-20).
+// shows here instead of as files beside it.
 type AboutResult struct {
 	Version string `json:"version"`
 	Source  string `json:"source"`
@@ -164,8 +164,7 @@ func (s *VpmifyService) Pull(ctx context.Context, targets []string) error {
 
 // RemoveVersions unregisters and deletes available versions as `vpmify
 // package remove` does: ref is "<id>" or "<id>/<package>", and version is
-// one version, or "" for every version. The front end asks the user first
-// (kaikoga 2026-11-19).
+// one version, or "" for every version. The front end asks the user first.
 func (s *VpmifyService) RemoveVersions(ref, version string) error {
 	return s.run(func() error {
 		_, err := s.core.RemoveVersions(ref, version)

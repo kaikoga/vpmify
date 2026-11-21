@@ -14,7 +14,7 @@ import (
 // TagVersion is how a Git source reads the version of a tag from its name,
 // for a repository whose tags are not SemVer (Warudo-Mod-Tool tags
 // 0.15.2.2). The rule is the recipe's, not Vpmify's, so that no repository
-// needs its own code in Vpmify (kaikoga 2026-11-19).
+// needs its own code in Vpmify.
 //
 // Match is a regular expression on the whole tag name; a tag it does not
 // match is not read. Version builds the version from the groups: {N} is
@@ -28,8 +28,7 @@ import (
 // SemVer is not read without a rule: a version that does not build as
 // SemVer, or a group longer than its padding, which would read out of order.
 // Whoever writes a recipe may not own the repository, and its users cannot
-// fix its tags, so a stray tag must not stop the recipe (kaikoga
-// 2026-11-19).
+// fix its tags, so a stray tag must not stop the recipe.
 type TagVersion struct {
 	Match   string `json:"match"`
 	Version string `json:"version"`
