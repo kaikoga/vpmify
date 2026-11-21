@@ -38,8 +38,11 @@ func recipeURLs(link string) ([]string, error) {
 		return nil, fmt.Errorf("the link names no recipe: %s", link)
 	}
 	for _, ref := range refs {
+		// The prefix is checked as well as the scheme: url.Parse lowercases
+		// the scheme, but the core takes a reference as a URL only by a
+		// lowercase prefix and reads anything else as a file.
 		r, err := url.Parse(ref)
-		if err != nil || r.Scheme != "https" || r.Host == "" {
+		if err != nil || r.Scheme != "https" || r.Host == "" || !strings.HasPrefix(ref, "https://") {
 			return nil, fmt.Errorf("the link names a recipe that is not an https URL: %s", ref)
 		}
 	}
