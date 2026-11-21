@@ -542,7 +542,8 @@ func parseRef(ref string) (id, name string, err error) {
 
 // PullOptions say what Pull does besides adding the newest versions.
 type PullOptions struct {
-	// All adds every version the recipe takes.
+	// All adds every stable version the recipe takes, and the prereleases
+	// too with Prerelease.
 	All bool
 	// Prerelease lets the versions chosen without being named be
 	// prereleases too: the newest, prerelease or not, or every version with
@@ -558,8 +559,9 @@ type PullOptions struct {
 // Pull converts versions of the named recipes (all recipes when args is
 // empty) from their version lists into the store, and registers every
 // available version with ALCOM, which makes them available. It adds the
-// newest version of each package that is not onDemand (of the package
-// "<id>/<name>" names), whatever Unity it needs, every version with opt.All, and
+// newest stable version of each package that is not onDemand (of the package
+// "<id>/<name>" names), whatever Unity it needs, every stable version with
+// opt.All, prereleases too with opt.Prerelease, and
 // "<id>@<version>" names one more of every package that has it
 // ("<id>/<name>@<version>" of that package). The named recipes' available
 // versions that the recipe now builds differently are built again; other
