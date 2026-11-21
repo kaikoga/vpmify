@@ -209,6 +209,14 @@ func (f *failures) add(recipe string, err error) {
 
 func (f *failures) err() error { return errors.Join(f.errs...) }
 
+// stopped records why ctx was canceled, so that a command cut short does not
+// look done when it stopped between recipes, where nothing failed.
+func (f *failures) stopped(ctx context.Context) {
+	if ctx.Err() != nil {
+		f.add("", context.Cause(ctx))
+	}
+}
+
 // AddResult is what Add and AddDrafts did: the recipes they saved, and the
 // reading of their version lists.
 type AddResult struct {
@@ -323,7 +331,8 @@ type PackageUpdate struct {
 // the URLs they were added from, then reads their version lists from
 // upstream and keeps them for Pull and Versions. A recipe added from a file
 // is not read again. It downloads no archive and changes no available
-// version. The result is nil when Update stopped before reading any list.
+// version. Canceling ctx stops Update before the next recipe. The result is
+// nil when Update stopped before reading any list.
 func (a *App) Update(ctx context.Context, ids []string) (*UpdateResult, error) {
 	var res *UpdateResult
 	err := a.withLock(func() error {
@@ -358,6 +367,9 @@ func (a *App) update(ctx context.Context, ids []string, reread bool) (*UpdateRes
 	res := &UpdateResult{Recipes: []RecipeUpdate{}, Errors: []Failure{}}
 	fails := failures{list: &res.Errors}
 	for _, id := range ids {
+		if ctx.Err() != nil {
+			break
+		}
 		var rereadWarnings []string
 		if origin := origins[id]; isURLRef(origin) {
 			rereadWarnings = a.rereadRecipe(ctx, id, origin)
@@ -375,6 +387,7 @@ func (a *App) update(ctx context.Context, ids []string, reread bool) (*UpdateRes
 			fails.add(id, err)
 		}
 	}
+	fails.stopped(ctx)
 	return res, fails.err()
 }
 
@@ -567,8 +580,10 @@ type PullOptions struct {
 // versions that the recipe now builds differently are built again; other
 // recipes' are not, because a recipe's output depends only on the recipe
 // itself. Pull never removes a version, and reads no version
-// list from upstream; Update does. The result is nil when Pull stopped
-// before trying any recipe.
+// list from upstream; Update does. Canceling ctx stops Pull before the next
+// version it would convert, and the versions converted until then are
+// still registered. The result is nil when Pull stopped before trying any
+// recipe.
 func (a *App) Pull(ctx context.Context, args []string, opt PullOptions) (*PullResult, error) {
 	targets, err := parseTargets(args)
 	if err != nil {
@@ -677,13 +692,18 @@ func (a *App) pull(ctx context.Context, targets []target, opt PullOptions) (*Pul
 	res := &PullResult{Built: []Built{}, UpToDate: []string{}, Registered: []string{}, Unregistered: []string{}, Errors: []Failure{}, Warnings: []Warning{}}
 	fails := failures{list: &res.Errors}
 	for _, id := range order {
+		if ctx.Err() != nil {
+			break
+		}
 		if err := a.pullRecipe(ctx, st, id, *reqs[id], fresh, res); err != nil {
 			fails.add(id, err)
 		}
 	}
 	a.addDependencies(ctx, st, managed, res, &fails)
-	// Register whatever is in the store, even when a recipe failed, so that
-	// versions made available before stay usable.
+	fails.stopped(ctx)
+	// Register whatever is in the store, even when a recipe failed or the
+	// pull was canceled, so that versions made available before, and those
+	// built before it stopped, are usable.
 	change, err := a.register(st)
 	if err != nil {
 		fails.add("", err)
@@ -824,6 +844,9 @@ func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pu
 	built := 0
 	warned := len(res.Warnings)
 	for _, l := range lists {
+		if ctx.Err() != nil {
+			break
+		}
 		n, err := a.pullPackage(ctx, st, id, l, req.chooses(l.pkg), req.all, req.prerelease, req.byUser, extra[l.pkg.Name], fresh, res)
 		built += n
 		var noChoice *noChoiceError
@@ -837,7 +860,7 @@ func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pu
 			errs = append(errs, fmt.Errorf("%s: %w", l.pkg.Name, err))
 		}
 	}
-	if built == 0 && req.byUser && len(errs) == 0 && len(res.Warnings) == warned {
+	if built == 0 && req.byUser && len(errs) == 0 && len(res.Warnings) == warned && ctx.Err() == nil {
 		available := 0
 		for _, ps := range st.Recipe(id).Packages {
 			available += len(ps.Versions)
@@ -1020,7 +1043,7 @@ func (a *App) addDependencies(ctx context.Context, st *state.State, managed prov
 	tried := map[string]bool{}
 	// A dependency made available may need its own dependencies, so this
 	// goes on until nothing new is needed.
-	for {
+	for ctx.Err() == nil {
 		needs := map[string][]pkgVersion{}
 		var order []string
 		for _, n := range a.unmetDependencies(st, managed) {
@@ -1046,6 +1069,9 @@ func (a *App) addDependencies(ctx context.Context, st *state.State, managed prov
 			break
 		}
 		for _, id := range order {
+			if ctx.Err() != nil {
+				break
+			}
 			var names []string
 			for _, pv := range needs[id] {
 				names = append(names, pv.name+" "+pv.version)
@@ -1206,6 +1232,11 @@ func appendRelease(list []source.Release, rel source.Release) []source.Release {
 // already in the store is swapped out only after the new one is complete,
 // so ALCOM never sees a half-built folder at the registered path.
 func (a *App) build(ctx context.Context, name string, rel source.Release, overrides []recipe.Edit, dir string) error {
+	// A cached archive is converted without reaching the network, where
+	// canceling ctx would otherwise be noticed.
+	if ctx.Err() != nil {
+		return context.Cause(ctx)
+	}
 	archive, err := a.archive(ctx, rel.ArchiveURL, rel.CacheKey, rel.Digests, rel.Pinned)
 	if err != nil {
 		return err
