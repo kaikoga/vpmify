@@ -1472,6 +1472,16 @@ func (a *App) storeVersion(dir string) (id, name, v string, ok bool) {
 	return parts[0], parts[1], parts[2], true
 }
 
+// recordDir returns the folder in the store of a version state.json
+// records, and false when the record's keys do not name one version folder
+// of recipe id, as only a state.json edited by hand has: a key such as
+// ".." would name a folder outside the store or another recipe's.
+func (a *App) recordDir(id, name, v string) (string, bool) {
+	dir := a.Layout.PackageDir(id, name, v)
+	rid, n, rv, ok := a.storeVersion(filepath.Clean(dir))
+	return dir, ok && rid == id && n == name && rv == v
+}
+
 // registeredVersions returns the versions of package name of recipe id
 // whose folders reg has, oldest first.
 func (a *App) registeredVersions(reg registration, id, name string) []string {
@@ -1655,7 +1665,9 @@ func (a *App) versionsOf(rs *state.RecipeState, id string, reg registration) map
 	if rs != nil {
 		for name, ps := range rs.Packages {
 			for v := range ps.Versions {
-				have(name, v)
+				if _, ok := a.recordDir(id, name, v); ok {
+					have(name, v)
+				}
 			}
 		}
 	}

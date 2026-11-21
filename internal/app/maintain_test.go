@@ -324,6 +324,57 @@ func TestRemoveRefusesIDsNoRecipeHas(t *testing.T) {
 	}
 }
 
+// A record whose keys name a folder other than its own version's, as only
+// a state.json edited by hand has, deletes nothing; doctor forgets it.
+func TestARecordThatNamesAnotherFolderDeletesNothing(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	f.writeStoredRecipe("kit2", "")
+	st, err := state.Load(f.app.Layout.State())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// <store>/kit2/../kit is kit's folder.
+	st.Recipe("kit2").Package("..").Versions["kit"] = &state.VersionState{Fingerprint: "x"}
+	if err := st.Save(f.app.Layout.State()); err != nil {
+		t.Fatal(err)
+	}
+	before := f.registered()
+
+	problems, err := f.app.Doctor(false)
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	found := false
+	for _, m := range problemMessages(problems) {
+		found = found || strings.Contains(m, "names no version folder in the store")
+	}
+	if !found {
+		t.Errorf("problems = %v", problemMessages(problems))
+	}
+	if _, err := f.app.RemoveVersions("kit2", ""); err == nil {
+		t.Error("RemoveVersions took a record that names no version folder")
+	}
+	if _, err := f.app.Doctor(true); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if _, err := f.app.RemoveRecipe("kit2", true); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if !exists(f.app.Layout.PackageDir("kit", pkgName, "1.0.0")) {
+		t.Error("kit's version was deleted")
+	}
+	if got := f.registered(); !reflect.DeepEqual(got, before) {
+		t.Errorf("registered = %v, want %v", got, before)
+	}
+	if problems, err := f.app.Doctor(false); err != nil || len(problems) != 0 {
+		t.Errorf("problems = %v, err = %v", problemMessages(problems), err)
+	}
+}
+
 func TestRemoveOfNoRecipeFails(t *testing.T) {
 	f := newFixture(t)
 	res, err := f.app.RemoveRecipe("nosuch", true)

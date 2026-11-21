@@ -72,7 +72,9 @@ func (a *App) Clean(apply bool) (entries []Entry, changed bool, err error) {
 			for _, name := range state.SortedKeys(rs.Packages) {
 				ps := rs.Packages[name]
 				for _, v := range ps.SortedVersions() {
-					out = append(out, newEntry(id, name, v, a.Layout.PackageDir(id, name, v)))
+					if dir, ok := a.recordDir(id, name, v); ok {
+						out = append(out, newEntry(id, name, v, dir))
+					}
 				}
 			}
 		}
@@ -213,7 +215,9 @@ func (a *App) Doctor(fix bool) ([]Problem, error) {
 						add(p)
 					}
 					// A folder in the store is reported once, by its version.
-					keep[a.Layout.PackageDir(id, name, v)] = true
+					if dir, ok := a.recordDir(id, name, v); ok {
+						keep[dir] = true
+					}
 				}
 			}
 		}
@@ -257,9 +261,13 @@ func (a *App) Doctor(fix bool) ([]Problem, error) {
 // checkVersion returns the problem with one version state.json has, or nil
 // when its folder in the store holds the package.
 func (a *App) checkVersion(id, name, v string, ps *state.PackageState) *Problem {
-	dir := a.Layout.PackageDir(id, name, v)
-	resync := fmt.Sprintf("; `vpmify package pull %s/%s@%s` makes it available again", id, name, v)
 	forget := func() { delete(ps.Versions, v) }
+	dir, ok := a.recordDir(id, name, v)
+	if !ok {
+		return &Problem{Message: fmt.Sprintf("%s: state.json records %q of %q, which names no version folder in the store", id, v, name),
+			Fix: "forget the record", change: forget}
+	}
+	resync := fmt.Sprintf("; `vpmify package pull %s/%s@%s` makes it available again", id, name, v)
 	if !isDir(dir) {
 		return &Problem{Message: fmt.Sprintf("%s: %s %s: folder %s is missing", id, name, v, dir),
 			Fix: "forget the record" + resync, change: forget, forgotten: dir}
@@ -380,7 +388,11 @@ func (a *App) differingCopies(st *state.State) []*Problem {
 	for _, id := range state.SortedKeys(st.Recipes) {
 		for name, ps := range st.Recipes[id].Packages {
 			for v := range ps.Versions {
-				data, err := os.ReadFile(filepath.Join(a.Layout.PackageDir(id, name, v), "package.json"))
+				dir, ok := a.recordDir(id, name, v)
+				if !ok {
+					continue // checkVersion reports it
+				}
+				data, err := os.ReadFile(filepath.Join(dir, "package.json"))
 				if err != nil {
 					continue // checkVersion reports it
 				}
