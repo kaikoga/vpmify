@@ -553,11 +553,17 @@ func parseTargets(args []string) ([]target, error) {
 }
 
 // parseRef reads "<id>" or "<id>/<name>". Neither a recipe id nor a
-// package name holds "/", so the form is not ambiguous.
+// package name holds "/", so the form is not ambiguous. An id no recipe can
+// have is refused before it names a folder: "." or ".." would name the
+// store or Vpmify's folder, and "KIT" would name kit's folders on a file
+// system that ignores case, under a path ALCOM does not list.
 func parseRef(ref string) (id, name string, err error) {
 	id, name, hasName := strings.Cut(ref, "/")
 	if id == "" || (hasName && (name == "" || strings.Contains(name, "/"))) {
 		return "", "", fmt.Errorf("want <recipe> or <recipe>/<package>, not %q", ref)
+	}
+	if !recipe.ValidID(id) {
+		return "", "", fmt.Errorf("no recipe %q", id)
 	}
 	return id, name, nil
 }

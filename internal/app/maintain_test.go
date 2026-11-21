@@ -293,6 +293,37 @@ func TestRemoveReportsWhatItDidBeforeFailing(t *testing.T) {
 	}
 }
 
+// An id no recipe can have names no folder: "." would be the store, ".."
+// Vpmify's folder, and "KIT" kit's folders where the file system ignores
+// case.
+func TestRemoveRefusesIDsNoRecipeHas(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	before := f.registered()
+	for _, id := range []string{".", "..", "KIT"} {
+		if res, err := f.app.RemoveRecipe(id, false); err == nil || res != nil {
+			t.Errorf("RemoveRecipe(%q, false) = %+v, %v; want nil and an error", id, res, err)
+		}
+		if res, err := f.app.RemoveRecipe(id, true); err == nil || res != nil {
+			t.Errorf("RemoveRecipe(%q, true) = %+v, %v; want nil and an error", id, res, err)
+		}
+		if res, err := f.app.RemoveVersions(id, ""); err == nil || res != nil {
+			t.Errorf("RemoveVersions(%q) = %+v, %v; want nil and an error", id, res, err)
+		}
+	}
+	if got := f.registered(); !reflect.DeepEqual(got, before) {
+		t.Errorf("registered = %v, want %v", got, before)
+	}
+	for _, p := range []string{f.app.Layout.PackageDir("kit", pkgName, "1.0.0"), f.app.Layout.Cache(), f.app.recipePath("kit")} {
+		if !exists(p) {
+			t.Errorf("%s was deleted", p)
+		}
+	}
+}
+
 func TestRemoveOfNoRecipeFails(t *testing.T) {
 	f := newFixture(t)
 	res, err := f.app.RemoveRecipe("nosuch", true)
