@@ -293,7 +293,9 @@ type UpdateResult struct {
 }
 
 // RecipeUpdate is the version lists Update read for one recipe. A source
-// that could not be read has no packages here, and is in the errors.
+// that could not be read has no packages here, and is in the errors; a
+// recipe none of whose sources could be read is here only for its
+// warnings.
 type RecipeUpdate struct {
 	ID       string          `json:"id"`
 	Packages []PackageUpdate `json:"packages"`
