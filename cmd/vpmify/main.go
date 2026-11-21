@@ -46,14 +46,16 @@ recipes and their version lists:
 available versions, which ALCOM lists as user packages:
   package list [<id>...]       show the available versions, of every recipe or
                                of the ones named
-  package pull [--all] [--refetch] [<id>[/<package>][@<version>]...]
+  package pull [--all] [--prerelease] [--refetch] [<id>[/<package>][@<version>]...]
                                convert versions from the version lists and
                                register them with ALCOM, which makes them
-                               available: the newest version of each package
-                               (of the one named after "/"; a package the
-                               recipe marks onDemand only when named), every
-                               version with --all, and each @<version> named
-                               (of every package that has it, without "/");
+                               available: the newest stable version of each
+                               package (of the one named after "/"; a package
+                               the recipe marks onDemand only when named),
+                               every stable version with --all, and each
+                               @<version> named (of every package that has it,
+                               without "/"); --prerelease lets the newest, or
+                               every version with --all, be a prerelease too;
                                --refetch also downloads and builds every
                                available version again
   package remove <id>[/<package>]@<version>
@@ -267,11 +269,11 @@ func runPackage(ctx context.Context, a *app.App, out output, args []string) int 
 		}
 		return out.result(res, err)
 	case "pull":
-		targets, flags, perr := splitFlags(rest, "--all", "--refetch")
+		targets, flags, perr := splitFlags(rest, "--all", "--prerelease", "--refetch")
 		if perr != nil {
 			return out.usageError(perr.Error())
 		}
-		res, err := a.Pull(ctx, targets, app.PullOptions{All: flags["--all"], Refetch: flags["--refetch"]})
+		res, err := a.Pull(ctx, targets, app.PullOptions{All: flags["--all"], Prerelease: flags["--prerelease"], Refetch: flags["--refetch"]})
 		return out.result(res, err)
 	case "remove":
 		targets, flags, perr := splitFlags(rest, "--all")

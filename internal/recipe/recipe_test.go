@@ -223,8 +223,8 @@ func TestListingKey(t *testing.T) {
 	}
 	base := key(`, "path": "A"`)
 	// What is applied to the list when it is read does not change the key.
-	if key(`, "path": "A", "prerelease": true, "overrides": [{"set": {"unity": "2022.3"}}]`) != base {
-		t.Error("prerelease or overrides changed the key")
+	if key(`, "path": "A", "overrides": [{"set": {"unity": "2022.3"}}]`) != base {
+		t.Error("overrides changed the key")
 	}
 	// What update applies when it reads upstream does.
 	if key(`, "path": "B"`) == base {

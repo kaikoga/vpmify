@@ -544,6 +544,10 @@ func parseRef(ref string) (id, name string, err error) {
 type PullOptions struct {
 	// All adds every version the recipe takes.
 	All bool
+	// Prerelease lets the versions chosen without being named be
+	// prereleases too: the newest, prerelease or not, or every version with
+	// All.
+	Prerelease bool
 	// Refetch downloads every available version of the named recipes again
 	// and builds it again, so a broken store or cache is mended without
 	// changing which versions are available. A version the version list no
@@ -626,7 +630,7 @@ func (a *App) pull(ctx context.Context, targets []target, opt PullOptions) (*Pul
 	for _, t := range targets {
 		req, ok := reqs[t.id]
 		if !ok {
-			req = &pullRequest{choose: true, all: opt.All, only: map[string]bool{}}
+			req = &pullRequest{choose: true, all: opt.All, prerelease: opt.Prerelease, only: map[string]bool{}}
 			reqs[t.id] = req
 			order = append(order, t.id)
 		}
@@ -708,9 +712,9 @@ type pkgVersion struct {
 type pullRequest struct {
 	// choose adds the newest version, or every version with all, of the
 	// packages in only, and when whole is true of every package that is not
-	// onDemand.
-	choose, all bool
-	whole       bool
+	// onDemand. prerelease lets those be prereleases.
+	choose, all, prerelease bool
+	whole                   bool
 	only        map[string]bool
 	// extra names more versions.
 	extra []pkgVersion
@@ -802,7 +806,7 @@ func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pu
 	}
 	built := 0
 	for _, l := range lists {
-		n, err := a.pullPackage(ctx, st, id, l, req.chooses(l.pkg), req.all, req.choose, extra[l.pkg.Name], fresh, res)
+		n, err := a.pullPackage(ctx, st, id, l, req.chooses(l.pkg), req.all, req.prerelease, req.choose, extra[l.pkg.Name], fresh, res)
 		built += n
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", l.pkg.Name, err))
@@ -824,7 +828,7 @@ func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pu
 // versions in extra, and the available versions the recipe now builds
 // differently. byUser says the request came from the user rather than from
 // a dependency. It returns how many versions it converted.
-func (a *App) pullPackage(ctx context.Context, st *state.State, id string, l *pkgList, choose, all, byUser bool, extra []string, fresh map[string]bool, res *PullResult) (int, error) {
+func (a *App) pullPackage(ctx context.Context, st *state.State, id string, l *pkgList, choose, all, prerelease, byUser bool, extra []string, fresh map[string]bool, res *PullResult) (int, error) {
 	name := l.pkg.Name
 	var selected []source.Release
 	// chooseErr is returned after the named and available versions are
@@ -832,7 +836,7 @@ func (a *App) pullPackage(ctx context.Context, st *state.State, id string, l *pk
 	// named outright.
 	var chooseErr error
 	if choose {
-		accepted := l.accepted()
+		accepted := l.accepted(prerelease)
 		switch {
 		case len(accepted) > 0 && all:
 			selected = accepted

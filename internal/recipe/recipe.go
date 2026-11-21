@@ -90,9 +90,10 @@ type Package struct {
 	// package.json that the folder holds (unless VersionFromTag). A tag that
 	// no range takes is not read.
 	Paths []PathRule `json:"paths,omitempty"`
-	// Versions and Prerelease say which versions the recipe can convert.
-	Versions   string `json:"versions,omitempty"`
-	Prerelease bool   `json:"prerelease,omitempty"`
+	// Versions says which versions the recipe can convert. Whether a pull
+	// that names no version takes prereleases is not the recipe's to say:
+	// the user chooses it with the pull.
+	Versions string `json:"versions,omitempty"`
 	// OnDemand keeps the package out of what a pull chooses when the user
 	// names no package, so that ALCOM does not list a package upstream no
 	// longer releases beside the ones it does (UniVRM's com.vrmc.vrmshaders).
@@ -608,9 +609,9 @@ func (s *Source) fields() sourceFields {
 // VersionFromTag and Overlays, which `update` applies when it reads upstream.
 // Overlays are applied there because the list keeps no tag versions, and so
 // that pull reads the list alone.
-// A version list kept from an update whose key differs is stale. Prerelease
-// and Overrides are not in it, because they are applied to the list when it
-// is read; {sameTag} is too, from the versions the list keeps for each tag.
+// A version list kept from an update whose key differs is stale. Overrides
+// are not in it, because they are applied to the list when it is read;
+// {sameTag} is too, from the versions the list keeps for each tag.
 func (s *Source) ListingKey() string {
 	type pkg struct {
 		Name           string          `json:"name"`
@@ -640,9 +641,9 @@ func (p *Package) InRange(v semver.Version) bool {
 }
 
 // Accepts reports whether pull chooses version v without its being named:
-// in range, and stable unless the package takes prereleases.
-func (p *Package) Accepts(v semver.Version) bool {
-	if v.IsPrerelease() && !p.Prerelease {
+// in range, and stable unless the pull takes prereleases.
+func (p *Package) Accepts(v semver.Version, prerelease bool) bool {
+	if v.IsPrerelease() && !prerelease {
 		return false
 	}
 	return p.versions.Contains(v)

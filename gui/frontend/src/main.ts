@@ -338,7 +338,7 @@ async function showVersions() {
                 td.textContent = v.unusable;
                 td.className = "note";
             } else if (!v.available) {
-                td.appendChild(button(t("versions.makeAvailable"), () => act(() => VpmifyService.Pull([`${id}/${p.package}@${v.version}`]))));
+                td.appendChild(button(t("versions.makeAvailable"), () => act(() => VpmifyService.Pull([`${id}/${p.package}@${v.version}`], false))));
             }
             shown++;
         }
@@ -389,7 +389,9 @@ byId("update").addEventListener("click", () => {
 });
 byId("pull-newest").addEventListener("click", () => {
     if (selected !== null) {
-        act(() => VpmifyService.Pull([selected!]));
+        // The newest of the versions the list shows, prereleases too when
+        // it shows them.
+        act(() => VpmifyService.Pull([selected!], prereleasesElement.checked));
     }
 });
 byId("remove-recipe").addEventListener("click", () => {

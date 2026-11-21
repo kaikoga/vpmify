@@ -112,11 +112,12 @@ func (l *pkgList) fingerprint(rel source.Release, expanded []recipe.Edit) string
 }
 
 // accepted returns the releases pull chooses from without their being
-// named, in order: those the package accepts and that can be converted.
-func (l *pkgList) accepted() []source.Release {
+// named, in order: those the package accepts and that can be converted,
+// prereleases only when prerelease is true.
+func (l *pkgList) accepted(prerelease bool) []source.Release {
 	var out []source.Release
 	for _, rel := range l.releases {
-		if l.pkg.Accepts(rel.Version) && l.usable(rel) {
+		if l.pkg.Accepts(rel.Version, prerelease) && l.usable(rel) {
 			out = append(out, rel)
 		}
 	}

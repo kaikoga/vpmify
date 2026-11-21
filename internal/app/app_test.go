@@ -535,6 +535,35 @@ func TestPullNamedVersionWithAnEmptyRange(t *testing.T) {
 	}
 }
 
+// Prerelease lets a pull that names no version choose prereleases, which it
+// otherwise leaves for the user to name.
+func TestPullPrerelease(t *testing.T) {
+	cases := []struct {
+		name string
+		opt  PullOptions
+		want []string
+	}{
+		{"stable", PullOptions{}, []string{"1.0.0@2021.3"}},
+		{"prerelease", PullOptions{Prerelease: true}, []string{"1.1.0-beta.1@2021.3"}},
+		{"all stable", PullOptions{All: true}, []string{"1.0.0@2021.3"}},
+		{"all", PullOptions{All: true, Prerelease: true}, []string{"0.9.0-rc.1@2021.3", "1.0.0@2021.3", "1.1.0-beta.1@2021.3"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.reg.add("0.9.0-rc.1", "2021.3")
+			f.reg.add("1.0.0", "2021.3")
+			f.reg.add("1.1.0-beta.1", "2021.3")
+			if err := f.addAndPull(c.opt, f.writeRecipe("")); err != nil {
+				t.Fatal(err, f.log)
+			}
+			if got := f.available(); !reflect.DeepEqual(got, c.want) {
+				t.Errorf("placed = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
 func TestBrokenVersionListPointsAtUpdate(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")

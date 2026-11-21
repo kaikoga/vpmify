@@ -164,10 +164,11 @@ func (s *VpmifyService) Update(ctx context.Context, ids []string) error {
 }
 
 // Pull makes versions available as `vpmify package pull` does: targets are "<id>"
-// or "<id>/<package>", either with "@<version>".
-func (s *VpmifyService) Pull(ctx context.Context, targets []string) error {
+// or "<id>/<package>", either with "@<version>". prerelease is
+// `--prerelease`.
+func (s *VpmifyService) Pull(ctx context.Context, targets []string, prerelease bool) error {
 	return s.run(func() error {
-		_, err := s.core.Pull(ctx, targets, vpmify.PullOptions{})
+		_, err := s.core.Pull(ctx, targets, vpmify.PullOptions{Prerelease: prerelease})
 		return err
 	})
 }
