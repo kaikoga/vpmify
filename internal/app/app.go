@@ -210,9 +210,10 @@ func (f *failures) add(recipe string, err error) {
 func (f *failures) err() error { return errors.Join(f.errs...) }
 
 // stopped records why ctx was canceled, so that a command cut short does not
-// look done when it stopped between recipes, where nothing failed.
+// look done when it stopped between recipes, where nothing failed. A
+// failure that already says why is enough.
 func (f *failures) stopped(ctx context.Context) {
-	if ctx.Err() != nil {
+	if ctx.Err() != nil && !errors.Is(f.err(), context.Cause(ctx)) {
 		f.add("", context.Cause(ctx))
 	}
 }
@@ -262,6 +263,11 @@ func (a *App) AddDrafts(ctx context.Context, drafts []Draft) (*AddResult, error)
 	}
 	var res *AddResult
 	err := a.withLock(func() error {
+		// Canceled while waiting for another process: the user no longer
+		// expects the recipes.
+		if ctx.Err() != nil {
+			return context.Cause(ctx)
+		}
 		st, err := state.Load(a.Layout.State())
 		if err != nil {
 			return err
@@ -926,6 +932,11 @@ func (a *App) pullPackage(ctx context.Context, st *state.State, id string, l *pk
 
 	built := 0
 	for _, rel := range selected {
+		// A cached archive is converted without reaching the network, where
+		// canceling ctx would otherwise be noticed.
+		if ctx.Err() != nil {
+			return built, context.Cause(ctx)
+		}
 		v := rel.Version.String()
 		expanded, err := l.expand(rel)
 		if err != nil {
@@ -1232,11 +1243,6 @@ func appendRelease(list []source.Release, rel source.Release) []source.Release {
 // already in the store is swapped out only after the new one is complete,
 // so ALCOM never sees a half-built folder at the registered path.
 func (a *App) build(ctx context.Context, name string, rel source.Release, overrides []recipe.Edit, dir string) error {
-	// A cached archive is converted without reaching the network, where
-	// canceling ctx would otherwise be noticed.
-	if ctx.Err() != nil {
-		return context.Cause(ctx)
-	}
 	archive, err := a.archive(ctx, rel.ArchiveURL, rel.CacheKey, rel.Digests, rel.Pinned)
 	if err != nil {
 		return err

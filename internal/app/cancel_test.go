@@ -64,6 +64,13 @@ func TestCanceledPullRegistersWhatItBuilt(t *testing.T) {
 	if res == nil || len(res.Built) != 1 {
 		t.Fatalf("result = %+v, want one version built", res)
 	}
+	// The version stopped at says why, once.
+	if len(res.Errors) != 1 {
+		t.Errorf("errors = %+v", res.Errors)
+	}
+	if n := strings.Count(f.log.String(), "converting"); n != 1 {
+		t.Errorf("converting %d versions:\n%s", n, f.log)
+	}
 	want := f.app.Layout.PackageDir("kit", pkgName, res.Built[0].Version)
 	if got := f.registered(); !slices.Contains(got, want) {
 		t.Errorf("registered = %v, want %s among them", got, want)
@@ -73,6 +80,26 @@ func TestCanceledPullRegistersWhatItBuilt(t *testing.T) {
 	}
 	if strings.Contains(f.log.String(), "up to date") {
 		t.Errorf("a canceled pull said it was up to date:\n%s", f.log)
+	}
+}
+
+// The GUI may cancel adding while the core waits for another process's
+// lock.
+func TestCanceledAddSavesNothing(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	drafts, err := f.app.ReadRecipes(context.Background(), f.writeRecipe(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	res, err := f.app.AddDrafts(ctx, drafts)
+	if err == nil || res != nil {
+		t.Errorf("res = %+v, err = %v", res, err)
+	}
+	if ids, err := f.app.recipeIDs(); err != nil || len(ids) != 0 {
+		t.Errorf("recipes = %v, err = %v", ids, err)
 	}
 }
 
