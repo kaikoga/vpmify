@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"strconv"
@@ -47,7 +48,15 @@ type VpmifyService struct {
 	busy    int
 	pending []PendingAdd
 	next    int
+	// reading counts the links being read for a card, which have no card
+	// yet but will.
+	reading int
 }
+
+// maxLinkCards is how many cards may wait for the user before more links
+// are ignored. A web page can send links at any time, and each card keeps
+// the recipes it read; people who mean to add recipes do not reach it.
+const maxLinkCards = 20
 
 func NewVpmifyService() (*VpmifyService, error) {
 	base, err := paths.DefaultBase(os.Getenv)
@@ -273,6 +282,21 @@ func (s *VpmifyService) ChooseRecipeFiles(ctx context.Context) error {
 // confirm. A web page can send a link at any time, so nothing is added
 // until the user agrees.
 func (s *VpmifyService) receiveLink(ctx context.Context, link string) {
+	s.mu.Lock()
+	full := len(s.pending)+s.reading >= maxLinkCards
+	if !full {
+		s.reading++
+	}
+	s.mu.Unlock()
+	if full {
+		s.send(eventLog, fmt.Sprintf("ignored a link, as %d sets of recipes already wait for you to add or discard them: %s", maxLinkCards, link))
+		return
+	}
+	defer func() {
+		s.mu.Lock()
+		s.reading--
+		s.mu.Unlock()
+	}()
 	refs, err := recipeURLs(link)
 	if err != nil {
 		s.addPending(PendingAdd{From: []string{link}, Error: err.Error()})

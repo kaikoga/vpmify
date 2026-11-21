@@ -17,7 +17,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // The limits NewClient sets. They are far above what real packages need,
@@ -43,10 +42,13 @@ type Client struct {
 	MaxArchive int64
 }
 
-// NewClient returns a client with a generous timeout for large archives.
+// NewClient returns a client with no timeout: an archive may take long on a
+// slow line, and a timeout would not let the user do anything sooner. Whoever
+// runs Vpmify stops a request by cancelling its context, or by stopping the
+// process.
 func NewClient(userAgent string) *Client {
 	return &Client{
-		HTTP:        &http.Client{Timeout: 10 * time.Minute, CheckRedirect: checkRedirect},
+		HTTP:        &http.Client{CheckRedirect: checkRedirect},
 		UserAgent:   userAgent,
 		MaxMetadata: DefaultMaxMetadata,
 		MaxArchive:  DefaultMaxArchive,
