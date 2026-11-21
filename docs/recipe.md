@@ -40,7 +40,7 @@ recipe
    ├─ (fields of the type)
    └─ packages[]          what to take, and how to fix it up
       ├─ name
-      ├─ versions, prerelease, onDemand
+      ├─ versions, onDemand
       ├─ path / paths[], versionFromTag, overlays[]   (github only)
       └─ overrides[]
 ```
@@ -52,7 +52,7 @@ recipe
 
 - `vpmifyFormat` (required): the format of the recipe. It is `1` now. A JSON file without it is not read as a recipe. Vpmify refuses a recipe in a format newer than it knows, and says a newer Vpmify is needed.
 - `id` (required): the identifier of the recipe. Write it in reverse domain form with the domain of whoever writes the recipe (`com.example.univrm`), as the ids of VPM repositories are. It takes lowercase letters, digits, `.`, `_` and `-`, and starts with a letter or a digit. Commands take it as an argument (`vpmify package pull <id>`). Adding a recipe replaces the recipe that has the same `id`.
-- `displayName`: the name people read.
+- `displayName` (required): the name people read.
 - `sources` (required): the sources, one or more.
 
 A recipe has several sources so that it can offer a package together with the packages it depends on (see [vket-cloud-sdk.json](../examples/vket-cloud-sdk.json)).
@@ -108,7 +108,7 @@ For a repository whose tags are not SemVer, write `tagVersion`.
 
 The example reads the tag `0.15.2.2` as 0.15.2002, and the tag `0.15.2` as 0.15.2000.
 
-When two tags read as one version and hold the same version of a package, Vpmify warns. Write a `tagVersion` that tells them apart.
+When the tag a package's version is taken from reads as one version with another tag that holds the same version of the package, Vpmify warns. Write a `tagVersion` that tells them apart.
 
 ## Ranges
 
@@ -124,8 +124,7 @@ The syntax of the ranges in `tags` and `versions`:
 ## Packages
 
 - `name` (required): the name of the package. It must be the `name` of the upstream `package.json`.
-- `versions`: the range of the versions to take, on the version of the package. Every version when omitted. A version outside the range is not in the version list, and cannot be taken even when the user names it.
-- `prerelease`: with `true`, a `pull` that names no version chooses prereleases too. Without it, such a `pull` chooses stable versions only (prereleases are still in the list, and can be taken by naming them).
+- `versions`: the range of the versions to take, on the version of the package. Every version when omitted. A version outside the range is not in the version list, and cannot be taken even when the user names it. Prereleases in the range are in the list; a `pull` that names no version chooses them only with `--prerelease`.
 - `onDemand`: with `true`, a `pull` that names no package does not choose this package. Its versions are taken only when the `vpmDependencies` of an installed version name the package, or when the user names the package or a version. It keeps a package that upstream no longer releases from showing in ALCOM beside the ones it does (see [univrm.json](../examples/univrm.json)).
 - `overrides`: changes to `package.json` (see "Changing package.json" below).
 

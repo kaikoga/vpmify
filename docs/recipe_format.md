@@ -22,7 +22,7 @@ The top-level object.
 
 - `vpmifyFormat` (integer, required): the format the recipe is written in. A JSON file without it is not a recipe. A value below 1 is an error. A value above the newest format this Vpmify reads is refused, with a message that a newer Vpmify is needed.
 - `id` (string, required): the identifier of the recipe. It is made of lowercase letters `a-z`, digits `0-9`, `.`, `_` and `-`, and starts with a letter or a digit. Write it in reverse domain form with the domain of whoever writes the recipe (`com.example.univrm`); Vpmify does not check the form. Adding a recipe replaces the recipe that has the same `id`.
-- `displayName` (string, optional): the name people read. It is in the JSON results (`--json`) of `recipe add` and `recipe list`.
+- `displayName` (string, required): the name people read. It must not be empty. It is in the JSON results (`--json`) of `recipe add` and `recipe list`.
 - `url` (string, optional): the URL the recipe is published at, for people and tools that read the recipe. Vpmify does not read it.
 - `sources` (array of [sources](#source), required): one or more. An element that is `null` is an error, as is a `null` element of `packages`.
 
@@ -85,8 +85,7 @@ What to take from a source, and how to fix it up.
 These fields are taken by the packages of every source.
 
 - `name` (string, required): the name of the package. It must be the `name` in upstream's `package.json`. It must not contain `/` or `\`, and must not be `.` or `..`.
-- `versions` ([range](#ranges), optional): the versions to take, as a range on the version of the package. Every version when omitted. A version outside the range is not in the version list, and cannot be taken even when the user names it.
-- `prerelease` (boolean, optional, default `false`): with `true`, a `pull` that names no version chooses prereleases too. With `false`, such a `pull` chooses stable versions only; prereleases in `versions` are still in the version list, and are taken when the user names them, or as [dependencies](#how-dependencies-are-followed).
+- `versions` ([range](#ranges), optional): the versions to take, as a range on the version of the package. Every version when omitted. A version outside the range is not in the version list, and cannot be taken even when the user names it. Prereleases in the range are in the version list; see [How pull chooses versions](#how-pull-chooses-versions) for when they are taken.
 - `onDemand` (boolean, optional, default `false`): with `true`, a `pull` that names no package does not choose this package. Its versions are still taken as [dependencies](#how-dependencies-are-followed), and when the user names the package or one of its versions.
 - `overrides` (array of [overrides](#override), optional): changes to `package.json`.
 
@@ -195,12 +194,14 @@ The values of `tags` and `versions`.
 
 ## How pull chooses versions
 
-- A `pull` that names no version takes, for each package it chooses, the newest version that `versions` and `prerelease` let it choose and that can be converted. A version that cannot be converted (a placeholder that cannot be filled in, for example) is passed over.
+- A `pull` that names no version takes, for each package it chooses, the newest stable version in `versions` that can be converted. With `pull --prerelease` (in the GUI, when prereleases are shown), it takes the newest version, prerelease or not. A version with a placeholder that cannot be filled in is passed over.
+- Some versions turn out not to be convertible only when upstream's archive is unpacked, such as one whose folder for an [overlay](#overlay) is not empty. Such a version is not passed over for an older one: the `pull` makes it not available, warns, and goes on with the other packages without failing.
+- Prereleases are taken too when the user names them, and as [dependencies](#how-dependencies-are-followed).
 - A version the user names that cannot be converted is an error.
 
 ## How a github source chooses versions
 
 - The tags are ordered by their version. Tags of one version are ordered by name, with runs of digits compared by value; names equal by value (`r1.0.0` and `r01.0.0`) are ordered by their text. This order stands for their age, as Git's list of tags has no dates.
 - When one version of a package is in several tags, it is taken from the oldest tag. A stable version is taken from the oldest tag whose version is not a prerelease, when there is one. Versions that differ only in build metadata, such as `1.0.0+a` and `1.0.0+b`, are one version here, as they are in ALCOM.
-- When two tags read as one version and hold the same version of a package, the package is taken from the first of them in the order above, and Vpmify warns: write a `tagVersion` that tells them apart. This happens without `tagVersion` too, when the repository has both `v1.2.3` and `1.2.3`.
+- When the tag a version of a package is taken from reads as one version with another tag that holds the same version of the package, Vpmify warns: write a `tagVersion` that tells them apart. This happens without `tagVersion` too, when the repository has both `v1.2.3` and `1.2.3`. Tags that read as one version do not warn when the package's version is taken from an older tag: with tags `1.2.2`, `1.2.3` and `v1.2.3` all holding version 2.0.0 of the package, it is taken from `1.2.2` without a warning.
 - `{sameTag}` names the version of the other package in the tag the version is taken from.
