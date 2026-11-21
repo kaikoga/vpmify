@@ -117,7 +117,7 @@ type Reconciler struct {
 	afterSave func()
 }
 
-// Change reports what Reconcile did.
+// Change reports what Reconcile or Update did.
 type Change struct {
 	Added, Removed []string
 }
@@ -290,7 +290,8 @@ func (r *Reconciler) matches(e edit) (bool, error) {
 	return true, nil
 }
 
-// Owns reports whether folder is under Owned, so Reconcile may unregister it.
+// Owns reports whether folder is under Owned, so Reconcile and Update may
+// unregister it.
 func (r *Reconciler) Owns(folder string) bool {
 	rel, err := filepath.Rel(filepath.Clean(r.Owned), folder)
 	if err != nil {

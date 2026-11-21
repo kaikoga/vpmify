@@ -60,10 +60,11 @@ available versions, which ALCOM lists as user packages:
                                available version again
   package remove <id>[/<package>]@<version>
   package remove --all <id>[/<package>]
-                               unregister and delete a version, or every
-                               version, of a recipe's packages or of one
-                               package; the recipe and its version lists stay,
-                               so package pull can make them available again
+                               unregister and delete a converted version, or
+                               every version, of a recipe's packages or of one
+                               package, available or not; the recipe and its
+                               version lists stay, so package pull can make
+                               them available again
 
 other commands:
   doctor [--fix]               find disagreements among recipes, Vpmify's record
