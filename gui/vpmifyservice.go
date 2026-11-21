@@ -289,9 +289,10 @@ func (s *VpmifyService) Pull(ctx context.Context, targets []string, prerelease b
 	}))
 }
 
-// RemoveVersions unregisters and deletes available versions as `vpmify
-// package remove` does: ref is "<id>" or "<id>/<package>", and version is
-// one version, or "" for every version. The front end asks the user first.
+// RemoveVersions unregisters and deletes the versions in the store as
+// `vpmify package remove` does: ref is "<id>" or "<id>/<package>", and
+// version is one version, or "" for every version. The front end asks the
+// user first.
 func (s *VpmifyService) RemoveVersions(ctx context.Context, ref, version string) error {
 	return quiet(s.run(ctx, func(context.Context) error {
 		_, err := s.core.RemoveVersions(ref, version)
@@ -317,7 +318,7 @@ func (s *VpmifyService) RecipeRemoval(ctx context.Context, id string) (*vpmify.R
 	return res, err
 }
 
-// RemoveRecipe removes recipe id with its available versions, as `vpmify
+// RemoveRecipe removes recipe id with its versions in the store, as `vpmify
 // recipe remove` does, after the user confirmed what RecipeRemoval showed.
 func (s *VpmifyService) RemoveRecipe(ctx context.Context, id string) error {
 	return quiet(s.run(ctx, func(context.Context) error {

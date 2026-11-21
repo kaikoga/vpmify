@@ -193,7 +193,7 @@ func TestCanceledReadMakesNoCard(t *testing.T) {
 	cancel()
 	s.readForConfirmation(ctx, []string{"kit.json"}, []string{"kit.json"})
 	if got := s.Pending(); len(got) != 0 {
-		t.Errorf("cards = %v", got)
+		t.Errorf("pending = %v", got)
 	}
 }
 
@@ -205,12 +205,13 @@ func TestReceiveLinkIgnoresLinksPastTheLimit(t *testing.T) {
 		}
 	}}
 	ctx := context.Background()
-	// A link that names no recipe becomes a card without reading anything.
+	// A link that names no recipe waits for the user without reading
+	// anything.
 	for range maxLinkCards {
 		s.receiveLink(ctx, "vpmify://add")
 	}
 	if got := len(s.Pending()); got != maxLinkCards {
-		t.Fatalf("cards = %d, want %d", got, maxLinkCards)
+		t.Fatalf("pending = %d, want %d", got, maxLinkCards)
 	}
 	if len(logs) != 0 {
 		t.Errorf("logs = %v before the limit", logs)
@@ -218,7 +219,7 @@ func TestReceiveLinkIgnoresLinksPastTheLimit(t *testing.T) {
 
 	s.receiveLink(ctx, "vpmify://add?url=https://example.test/kit.json")
 	if got := len(s.Pending()); got != maxLinkCards {
-		t.Errorf("cards = %d after the limit, want %d", got, maxLinkCards)
+		t.Errorf("pending = %d after the limit, want %d", got, maxLinkCards)
 	}
 	if len(logs) != 1 || !strings.Contains(logs[0], "ignored a link") {
 		t.Errorf("logs = %v", logs)
@@ -227,6 +228,6 @@ func TestReceiveLinkIgnoresLinksPastTheLimit(t *testing.T) {
 	s.DiscardAdd(s.Pending()[0].Token)
 	s.receiveLink(ctx, "vpmify://add")
 	if got := len(s.Pending()); got != maxLinkCards {
-		t.Errorf("cards = %d after one was discarded and a link came, want %d", got, maxLinkCards)
+		t.Errorf("pending = %d after one was discarded and a link came, want %d", got, maxLinkCards)
 	}
 }
