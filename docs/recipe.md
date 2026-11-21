@@ -243,6 +243,6 @@ Rules for rare cases, for when a recipe is not read as you expect.
 - Field names are case-sensitive: `Versions` is a misspelling of `versions`. A name that comes twice in one object is an error.
 - `tagVersion`: a tag whose result is not SemVer is not read, nor is a tag with a group longer than its padding (a fourth group of 4 digits in the example above). Leading zeros of the numbers are dropped.
 - When two tags read as one version and hold the same version of a package, the package is taken from the tag whose name comes first. This happens without `tagVersion` too, when the repository has both `v1.2.3` and `1.2.3`.
-- When one package version is in several tags, the content of the oldest tag is used. A stable version is taken from the oldest tag whose name is not a prerelease, when there is one.
+- When one package version is in several tags, the content of the oldest tag is used. A stable version is taken from the oldest tag whose name is not a prerelease, when there is one. Versions that differ only in build metadata, such as `1.0.0+a` and `1.0.0+b`, are one version here, as they are in ALCOM.
 - Placeholders are filled in only in the values of `vpmDependencies`. Do not write `{…}` as plain text in other values of `set` and `merge`: a later format may fill it in.
 - Two overlays cannot fill one folder, or a folder and a folder inside it, in the same tag.
