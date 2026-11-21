@@ -51,9 +51,11 @@ type VpmifyService struct {
 	// canceled.
 	op chan struct{}
 	// ops is the context of the operations running and waiting, which
-	// cancelOps cancels.
+	// cancelOps cancels. stopped is ops's own, so that the log says once
+	// for each cancel that something stopped.
 	ops       context.Context
 	cancelOps context.CancelFunc
+	stopped   *sync.Once
 	busy      int
 	pending   []PendingAdd
 	next      int
@@ -64,7 +66,7 @@ type VpmifyService struct {
 
 // errCanceled is returned by run when Cancel stopped the operation. The
 // methods the front end calls return nothing for it instead of an error,
-// since the user asked for it; Cancel says so in the log.
+// since the user asked for it; run says so in the log.
 var errCanceled = errors.New("canceled")
 
 // maxLinkCards is how many cards may wait for the user before more links
@@ -119,8 +121,14 @@ func (s *VpmifyService) initOps() {
 		s.op = make(chan struct{}, 1)
 	}
 	if s.ops == nil {
-		s.ops, s.cancelOps = context.WithCancel(context.Background())
+		s.newOps()
 	}
+}
+
+// newOps starts the context of the operations to come. s.mu must be held.
+func (s *VpmifyService) newOps() {
+	s.ops, s.cancelOps = context.WithCancel(context.Background())
+	s.stopped = new(sync.Once)
 }
 
 // run runs fn as the only operation on the core, and tells the front end
@@ -134,10 +142,19 @@ func (s *VpmifyService) run(ctx context.Context, fn func(context.Context) error)
 	s.mu.Lock()
 	s.initOps()
 	s.busy++
-	op, ops := s.op, s.ops
+	op, ops, stopped := s.op, s.ops, s.stopped
 	s.mu.Unlock()
 	s.send(eventBusy, true)
 	s.busyMu.Unlock()
+	// canceled says in the log that Cancel stopped something, once for the
+	// operations it stopped together. A cancel of ctx alone is not the
+	// user's, and is not said.
+	canceled := func() error {
+		if ops.Err() != nil {
+			stopped.Do(func() { s.send(eventLog, "canceled") })
+		}
+		return errCanceled
+	}
 	defer func() {
 		s.busyMu.Lock()
 		defer s.busyMu.Unlock()
@@ -153,7 +170,7 @@ func (s *VpmifyService) run(ctx context.Context, fn func(context.Context) error)
 	select {
 	case op <- struct{}{}:
 	case <-ctx.Done():
-		return errCanceled
+		return canceled()
 	}
 	defer func() { <-op }()
 	// The cancel that stopped the operation before this one frees op, and
@@ -161,11 +178,11 @@ func (s *VpmifyService) run(ctx context.Context, fn func(context.Context) error)
 	// AfterFunc cancels ctx in a goroutine of its own. ops is canceled by
 	// the time Cancel returns.
 	if ctx.Err() != nil || ops.Err() != nil {
-		return errCanceled
+		return canceled()
 	}
 	err := fn(ctx)
 	if err != nil && ctx.Err() != nil && onlyCanceled(err) {
-		return errCanceled
+		return canceled()
 	}
 	return err
 }
@@ -192,17 +209,18 @@ func onlyCanceled(err error) bool {
 // a moment. One waiting for another Vpmify process to release the core's
 // lock is not stopped while it waits, as the core waits without a context;
 // once it gets the lock, adding, updating and pulling stop, while a removal
-// goes on.
+// goes on. The log says "canceling" at once, and "canceled" when something
+// stopped.
 func (s *VpmifyService) Cancel() {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.initOps()
-	busy := s.busy > 0
-	s.cancelOps()
-	s.ops, s.cancelOps = context.WithCancel(context.Background())
-	s.mu.Unlock()
-	if busy {
-		s.send(eventLog, "canceled")
+	if s.busy > 0 {
+		// Sent before the cancel, so that it comes before "canceled".
+		s.send(eventLog, "canceling")
 	}
+	s.cancelOps()
+	s.newOps()
 }
 
 // quiet turns errCanceled into no error, for the methods the front end

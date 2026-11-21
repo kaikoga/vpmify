@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -28,13 +29,29 @@ func waitBusy(t *testing.T, s *VpmifyService, n int) {
 	}
 }
 
+// logRecorder keeps the log lines a service sends, from any goroutine.
+type logRecorder struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (r *logRecorder) emit(name string, data any) {
+	if name == eventLog {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.lines = append(r.lines, data.(string))
+	}
+}
+
+func (r *logRecorder) get() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.lines)
+}
+
 func TestCancelStopsTheRunningAndTheWaitingOperations(t *testing.T) {
-	var logs []string
-	s := &VpmifyService{emit: func(name string, data any) {
-		if name == eventLog {
-			logs = append(logs, data.(string))
-		}
-	}}
+	var logs logRecorder
+	s := &VpmifyService{emit: logs.emit}
 	ctx := context.Background()
 	started := make(chan struct{})
 	running := make(chan error)
@@ -66,8 +83,9 @@ func TestCancelStopsTheRunningAndTheWaitingOperations(t *testing.T) {
 	if ran {
 		t.Error("the waiting operation ran after it was canceled")
 	}
-	if !slices.Equal(logs, []string{"canceled"}) {
-		t.Errorf("logs = %v", logs)
+	// Both stopped, and the log says so once.
+	if got, want := logs.get(), []string{"canceling", "canceled"}; !slices.Equal(got, want) {
+		t.Errorf("logs = %v, want %v", got, want)
 	}
 
 	// Operations after the cancel run.
@@ -76,15 +94,16 @@ func TestCancelStopsTheRunningAndTheWaitingOperations(t *testing.T) {
 	}
 	// With nothing running, there is nothing to say.
 	s.Cancel()
-	if len(logs) != 1 {
-		t.Errorf("logs = %v after canceling nothing", logs)
+	if got := logs.get(); len(got) != 2 {
+		t.Errorf("logs = %v after canceling nothing", got)
 	}
 }
 
 // A removal does not watch its context and finishes after a cancel, which
 // must not be reported as canceled.
 func TestCancelLetsAnOperationThatFinishesSucceed(t *testing.T) {
-	s := &VpmifyService{}
+	var logs logRecorder
+	s := &VpmifyService{emit: logs.emit}
 	started := make(chan struct{})
 	release := make(chan struct{})
 	done := make(chan error)
@@ -100,6 +119,24 @@ func TestCancelLetsAnOperationThatFinishesSucceed(t *testing.T) {
 	close(release)
 	if err := <-done; err != nil {
 		t.Errorf("err = %v", err)
+	}
+	if got, want := logs.get(), []string{"canceling"}; !slices.Equal(got, want) {
+		t.Errorf("logs = %v, want %v", got, want)
+	}
+}
+
+// A cancel of the caller's context alone, such as the front end's, is not
+// the user's cancel.
+func TestCancelOfTheCallerIsNotLogged(t *testing.T) {
+	var logs logRecorder
+	s := &VpmifyService{emit: logs.emit}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := s.run(ctx, func(context.Context) error { return nil }); !errors.Is(err, errCanceled) {
+		t.Errorf("err = %v", err)
+	}
+	if got := logs.get(); len(got) != 0 {
+		t.Errorf("logs = %v", got)
 	}
 }
 
