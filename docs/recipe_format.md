@@ -19,8 +19,8 @@ The top-level object.
 
 - `vpmifyFormat` (integer, required): the format the recipe is written in. A JSON file without it is not a recipe. A value below 1 is an error. A value above the newest format this Vpmify reads is refused, with a message that a newer Vpmify is needed.
 - `id` (string, required): the identifier of the recipe. It is made of lowercase letters `a-z`, digits `0-9`, `.`, `_` and `-`, and starts with a letter or a digit. Write it in reverse domain form with the domain of whoever writes the recipe (`com.example.univrm`); Vpmify does not check the form. Adding a recipe replaces the recipe that has the same `id`.
-- `displayName` (string, optional): the name people read. Vpmify shows it in the results of `recipe add` and `recipe list`.
-- `sources` (array of [sources](#source), required): one or more. An element that is `null` is an error.
+- `displayName` (string, optional): the name people read. It is in the JSON results (`--json`) of `recipe add` and `recipe list`.
+- `sources` (array of [sources](#source), required): one or more. An element that is `null` is an error, as is a `null` element of `packages`.
 
 A package name may come only once in a recipe, across all its sources.
 
@@ -38,9 +38,9 @@ An npm-compatible registry, such as npmjs or OpenUPM.
 - `registry` (string, required): the URL of the registry, with the scheme `https` or `http` and a host.
 - `packages` (array of [packages](#package), required): one or more.
 
-An npm source takes no `url`, `tagVersion` or `tags`; writing one is an error.
+An npm source takes no `url`, `tagVersion` or `tags`; a non-empty one is an error.
 
-Vpmify reads the registry's document of each package once. A version is read when its number is [SemVer](#versions) and it has a tarball; the others are left out.
+Vpmify reads the registry's document of each package once. When its `name` is not the package's, the source cannot be read. A version is read when its number is [SemVer](#versions) and it has a tarball; the others are left out. The `package.json` in the tarball must have the package's `name` and the version's number as its `version`, or the version cannot be converted.
 
 ### github source
 
@@ -52,7 +52,7 @@ A GitHub repository, whose tags are read as versions.
 - `tags` ([range](#ranges), optional): the tags to read, as a range on the version of the tag. Every tag when omitted.
 - `packages` (array of [packages](#package), required): one or more.
 
-A github source takes no `registry`; writing one is an error.
+A github source takes no `registry`; a non-empty one is an error.
 
 A tag whose name does not read as a version is not read. For each tag that is read, Vpmify reads the `package.json` in the folder of each package (see [paths](#path-and-paths)).
 
@@ -82,18 +82,18 @@ These fields are taken by the packages of every source.
 
 - `name` (string, required): the name of the package. It must be the `name` in upstream's `package.json`. It must not contain `/` or `\`, and must not be `.` or `..`.
 - `versions` ([range](#ranges), optional): the versions to take, as a range on the version of the package. Every version when omitted. A version outside the range is not in the version list, and cannot be taken even when the user names it.
-- `prerelease` (boolean, optional, default `false`): with `true`, a `pull` that names no version chooses prereleases too. With `false`, such a `pull` chooses stable versions only; prereleases in `versions` are still in the version list, and are taken when the user names them.
-- `onDemand` (boolean, optional, default `false`): with `true`, a `pull` that names no package does not choose this package. Its versions are taken when the `vpmDependencies` of a version being made available name the package, or when the user names the package or one of its versions.
+- `prerelease` (boolean, optional, default `false`): with `true`, a `pull` that names no version chooses prereleases too. With `false`, such a `pull` chooses stable versions only; prereleases in `versions` are still in the version list, and are taken when the user names them, or as [dependencies](#how-dependencies-are-followed).
+- `onDemand` (boolean, optional, default `false`): with `true`, a `pull` that names no package does not choose this package. Its versions are still taken as [dependencies](#how-dependencies-are-followed), and when the user names the package or one of its versions.
 - `overrides` (array of [overrides](#override), optional): changes to `package.json`.
 
-These fields are taken by the packages of a github source only. In a package of an npm source, writing one is an error.
+These fields are taken by the packages of a github source only. In a package of an npm source, a non-empty one (or `versionFromTag` other than `false`) is an error.
 
 - `path` (string, optional): see [path and paths](#path-and-paths).
 - `paths` (array, optional): see [path and paths](#path-and-paths).
 - `versionFromTag` (optional): see [versionFromTag](#versionfromtag).
 - `overlays` (array of [overlays](#overlay), optional): content of other repositories to put into folders of the package.
 
-In a tag, a package of a github source is not read when its folder has no `package.json`, when the `name` there differs, or when it has no `version`. Unless the package takes the version of the tag (`versionFromTag`), the `version` must also be [SemVer](#versions).
+In a tag, a package of a github source is not read when its folder has no `package.json`, when the file is not a JSON object whose `name` and `version` are strings and whose `dependencies`, if any, is an object of strings, when the `name` there differs, or when it has no `version`. Unless the package takes the version of the tag (`versionFromTag`), the `version` must also be [SemVer](#versions).
 
 ### path and paths
 
@@ -104,9 +104,9 @@ The folder of the package in the repository, where its `package.json` is. Write 
   - `tags` ([range](#ranges), optional): the tags it applies to, as a range on the version of the tag. Every tag when omitted.
   - `path` (folder, required): the folder. `""` is the root of the repository; an element without `path` is an error.
 
-The ranges of `paths` must not overlap. In a tag that no range takes, the package is not read.
+The ranges of `paths` must not overlap. Ranges that no version satisfies together but that meet in order, such as `>1.0.0` and `<1.0.1-0`, still count as overlapping. In a tag that no range takes, the package is not read.
 
-A folder is written with `/` between its names, as in `Assets/VRM`. `\`, `.` and `..` cannot be written in it. A `/` at its start or end is dropped.
+A folder is written with `/` between its names, as in `Assets/VRM`. `\`, empty names (`A//B`), `.` and `..` cannot be written in it. A `/` at its start or end is dropped.
 
 ### versionFromTag
 
@@ -126,7 +126,7 @@ Puts the content of a commit of another GitHub repository into an empty folder o
 - `commit` (string, required): the commit to take, in 40 lowercase hexadecimal digits.
 - `resolve` (reserved): writing it is an error in this format.
 
-Two overlays cannot fill one folder, or a folder and a folder inside it, for tags that both their ranges take. Overlays of different folders are put in the order they are written.
+Two overlays cannot fill one folder, or a folder and a folder inside it, for tags that both their ranges take (counted as for `paths`).
 
 The folder must be in upstream's archive, and empty. When it is not, the version cannot be converted.
 
@@ -139,8 +139,9 @@ Changes fields of the `package.json` of the converted package. An override needs
 - `merge` (object of objects, optional): for each top-level field of `package.json`, keys and values to add to it. The field must be an object, as `dependencies` and `vpmDependencies` are.
   - A key that is already in the field takes the new value. The other keys of the field stay.
   - A `null` value removes the key.
-  - When `package.json` has no such field, or has `null` there, the field is made.
+  - When `package.json` has no such field, or has `null` there, the field is made, unless the `merge` adds no key.
   - When the field is there but is not an object, the version cannot be converted.
+  - A field written with `null` or `{}` in place of its keys changes nothing.
 
 `set` and `merge` cannot change `name` or `version`; writing either is an error.
 
@@ -148,7 +149,7 @@ The value of `vpmDependencies`, in `set`, must be an object whose values are str
 
 When several overrides apply to a version, they are applied in the order they are written. In one override, `set` is applied before `merge`. So for one field, the last `set` wins, and every `merge` after it adds up.
 
-Fields and keys that `package.json` already has keep their place. Fields and keys new to it are added at its end, in the alphabetical order of their names within one `set` or `merge`.
+Fields and keys that `package.json` already has keep their place. Fields and keys new to it are added at its end, in the byte order of their names (uppercase before lowercase) within one `set` or `merge`. When anything is changed, including the version by `versionFromTag`, the whole `package.json` is written again with an indent of two spaces, keeping its line endings.
 
 ### Placeholders
 
@@ -160,13 +161,22 @@ In the values of `vpmDependencies`, in `set` and `merge`, these placeholders are
 
 Any other `{…}` in a value of `vpmDependencies` is an error. Placeholders are not filled in elsewhere. Do not write `{…}` as plain text in other values of `set` and `merge`: a later format may fill it in.
 
+### How dependencies are followed
+
+ALCOM reads the values of `vpmDependencies` as version ranges. Vpmify follows them too, with the [range syntax](#ranges) below: after a `pull`, it reads the `vpmDependencies` of every version made available, from every recipe. For a dependency on a package that a recipe provides, and that no available version satisfies, Vpmify takes a version:
+
+- from the dependent's own recipe first, and then from the other recipes that provide the package, in the order of their `id`;
+- the version the lower bound of a `>=` range names, when the version list has it; otherwise the newest version in the range, prereleases included. A version that cannot be converted is passed over.
+
+A value Vpmify cannot read as a range, such as `^1.0.0`, is written into `package.json` as it is, and not followed.
+
 ## Versions
 
 Versions are [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html): `MAJOR.MINOR.PATCH`, with an optional prerelease after `-` and optional build metadata after `+`.
 
 - All three numbers are written, without leading zeros: `1.2.3`, not `1.2` or `01.2.3`.
 - Prerelease and build identifiers are made of `0-9`, `A-Z`, `a-z` and `-`, separated by `.`.
-- Versions are compared in SemVer order. Build metadata is ignored, so versions that differ only in it, such as `1.0.0+a` and `1.0.0+b`, are one version, as they are in ALCOM.
+- Versions are compared in SemVer order, in which build metadata is ignored.
 
 ## Ranges
 
@@ -179,9 +189,14 @@ The values of `tags` and `versions`.
 - `^`, `~`, `x` and versions with fewer than three numbers cannot be written.
 - Prereleases are compared in SemVer order and nothing more: `0.125.0-rc.1` comes before `0.125.0`, so it is in `<0.125.0`.
 
+## How pull chooses versions
+
+- A `pull` that names no version takes, for each package it chooses, the newest version that `versions` and `prerelease` let it choose and that can be converted. A version that cannot be converted (a placeholder that cannot be filled in, for example) is passed over.
+- A version the user names that cannot be converted is an error.
+
 ## How a github source chooses versions
 
 - The tags are ordered by their version. Tags of one version are ordered by name, with runs of digits compared by value; names equal by value (`r1.0.0` and `r01.0.0`) are ordered by their text. This order stands for their age, as Git's list of tags has no dates.
-- When one version of a package is in several tags, it is taken from the oldest tag. A stable version is taken from the oldest tag whose version is not a prerelease, when there is one.
+- When one version of a package is in several tags, it is taken from the oldest tag. A stable version is taken from the oldest tag whose version is not a prerelease, when there is one. Versions that differ only in build metadata, such as `1.0.0+a` and `1.0.0+b`, are one version here, as they are in ALCOM.
 - When two tags read as one version and hold the same version of a package, the package is taken from the first of them in the order above, and Vpmify warns: write a `tagVersion` that tells them apart. This happens without `tagVersion` too, when the repository has both `v1.2.3` and `1.2.3`.
 - `{sameTag}` names the version of the other package in the tag the version is taken from.
