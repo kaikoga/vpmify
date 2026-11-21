@@ -1,5 +1,7 @@
 # Recipe format
 
+[日本語](recipe_format.ja.md)
+
 This is the complete description of the recipe format: every field a recipe takes, the values it takes, and how Vpmify reads them. For a guide to writing recipes, see [recipe.md](recipe.md).
 
 It describes format 1 (`"vpmifyFormat": 1`).
