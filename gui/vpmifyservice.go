@@ -20,7 +20,7 @@ import (
 
 // Events the service emits to the front end.
 const (
-	// eventBusy carries whether an operation is running.
+	// eventBusy carries whether an operation is running or waiting.
 	eventBusy = "busy"
 	// eventLog carries one line of the core's progress messages.
 	eventLog = "log"
@@ -39,6 +39,10 @@ type VpmifyService struct {
 	core *vpmify.App
 	// emit sends an event to the front end; nil until the app exists.
 	emit func(name string, data any)
+
+	// busyMu keeps each change of busy and its event together, so that the
+	// front end gets them in order: the last event it gets is what busy is.
+	busyMu sync.Mutex
 
 	mu sync.Mutex
 	// op is held by the one operation running on the core, as the CLI runs
@@ -122,17 +126,21 @@ func (s *VpmifyService) initOps() {
 // run runs fn as the only operation on the core, and tells the front end
 // while one is running or waiting. fn gets a context that Cancel cancels
 // as well as ctx. It returns errCanceled when canceled before fn started,
-// or when fn failed after being canceled, since then the failure is most
-// likely the cancel; an fn that does not watch its context, such as a
-// removal, finishes and returns as it would.
+// or when fn failed after being canceled with nothing but the cancel to
+// say; a failure of its own still comes back, as does the result of an fn
+// that does not watch its context, such as a removal.
 func (s *VpmifyService) run(ctx context.Context, fn func(context.Context) error) error {
+	s.busyMu.Lock()
 	s.mu.Lock()
 	s.initOps()
 	s.busy++
 	op, ops := s.op, s.ops
 	s.mu.Unlock()
 	s.send(eventBusy, true)
+	s.busyMu.Unlock()
 	defer func() {
+		s.busyMu.Lock()
+		defer s.busyMu.Unlock()
 		s.mu.Lock()
 		s.busy--
 		busy := s.busy > 0
@@ -156,17 +164,35 @@ func (s *VpmifyService) run(ctx context.Context, fn func(context.Context) error)
 		return errCanceled
 	}
 	err := fn(ctx)
-	if err != nil && ctx.Err() != nil {
+	if err != nil && ctx.Err() != nil && onlyCanceled(err) {
 		return errCanceled
 	}
 	return err
 }
 
+// onlyCanceled reports whether every error err joins is a cancel, so that
+// a failure that happened before the cancel is not hidden with it.
+func onlyCanceled(err error) bool {
+	switch e := err.(type) {
+	case interface{ Unwrap() []error }:
+		for _, inner := range e.Unwrap() {
+			if !onlyCanceled(inner) {
+				return false
+			}
+		}
+		return true
+	case interface{ Unwrap() error }:
+		return err == context.Canceled || onlyCanceled(e.Unwrap())
+	}
+	return err == context.Canceled
+}
+
 // Cancel stops the operations running and waiting to run. The core stops
 // an operation at its next download or version, so the one running may take
 // a moment. One waiting for another Vpmify process to release the core's
-// lock stops only once it gets the lock, as the core waits without a
-// context.
+// lock is not stopped while it waits, as the core waits without a context;
+// once it gets the lock, adding, updating and pulling stop, while a removal
+// goes on.
 func (s *VpmifyService) Cancel() {
 	s.mu.Lock()
 	s.initOps()

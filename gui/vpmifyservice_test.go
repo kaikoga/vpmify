@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -99,6 +100,53 @@ func TestCancelLetsAnOperationThatFinishesSucceed(t *testing.T) {
 	close(release)
 	if err := <-done; err != nil {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// A failure that came before the cancel, or that an operation not watching
+// its context meets after it, is still reported.
+func TestCancelKeepsFailuresOfTheirOwn(t *testing.T) {
+	real := errors.New("upstream is broken")
+	for name, fn := range map[string]func(ctx context.Context) error{
+		"joined with the cancel": func(ctx context.Context) error {
+			<-ctx.Done()
+			return errors.Join(fmt.Errorf("a: %w", real), fmt.Errorf("b: %w", context.Cause(ctx)))
+		},
+		"wrapping a join": func(ctx context.Context) error {
+			<-ctx.Done()
+			return fmt.Errorf("kit: %w", errors.Join(real, ctx.Err()))
+		},
+		"not watching the context": func(ctx context.Context) error {
+			<-ctx.Done()
+			return real
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := &VpmifyService{}
+			started := make(chan struct{})
+			done := make(chan error)
+			go func() {
+				done <- s.run(context.Background(), func(ctx context.Context) error {
+					close(started)
+					return fn(ctx)
+				})
+			}()
+			<-started
+			s.Cancel()
+			if err := <-done; !errors.Is(err, real) {
+				t.Errorf("err = %v", err)
+			}
+		})
+	}
+}
+
+func TestOnlyCanceled(t *testing.T) {
+	canceled := fmt.Errorf("GET x: %w", context.Canceled)
+	if !onlyCanceled(errors.Join(fmt.Errorf("kit: %w", canceled), context.Canceled)) {
+		t.Error("cancels alone are not only canceled")
+	}
+	if onlyCanceled(errors.New("context canceled")) {
+		t.Error("an error that only reads like the cancel is canceled")
 	}
 }
 
