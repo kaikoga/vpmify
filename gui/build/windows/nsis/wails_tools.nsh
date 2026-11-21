@@ -254,8 +254,12 @@ RequestExecutionLevel "${REQUEST_EXECUTION_LEVEL}"
 
 !macro wails.associateCustomProtocols
     ; Create custom protocols associations
-    
-      !insertmacro CUSTOM_PROTOCOL_ASSOCIATE "vpmify" "Vpmify recipe link" "$INSTDIR\${PRODUCT_EXECUTABLE},0" "$INSTDIR\${PRODUCT_EXECUTABLE} $\"%1$\""
+    ; The executable's path is quoted, unlike in Wails' template, so that a
+    ; path with spaces cannot run another executable found at its first
+    ; word. `wails3 task common:update:build-assets` writes the template
+    ; back, so quote it again after running it.
+
+      !insertmacro CUSTOM_PROTOCOL_ASSOCIATE "vpmify" "Vpmify recipe link" "$INSTDIR\${PRODUCT_EXECUTABLE},0" "$\"$INSTDIR\${PRODUCT_EXECUTABLE}$\" $\"%1$\""
     
 !macroend
 
