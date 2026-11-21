@@ -72,14 +72,14 @@ func NewGitHub(s *recipe.Source, client *fetch.Client, cacheDir string) (*GitHub
 	}
 	return &GitHub{
 		Owner: owner, Repo: repo,
-		Packages:           pkgs,
-		TagVersion:         s.TagVersionOf,
-		AcceptTag:          s.AcceptsTag,
-		Client:             client,
-		CacheDir:           cacheDir,
-		GitBase:            "https://github.com",
-		RawBase:            "https://raw.githubusercontent.com",
-		CodeloadBase:       "https://codeload.github.com",
+		Packages:     pkgs,
+		TagVersion:   s.TagVersionOf,
+		AcceptTag:    s.AcceptsTag,
+		Client:       client,
+		CacheDir:     cacheDir,
+		GitBase:      "https://github.com",
+		RawBase:      "https://raw.githubusercontent.com",
+		CodeloadBase: "https://codeload.github.com",
 	}, nil
 }
 
