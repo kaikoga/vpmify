@@ -80,6 +80,46 @@ func TestReconcile(t *testing.T) {
 	}
 }
 
+func TestUpdate(t *testing.T) {
+	base := t.TempDir()
+	owned := filepath.Join(base, "Vpmify", "packages")
+	foreign := filepath.Join(base, "mine", "pkg")
+	other := filepath.Join(owned, "a", "0.1.0")
+	gone := filepath.Join(owned, "a", "1.0.0")
+	inside := filepath.Join(owned, "b", "1.0.0")
+	add := filepath.Join(owned, "a", "2.0.0")
+	p := writeSettings(t, base, `{"userPackageFolders": [`+quote(foreign)+`, `+quote(other)+`, `+quote(gone)+`, `+quote(inside)+`]}`)
+
+	// Only the named folders and what is inside them change; a folder
+	// outside Owned is never removed.
+	r := &Reconciler{Path: p, Owned: owned}
+	change, err := r.Update([]string{add}, []string{gone, filepath.Join(owned, "b"), foreign})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(change.Added, []string{add}) || !reflect.DeepEqual(change.Removed, []string{gone, inside}) {
+		t.Errorf("change = %+v", change)
+	}
+	if got, want := folders(t, p), []string{foreign, other, add}; !reflect.DeepEqual(got, want) {
+		t.Errorf("folders = %v, want %v", got, want)
+	}
+	got, err := r.Registered()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{other, add}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Registered = %v, want %v", got, want)
+	}
+
+	change, err = r.Update([]string{add}, []string{gone})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !change.Empty() {
+		t.Errorf("second change = %+v", change)
+	}
+}
+
 func TestReconcileCreatesKey(t *testing.T) {
 	base := t.TempDir()
 	owned := filepath.Join(base, "Vpmify", "packages")

@@ -101,8 +101,8 @@ func (s *Settings) Save() error {
 	return fsutil.WriteFileAtomic(s.path, out, perm)
 }
 
-// Reconciler brings the folders under Owned in settings.json in line with
-// Want, leaving every other folder alone.
+// Reconciler changes the folders under Owned in settings.json, leaving every
+// other folder alone.
 type Reconciler struct {
 	Path string
 	// Owned is the store root. Only folders under it are Vpmify's.
@@ -129,9 +129,68 @@ func (c Change) Empty() bool { return len(c.Added) == 0 && len(c.Removed) == 0 }
 // folder under Owned. When the change is lost to a concurrent write, it
 // tries once more.
 func (r *Reconciler) Reconcile(want []string) (Change, error) {
+	wantSet := cleanSet(want)
+	return r.run(edit{add: want, drop: func(clean string) bool { return !wantSet[clean] }})
+}
+
+// Update registers the folders in add and unregisters the folders under
+// Owned that are in remove or inside one of them, leaving every other
+// folder as it is. When the change is lost to a concurrent write, it tries
+// once more.
+func (r *Reconciler) Update(add, remove []string) (Change, error) {
+	removeSet := cleanSet(remove)
+	return r.run(edit{add: add, drop: func(clean string) bool {
+		for p := clean; ; {
+			if removeSet[p] {
+				return true
+			}
+			parent := filepath.Dir(p)
+			if parent == p {
+				return false
+			}
+			p = parent
+		}
+	}})
+}
+
+// Registered returns the registered folders under Owned, cleaned.
+func (r *Reconciler) Registered() ([]string, error) {
+	s, err := Load(r.Path)
+	if err != nil {
+		return nil, err
+	}
+	folders, err := s.UserPackageFolders()
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, f := range folders {
+		if clean := filepath.Clean(f); r.Owns(clean) {
+			out = append(out, clean)
+		}
+	}
+	return out, nil
+}
+
+// edit is a change to the folders: the folders in add are registered, and
+// the folders under Owned that drop reports, given cleaned, are not.
+type edit struct {
+	add  []string
+	drop func(clean string) bool
+}
+
+func cleanSet(paths []string) map[string]bool {
+	out := map[string]bool{}
+	for _, p := range paths {
+		out[filepath.Clean(p)] = true
+	}
+	return out
+}
+
+func (r *Reconciler) run(e edit) (Change, error) {
 	var total Change
 	for attempt := 0; attempt < 2; attempt++ {
-		change, err := r.apply(want)
+		change, err := r.apply(e)
 		if err != nil {
 			return total, err
 		}
@@ -146,7 +205,7 @@ func (r *Reconciler) Reconcile(want []string) (Change, error) {
 		if r.afterSave != nil {
 			r.afterSave()
 		}
-		ok, err := r.matches(want)
+		ok, err := r.matches(e)
 		if err != nil {
 			return total, err
 		}
@@ -164,7 +223,7 @@ func (r *Reconciler) logf(format string, args ...any) {
 	}
 }
 
-func (r *Reconciler) apply(want []string) (Change, error) {
+func (r *Reconciler) apply(e edit) (Change, error) {
 	var change Change
 	s, err := Load(r.Path)
 	if err != nil {
@@ -174,15 +233,11 @@ func (r *Reconciler) apply(want []string) (Change, error) {
 	if err != nil {
 		return change, err
 	}
-	wantSet := map[string]bool{}
-	for _, w := range want {
-		wantSet[filepath.Clean(w)] = true
-	}
 	present := map[string]bool{}
 	var next []string
 	for _, f := range current {
 		clean := filepath.Clean(f)
-		if r.Owns(clean) && !wantSet[clean] {
+		if r.Owns(clean) && e.drop(clean) {
 			change.Removed = append(change.Removed, f)
 			continue
 		}
@@ -192,7 +247,7 @@ func (r *Reconciler) apply(want []string) (Change, error) {
 		present[clean] = true
 		next = append(next, f)
 	}
-	for _, w := range want {
+	for _, w := range e.add {
 		clean := filepath.Clean(w)
 		if present[clean] {
 			continue
@@ -210,7 +265,7 @@ func (r *Reconciler) apply(want []string) (Change, error) {
 	return change, s.Save()
 }
 
-func (r *Reconciler) matches(want []string) (bool, error) {
+func (r *Reconciler) matches(e edit) (bool, error) {
 	s, err := Load(r.Path)
 	if err != nil {
 		return false, err
@@ -219,19 +274,15 @@ func (r *Reconciler) matches(want []string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	wantSet := map[string]bool{}
-	for _, w := range want {
-		wantSet[filepath.Clean(w)] = true
-	}
 	seen := map[string]bool{}
 	for _, f := range current {
 		clean := filepath.Clean(f)
-		if r.Owns(clean) && !wantSet[clean] {
+		if r.Owns(clean) && e.drop(clean) {
 			return false, nil
 		}
 		seen[clean] = true
 	}
-	for w := range wantSet {
+	for w := range cleanSet(e.add) {
 		if !seen[w] {
 			return false, nil
 		}
