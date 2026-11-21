@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"reflect"
 	"slices"
@@ -80,6 +81,33 @@ func TestCanceledPullRegistersWhatItBuilt(t *testing.T) {
 	}
 	if strings.Contains(f.log.String(), "up to date") {
 		t.Errorf("a canceled pull said it was up to date:\n%s", f.log)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+// The CLI's Ctrl-C cancels with a cause of its own, while net/http's HTTP/2
+// transport fails with the context's plain error.
+func TestPullCanceledWithACauseSaysWhyOnce(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	if _, err := f.app.Add(context.Background(), f.writeRecipe("")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	f.app.Client.HTTP.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		cancel(errors.New("interrupt signal received"))
+		return nil, req.Context().Err()
+	})
+	res, err := f.app.Pull(ctx, nil, PullOptions{})
+	if err == nil {
+		t.Error("no error from a canceled pull")
+	}
+	if res == nil || len(res.Errors) != 1 {
+		t.Errorf("result = %+v, want one error", res)
 	}
 }
 

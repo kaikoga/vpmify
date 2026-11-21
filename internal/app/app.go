@@ -211,9 +211,11 @@ func (f *failures) err() error { return errors.Join(f.errs...) }
 
 // stopped records why ctx was canceled, so that a command cut short does not
 // look done when it stopped between recipes, where nothing failed. A
-// failure that already says why is enough.
+// failure that already says why is enough, whether it carries the cause
+// or, as net/http's HTTP/2 transport returns, the plain context.Canceled.
 func (f *failures) stopped(ctx context.Context) {
-	if ctx.Err() != nil && !errors.Is(f.err(), context.Cause(ctx)) {
+	err := f.err()
+	if ctx.Err() != nil && !errors.Is(err, context.Cause(ctx)) && !errors.Is(err, context.Canceled) {
 		f.add("", context.Cause(ctx))
 	}
 }
