@@ -78,7 +78,13 @@ func ExtractTarGz(archive, dest, subpath string) (Result, error) {
 		if path.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, "../") {
 			return res, fmt.Errorf("%s: entry %q escapes the package", archive, hdr.Name)
 		}
-		target := filepath.Join(dest, filepath.FromSlash(rel))
+		// Localize, not FromSlash: on Windows a backslash in the name is also a
+		// separator, and the check above sees only slashes.
+		local, err := filepath.Localize(rel)
+		if err != nil {
+			return res, fmt.Errorf("%s: entry %q escapes the package", archive, hdr.Name)
+		}
+		target := filepath.Join(dest, local)
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0o755); err != nil {

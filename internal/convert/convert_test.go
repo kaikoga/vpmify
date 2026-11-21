@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -84,6 +85,23 @@ func TestExtractRejectsEscape(t *testing.T) {
 	}))
 	if _, err := ExtractTarGz(archive, filepath.Join(t.TempDir(), "out"), ""); err == nil {
 		t.Error("no error for an entry outside the package")
+	}
+}
+
+func TestExtractRejectsBackslashEscape(t *testing.T) {
+	archive := writeArchive(t, testutil.TarGz(map[string]string{
+		`package/a\..\..\..\evil.txt`: "x",
+	}))
+	root := t.TempDir()
+	dest := filepath.Join(root, "work", "build", "package")
+	_, err := ExtractTarGz(archive, dest, "")
+	if runtime.GOOS == "windows" && err == nil {
+		t.Error("no error for an entry that leaves the package through backslashes")
+	}
+	for _, f := range listFiles(t, root) {
+		if !strings.HasPrefix(f, "work/build/package/") {
+			t.Errorf("wrote %s outside the package", f)
+		}
 	}
 }
 
