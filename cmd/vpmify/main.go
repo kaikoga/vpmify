@@ -30,7 +30,8 @@ const usage = `usage: vpmify <command> [--json] [arguments]
 recipes and their version lists:
   recipe add <recipe.json|URL>...
                                add recipes and read their version lists
-  recipe update [<id>...]      read the version lists from upstream again;
+  recipe update [<id>...]      read the recipes added from URLs again from
+                               them, and the version lists from upstream;
                                converts nothing
   recipe versions [--all] [--unity <version>] <id>[/<package>]
                                show the stable versions in the version lists of

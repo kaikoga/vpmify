@@ -795,6 +795,144 @@ func TestAddDraftsSavesTheRecipeAsRead(t *testing.T) {
 	}
 }
 
+const recipeURL = registryURL + "/recipes/kit.json"
+
+// serveRecipe makes the fake registry also serve *content at recipeURL,
+// counting the requests in *reads. A nil *content is a 404.
+func (f *fixture) serveRecipe(content *string, reads *int) {
+	f.reg.handler = func(w http.ResponseWriter, req *http.Request) {
+		if registryURL+req.URL.Path == recipeURL {
+			*reads++
+			if *content == "" {
+				http.NotFound(w, req)
+				return
+			}
+			_, _ = w.Write([]byte(*content))
+			return
+		}
+		f.reg.serve(w, req)
+	}
+}
+
+// versionCount returns how many versions recipe kit's version list has.
+func (f *fixture) versionCount() int {
+	f.t.Helper()
+	list, err := f.app.Versions("kit", VersionsOptions{All: true})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return len(list.Packages[0].Versions)
+}
+
+func TestUpdateReadsRecipeAgainFromURL(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	f.reg.add("2.0.0", "2021.3")
+	ctx := context.Background()
+	content := npmRecipe("kit", registryURL, pkgName, `, "versions": ">=2.0.0"`)
+	reads := 0
+	f.serveRecipe(&content, &reads)
+
+	if _, err := f.app.Add(ctx, recipeURL); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if reads != 1 {
+		t.Errorf("reads after add = %d, want 1", reads)
+	}
+	if got := f.versionCount(); got != 1 {
+		t.Errorf("versions after add = %d, want 1", got)
+	}
+
+	content = npmRecipe("kit", registryURL, pkgName, `, "versions": ">=1.0.0"`)
+	res, err := f.app.Update(ctx, nil)
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	if reads != 2 {
+		t.Errorf("reads after update = %d, want 2", reads)
+	}
+	if got := f.versionCount(); got != 2 {
+		t.Errorf("versions after update = %d, want 2", got)
+	}
+	if w := res.Recipes[0].Warnings; len(w) != 0 {
+		t.Errorf("warnings = %v", w)
+	}
+	saved, err := os.ReadFile(f.app.recipePath("kit"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(saved) != content {
+		t.Errorf("saved recipe = %s", saved)
+	}
+}
+
+func TestUpdateKeepsRecipeThatCannotBeReadAgain(t *testing.T) {
+	for _, tc := range []struct {
+		name, content, warning string
+	}{
+		{"missing", "", "404"},
+		{"broken", "{", "could not read"},
+		{"other id", npmRecipe("other", registryURL, pkgName, `, "versions": ">=1.0.0"`), `its id is now "other"`},
+		{"newer format", `{"vpmifyFormat": 99, "id": "kit"}`, "newer Vpmify"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.reg.add("1.0.0", "2021.3")
+			f.reg.add("2.0.0", "2021.3")
+			ctx := context.Background()
+			added := npmRecipe("kit", registryURL, pkgName, `, "versions": ">=2.0.0"`)
+			content := added
+			reads := 0
+			f.serveRecipe(&content, &reads)
+			if _, err := f.app.Add(ctx, recipeURL); err != nil {
+				t.Fatal(err, f.log)
+			}
+
+			content = tc.content
+			res, err := f.app.Update(ctx, nil)
+			if err != nil {
+				t.Fatal(err, f.log)
+			}
+			if reads != 2 {
+				t.Errorf("reads = %d, want 2", reads)
+			}
+			if w := res.Recipes[0].Warnings; len(w) != 1 || !strings.Contains(w[0], tc.warning) {
+				t.Errorf("warnings = %v, want one with %q", w, tc.warning)
+			}
+			if got := f.versionCount(); got != 1 {
+				t.Errorf("versions = %d, want 1 from the saved recipe", got)
+			}
+			saved, err := os.ReadFile(f.app.recipePath("kit"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(saved) != added {
+				t.Errorf("saved recipe = %s", saved)
+			}
+		})
+	}
+}
+
+func TestUpdateDoesNotReadRecipeFromFileAgain(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	f.reg.add("2.0.0", "2021.3")
+	ctx := context.Background()
+	p := f.writeRecipe(`, "versions": ">=2.0.0"`)
+	if _, err := f.app.Add(ctx, p); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if err := os.WriteFile(p, []byte(npmRecipe("kit", registryURL, pkgName, `, "versions": ">=1.0.0"`)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.app.Update(ctx, nil); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if got := f.versionCount(); got != 1 {
+		t.Errorf("versions = %d, want 1 from the saved recipe", got)
+	}
+}
+
 func TestAddDraftsRefusesDraftsNotRead(t *testing.T) {
 	f := newFixture(t)
 	if _, err := f.app.AddDrafts(context.Background(), []Draft{{ID: "kit"}}); err == nil {

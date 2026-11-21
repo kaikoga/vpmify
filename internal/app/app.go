@@ -5,6 +5,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -119,11 +120,16 @@ type DraftPackage struct {
 	Versions string `json:"versions,omitempty"`
 }
 
+// isURLRef reports whether a recipe reference names a URL rather than a file.
+func isURLRef(ref string) bool {
+	return strings.HasPrefix(ref, "https://") || strings.HasPrefix(ref, "http://")
+}
+
 func (a *App) readRecipeRef(ctx context.Context, ref string) (Draft, error) {
 	var data []byte
 	var err error
 	origin := ref
-	if strings.HasPrefix(ref, "https://") || strings.HasPrefix(ref, "http://") {
+	if isURLRef(ref) {
 		data, err = a.Client.GetBytes(ctx, ref)
 	} else {
 		if abs, aerr := filepath.Abs(ref); aerr == nil {
@@ -259,7 +265,8 @@ func (a *App) AddDrafts(ctx context.Context, drafts []Draft) (*AddResult, error)
 		if err := st.Save(a.Layout.State()); err != nil {
 			return err
 		}
-		up, err := a.update(ctx, addedIDs)
+		// The recipes were read just now, so they are not read again.
+		up, err := a.update(ctx, addedIDs, false)
 		if up != nil {
 			res.UpdateResult = *up
 		}
@@ -283,8 +290,10 @@ type UpdateResult struct {
 type RecipeUpdate struct {
 	ID       string          `json:"id"`
 	Packages []PackageUpdate `json:"packages"`
-	// Warnings say what the recipe needs updating for, though the version
-	// lists were read (Git tags that read as one version).
+	// Warnings say what went wrong without stopping the version lists from
+	// being read: Git tags that read as one version, which the recipe needs
+	// updating for, and a recipe added from a URL that could not be read
+	// again from it, so the saved one was used.
 	Warnings []string `json:"warnings"`
 }
 
@@ -301,21 +310,22 @@ type PackageUpdate struct {
 	New []string `json:"new"`
 }
 
-// Update reads the version lists of the named recipes (all recipes when
-// ids is empty) from upstream and keeps them for Pull and Versions. It
-// downloads no archive and changes no available version. The result is nil
-// when Update stopped before reading any list.
+// Update reads the named recipes (all recipes when ids is empty) again from
+// the URLs they were added from, then reads their version lists from
+// upstream and keeps them for Pull and Versions. A recipe added from a file
+// is not read again. It downloads no archive and changes no available
+// version. The result is nil when Update stopped before reading any list.
 func (a *App) Update(ctx context.Context, ids []string) (*UpdateResult, error) {
 	var res *UpdateResult
 	err := a.withLock(func() error {
 		var err error
-		res, err = a.update(ctx, ids)
+		res, err = a.update(ctx, ids, true)
 		return err
 	})
 	return res, err
 }
 
-func (a *App) update(ctx context.Context, ids []string) (*UpdateResult, error) {
+func (a *App) update(ctx context.Context, ids []string, reread bool) (*UpdateResult, error) {
 	if len(ids) == 0 {
 		all, err := a.recipeIDs()
 		if err != nil {
@@ -326,10 +336,27 @@ func (a *App) update(ctx context.Context, ids []string) (*UpdateResult, error) {
 		}
 		ids = all
 	}
+	origins := map[string]string{}
+	if reread {
+		st, err := state.Load(a.Layout.State())
+		if err != nil {
+			return nil, err
+		}
+		for id, rs := range st.Recipes {
+			origins[id] = rs.Origin
+		}
+	}
 	res := &UpdateResult{Recipes: []RecipeUpdate{}, Errors: []Failure{}}
 	fails := failures{list: &res.Errors}
 	for _, id := range ids {
+		var rereadWarnings []string
+		if origin := origins[id]; isURLRef(origin) {
+			rereadWarnings = a.rereadRecipe(ctx, id, origin)
+		}
 		u, err := a.updateRecipe(ctx, id)
+		if len(rereadWarnings) > 0 {
+			u.Warnings = append(rereadWarnings, u.Warnings...)
+		}
 		if len(u.Packages) > 0 {
 			res.Recipes = append(res.Recipes, u)
 		}
@@ -338,6 +365,46 @@ func (a *App) update(ctx context.Context, ids []string) (*UpdateResult, error) {
 		}
 	}
 	return res, fails.err()
+}
+
+// rereadRecipe reads recipe id again from origin, the URL it was added from,
+// and saves it in place of the saved one without asking, as vrc-get does
+// with a repository's listing: the user trusts the recipe's author, not only
+// the recipe they saw when adding it. When the recipe cannot be read or
+// would not do, the saved one stays and the returned warnings say why.
+func (a *App) rereadRecipe(ctx context.Context, id, origin string) []string {
+	// Without a saved recipe there is no recipe to read again; updateRecipe
+	// says so.
+	saved, err := os.ReadFile(a.recipePath(id))
+	if err != nil {
+		return nil
+	}
+	warn := func(format string, args ...any) []string {
+		w := fmt.Sprintf("could not read the recipe again from %s, so the saved one is used: ", origin) + fmt.Sprintf(format, args...)
+		a.logf("%s: warning: %s", id, w)
+		return []string{w}
+	}
+	data, err := a.Client.GetBytes(ctx, origin)
+	if err != nil {
+		return warn("%v", err)
+	}
+	r, err := recipe.Parse(data)
+	if err != nil {
+		return warn("%v", err)
+	}
+	// The store, the version lists and the state are kept by id, so a
+	// recipe that now has another id is not this one.
+	if r.ID != id {
+		return warn("its id is now %q", r.ID)
+	}
+	if bytes.Equal(saved, data) {
+		return nil
+	}
+	if err := fsutil.WriteFileAtomic(a.recipePath(id), data, 0o644); err != nil {
+		return warn("%v", err)
+	}
+	a.logf("%s: the recipe at %s has changed; saved it", id, origin)
+	return nil
 }
 
 // updateRecipe reads the version list of each of recipe id's sources. A
