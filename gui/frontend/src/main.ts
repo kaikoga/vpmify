@@ -50,9 +50,15 @@ function headRow(table: HTMLTableElement, keys: (Key | null)[]) {
     }
 }
 
+// busy is what the last busy event said; setBusy sets it.
+let busy = false;
+
+// button makes a button, off while busy as setBusy turns off the ones it
+// finds.
 function button(label: string, onClick: () => void): HTMLButtonElement {
     const b = document.createElement("button");
     b.type = "button";
+    b.disabled = busy;
     b.textContent = label;
     b.addEventListener("click", onClick);
     return b;
@@ -192,7 +198,8 @@ async function act(fn: () => Promise<unknown>) {
 // showVersions sets it, and setBusy keeps the button off without one.
 let newestChoosable = false;
 
-function setBusy(busy: boolean) {
+function setBusy(value: boolean) {
+    busy = value;
     spinnerElement.hidden = !busy;
     cancelElement.hidden = !busy;
     for (const b of document.querySelectorAll<HTMLButtonElement>("button")) {
