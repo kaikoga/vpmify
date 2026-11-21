@@ -179,10 +179,7 @@ func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, []string, 
 func (g *GitHub) tags(ctx context.Context) ([]tag, error) {
 	readVersion := g.TagVersion
 	if readVersion == nil {
-		readVersion = func(name string) (semver.Version, bool) {
-			v, err := semver.Parse(strings.TrimPrefix(strings.TrimPrefix(name, "v"), "V"))
-			return v, err == nil
-		}
+		readVersion = recipe.PlainTagVersion
 	}
 	u := fmt.Sprintf("%s/%s/%s.git/info/refs?service=git-upload-pack", g.GitBase, g.Owner, g.Repo)
 	data, err := g.Client.GetBytes(ctx, u)

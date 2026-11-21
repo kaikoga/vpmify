@@ -6,9 +6,16 @@ func TestParseRejects(t *testing.T) {
 	// The version names a folder in the store, so identifiers keep to the
 	// characters SemVer allows and never make a path.
 	for _, s := range []string{"", "1", "1.2", "1.2.3.4", "01.2.3", "1.2.3-", "1.2.3+", "1.2.3-a..b", "v1.2.3", "1.x.3",
-		"1.0.0+../../x", "1.0.0-a/b", "1.0.0+a\\b", "1.0.0-a_b", "1.0.0+a..b"} {
+		"1.0.0+../../x", "1.0.0-a/b", "1.0.0+a\\b", "1.0.0-a_b", "1.0.0+a..b", "1.0.0-01", "1.0.0-rc.00"} {
 		if _, err := Parse(s); err == nil {
 			t.Errorf("Parse(%q) succeeded", s)
+		}
+	}
+	// A leading zero is fine in an identifier that is not a number, and in
+	// build metadata.
+	for _, s := range []string{"1.0.0-0", "1.0.0-0a", "1.0.0-rc.0", "1.0.0+01", "1.0.0-1+001"} {
+		if _, err := Parse(s); err != nil {
+			t.Errorf("Parse(%q): %v", s, err)
 		}
 	}
 }

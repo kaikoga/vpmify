@@ -43,6 +43,13 @@ func Parse(s string) (Version, error) {
 			if err := checkIdentifier(id); err != nil {
 				return Version{}, fmt.Errorf("invalid version %q: prerelease: %w", s, err)
 			}
+			// SemVer forbids them, and 1.0.0-01 would compare equal to
+			// 1.0.0-1 with another text. Refused before recipes are out, as it
+			// cannot be refused later without breaking them (kaikoga
+			// 2026-11-21). Build metadata may have them.
+			if len(id) > 1 && id[0] == '0' && strings.Trim(id, "0123456789") == "" {
+				return Version{}, fmt.Errorf("invalid version %q: prerelease: number %q has a leading zero", s, id)
+			}
 		}
 	}
 	parts := strings.Split(rest, ".")

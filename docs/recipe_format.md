@@ -175,7 +175,7 @@ A value Vpmify cannot read as a range, such as `^1.0.0`, is written into `packag
 Versions are [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html): `MAJOR.MINOR.PATCH`, with an optional prerelease after `-` and optional build metadata after `+`.
 
 - All three numbers are written, without leading zeros: `1.2.3`, not `1.2` or `01.2.3`.
-- Prerelease and build identifiers are made of `0-9`, `A-Z`, `a-z` and `-`, separated by `.`.
+- Prerelease and build identifiers are made of `0-9`, `A-Z`, `a-z` and `-`, separated by `.`. A prerelease identifier made only of digits has no leading zero (`1.0.0-01` is not a version); build metadata may have them.
 - Versions are compared in SemVer order, in which build metadata is ignored.
 
 ## Ranges

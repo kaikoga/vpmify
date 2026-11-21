@@ -62,9 +62,10 @@ func TestTagVersionOf(t *testing.T) {
 		t.Errorf("empty group: %v, want 0.14.30", v)
 	}
 
-	// Without a rule, a leading "v" is dropped and other names are not read.
+	// Without a rule, one leading "v" or "V" is dropped and other names are
+	// not read.
 	s, _ = onlyPackage(t, gitRecipe(""))
-	for tag, want := range map[string]bool{"v1.2.3": true, "1.2.3": true, "0.15.2.2": false} {
+	for tag, want := range map[string]bool{"v1.2.3": true, "V1.2.3": true, "1.2.3": true, "0.15.2.2": false, "vV1.2.3": false, "vv1.2.3": false} {
 		if _, ok := s.TagVersionOf(tag); ok != want {
 			t.Errorf("no rule %s: ok=%v", tag, ok)
 		}

@@ -176,7 +176,17 @@ func (s *Source) TagVersionOf(name string) (semver.Version, bool) {
 	if s.tagVersion != nil {
 		return s.tagVersion.read(name)
 	}
-	v, err := semver.Parse(strings.TrimPrefix(strings.TrimPrefix(name, "v"), "V"))
+	return PlainTagVersion(name)
+}
+
+// PlainTagVersion reads tag name as a version without a tagVersion rule:
+// the name with one leading "v" or "V" dropped, so that "vV1.2.3" is not
+// read. A name that is not SemVer is not read.
+func PlainTagVersion(name string) (semver.Version, bool) {
+	if strings.HasPrefix(name, "v") || strings.HasPrefix(name, "V") {
+		name = name[1:]
+	}
+	v, err := semver.Parse(name)
 	if err != nil {
 		return semver.Version{}, false
 	}
