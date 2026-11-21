@@ -5,7 +5,7 @@
   "sources": [
     {
       "type": "github",
-      "url": "https://github.com/vrm-c/UniVRM.git",
+      "url": "https://github.com/vrm-c/UniVRM",
       "tags": ">=0.56.0",
       "packages": [
         {
@@ -40,10 +40,10 @@
         {
           "name": "com.vrmc.unigltf",
           "onDemand": true,
-          "versionFromTag": { "tags": "<0.65.2" },
           "paths": [
             { "tags": "<0.81.0", "path": "Assets/UniGLTF" }
           ],
+          "versionFromTag": { "tags": "<0.65.2" },
           "overrides": [
             { "set": { "vpmDependencies": { "com.vrmc.vrmshaders": "={sameTag}" } } }
           ]
@@ -51,8 +51,8 @@
         {
           "name": "com.vrmc.gltf",
           "paths": [
-            { "tags": ">=0.131.0", "path": "Packages/UniGLTF" },
-            { "tags": ">=0.81.0 <0.131.0", "path": "Assets/UniGLTF" }
+            { "tags": ">=0.81.0 <0.131.0", "path": "Assets/UniGLTF" },
+            { "tags": ">=0.131.0", "path": "Packages/UniGLTF" }
           ],
           "overrides": [
             { "versions": "<0.125.0", "set": { "vpmDependencies": { "com.vrmc.vrmshaders": "={sameTag}" } } }
@@ -61,8 +61,8 @@
         {
           "name": "com.vrmc.univrm",
           "paths": [
-            { "tags": ">=0.131.0", "path": "Packages/VRM" },
-            { "tags": "<0.131.0", "path": "Assets/VRM" }
+            { "tags": "<0.131.0", "path": "Assets/VRM" },
+            { "tags": ">=0.131.0", "path": "Packages/VRM" }
           ],
           "overrides": [
             { "versions": "<0.59.0", "set": { "vpmDependencies": { "com.vrmc.vrmshaders": "={sameTag}" } } },
@@ -76,10 +76,10 @@
         {
           "name": "com.vrmc.univrm1",
           "onDemand": true,
-          "versionFromTag": true,
           "paths": [
             { "tags": ">=0.64.0 <0.81.0", "path": "Assets/VRM10" }
           ],
+          "versionFromTag": true,
           "overrides": [
             { "set": { "vpmDependencies": { "com.vrmc.unigltf": "={sameTag}", "com.vrmc.vrmshaders": "={sameTag}" } } }
           ]
@@ -87,8 +87,8 @@
         {
           "name": "com.vrmc.vrm",
           "paths": [
-            { "tags": ">=0.131.0", "path": "Packages/VRM10" },
-            { "tags": ">=0.81.0 <0.131.0", "path": "Assets/VRM10" }
+            { "tags": ">=0.81.0 <0.131.0", "path": "Assets/VRM10" },
+            { "tags": ">=0.131.0", "path": "Packages/VRM10" }
           ],
           "overrides": [
             { "versions": "<0.125.0", "set": { "vpmDependencies": { "com.vrmc.gltf": "={sameTag}", "com.vrmc.vrmshaders": "={sameTag}" } } },

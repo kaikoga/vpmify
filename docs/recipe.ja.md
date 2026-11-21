@@ -136,8 +136,8 @@ github のソースのパッケージには、次の欄も書けます。
 
   ```json
   "paths": [
-    { "tags": ">=0.131.0", "path": "Packages/VRM" },
-    { "tags": "<0.131.0", "path": "Assets/VRM" }
+    { "tags": "<0.131.0", "path": "Assets/VRM" },
+    { "tags": ">=0.131.0", "path": "Packages/VRM" }
   ]
   ```
 

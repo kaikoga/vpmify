@@ -136,8 +136,8 @@ A package of a github source also takes these fields.
 
   ```json
   "paths": [
-    { "tags": ">=0.131.0", "path": "Packages/VRM" },
-    { "tags": "<0.131.0", "path": "Assets/VRM" }
+    { "tags": "<0.131.0", "path": "Assets/VRM" },
+    { "tags": ">=0.131.0", "path": "Packages/VRM" }
   ]
   ```
 

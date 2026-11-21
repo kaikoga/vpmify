@@ -5,7 +5,7 @@
   "sources": [
     {
       "type": "github",
-      "url": "https://github.com/HakuyaLabs/Warudo-Mod-Tool.git",
+      "url": "https://github.com/HakuyaLabs/Warudo-Mod-Tool",
       "tagVersion": {
         "match": "(\\d+)\\.(\\d+)\\.(\\d+)(?:\\.(\\d+))?",
         "version": "{1}.{2}.{3}{4:03}"

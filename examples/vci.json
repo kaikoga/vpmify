@@ -5,7 +5,7 @@
   "sources": [
     {
       "type": "github",
-      "url": "https://github.com/virtual-cast/VCI.git",
+      "url": "https://github.com/virtual-cast/VCI",
       "tags": ">=0.32.0",
       "packages": [
         {
@@ -17,11 +17,11 @@
             },
             {
               "versions": "<0.33.0",
-              "merge": { "vpmDependencies": { "com.vrmc.univrm": "={dependencies}", "com.vrmc.vrmshaders": "={dependencies}", "com.vrmc.unigltf": "={dependencies}" } }
+              "merge": { "vpmDependencies": { "com.vrmc.unigltf": "={dependencies}", "com.vrmc.univrm": "={dependencies}", "com.vrmc.vrmshaders": "={dependencies}" } }
             },
             {
               "versions": ">=0.33.0",
-              "merge": { "vpmDependencies": { "com.vrmc.vrm": "={dependencies}", "com.vrmc.univrm": "={dependencies}", "com.vrmc.gltf": "={dependencies}" } }
+              "merge": { "vpmDependencies": { "com.vrmc.gltf": "={dependencies}", "com.vrmc.univrm": "={dependencies}", "com.vrmc.vrm": "={dependencies}" } }
             },
             {
               "versions": ">=0.33.0 <0.45.0",
@@ -37,7 +37,7 @@
             },
             {
               "versions": ">=0.39.0 <0.41.0",
-              "merge": { "dependencies": { "com.vrmc.vrm": "0.107.2", "com.vrmc.univrm": "0.107.2", "com.vrmc.vrmshaders": "0.107.2", "com.vrmc.gltf": "0.107.2" } }
+              "merge": { "dependencies": { "com.vrmc.gltf": "0.107.2", "com.vrmc.univrm": "0.107.2", "com.vrmc.vrm": "0.107.2", "com.vrmc.vrmshaders": "0.107.2" } }
             }
           ]
         },
