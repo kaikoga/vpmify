@@ -58,7 +58,7 @@ const pkgNeedsBase = `,
 // packages are given as JSON objects.
 func gitRecipe(id, sourceExtra string, packages ...string) string {
 	return fmt.Sprintf(`{
-  "vpmifyFormat": 1, "id": %q,
+  "vpmifyFormat": 1, "displayName": "", "id": %q,
   "sources": [{"type": "github", "url": %q%s, "packages": [%s]}]
 }`, id, monoURL, sourceExtra, strings.Join(packages, ", "))
 }
@@ -635,7 +635,7 @@ func TestUpdateGoesOnPastASourceThatFails(t *testing.T) {
 	f.reg.add("1.0.0", "2021.3")
 	f.app.Client.HTTP.Transport = routeByHost{"github.com": gh, "raw.githubusercontent.com": gh, "codeload.github.com": gh, "registry.test": f.reg}
 	ctx := context.Background()
-	recipe := `{"vpmifyFormat": 1, "id": "two", "sources": [
+	recipe := `{"vpmifyFormat": 1, "displayName": "", "id": "two", "sources": [
   {"type": "github", "url": "` + monoURL + `", "packages": [{"name": "com.example.base", "path": "Packages/Base"}]},
   {"type": "npm", "registry": "` + registryURL + `", "packages": [{"name": "` + pkgName + `"}]}]}`
 	if _, err := f.app.Add(ctx, f.writeFile("two.json", recipe)); err != nil {
@@ -723,7 +723,7 @@ func (f *fixture) staleNPMRecipe() {
 	gh := monorepo("1.0.0")
 	f.app.Client.HTTP.Transport = routeByHost{"github.com": gh, "raw.githubusercontent.com": gh, "codeload.github.com": gh, "registry.test": f.reg}
 	f.reg.down = true
-	recipe := `{"vpmifyFormat": 1, "id": "two", "sources": [
+	recipe := `{"vpmifyFormat": 1, "displayName": "", "id": "two", "sources": [
   {"type": "github", "url": "` + monoURL + `", "packages": [
     {"name": "com.example.base", "path": "Packages/Base"},
     {"name": "com.example.pkg", "path": "Packages/Pkg", "overrides": [{"set": {"vpmDependencies": {"com.example.base": "={sameTag}"}}}]}]},
@@ -827,7 +827,7 @@ func TestVersionFromTagIsWrittenIntoPackageJSON(t *testing.T) {
 	f.app.Client.HTTP.Transport = gh
 	ctx := context.Background()
 	recipe := fmt.Sprintf(`{
-  "vpmifyFormat": 1, "id": "mono",
+  "vpmifyFormat": 1, "displayName": "", "id": "mono",
   "sources": [{"type": "github", "url": %q,
     "tagVersion": {"match": "(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "version": "{1}.{2}.{3}{4:03}"},
     "packages": [{"name": "com.example.pkg", "path": "Packages/Pkg", "versionFromTag": true}]}]
@@ -864,7 +864,7 @@ func TestTagsOfOneVersionWarn(t *testing.T) {
 	gh.Tag("0.15.2.2", monoTag("1.0.0", "0.15.2"))
 	f.app.Client.HTTP.Transport = gh
 	recipe := fmt.Sprintf(`{
-  "vpmifyFormat": 1, "id": "mono",
+  "vpmifyFormat": 1, "displayName": "", "id": "mono",
   "sources": [{"type": "github", "url": %q,
     "tagVersion": {"match": "(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)", "version": "{1}.{2}.{3}"},
     "packages": [{"name": "com.example.pkg", "path": "Packages/Pkg"}]}]

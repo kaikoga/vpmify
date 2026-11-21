@@ -177,7 +177,7 @@ func TestDoctorReportsWhatItCannotFix(t *testing.T) {
 	if err := os.Remove(f.app.recipePath("kit")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(f.app.recipePath("broken"), []byte(`{"vpmifyFormat": 1, "id": "broken"}`), 0o644); err != nil {
+	if err := os.WriteFile(f.app.recipePath("broken"), []byte(`{"vpmifyFormat": 1, "displayName": "", "id": "broken"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	problems, err := f.app.Doctor(true)

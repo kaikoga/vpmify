@@ -44,7 +44,7 @@ type Recipe struct {
 	// of VPM repositories are; Vpmify does not check the form.
 	ID string `json:"id"`
 	// DisplayName is the name people read, as package.json has one beside
-	// its name.
+	// its name. Parse refuses a recipe without one.
 	DisplayName string    `json:"displayName,omitempty"`
 	Sources     []*Source `json:"sources"`
 }
@@ -243,6 +243,17 @@ func Parse(data []byte) (*Recipe, error) {
 	}
 	if err := r.check(); err != nil {
 		return nil, err
+	}
+	// displayName must be there, as VPM's package.json requires one, but an
+	// empty one is taken: it harms nothing that reads the recipe.
+	var named struct {
+		DisplayName *string `json:"displayName"`
+	}
+	if err := jsonv2.Unmarshal(data, &named); err != nil {
+		return nil, err
+	}
+	if named.DisplayName == nil {
+		return nil, fmt.Errorf("recipe has no displayName")
 	}
 	return &r, nil
 }
