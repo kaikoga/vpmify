@@ -249,8 +249,14 @@ async function showPending() {
     pendingSection.hidden = pending.length === 0;
 }
 
+// recipeNames maps the recipes' ids to their display names, for the lists
+// that name a recipe by id alone. showRecipes fills it before showAvailable
+// reads it.
+let recipeNames = new Map<string, string>();
+
 async function showRecipes() {
     const recipes = (await VpmifyService.Recipes()) ?? [];
+    recipeNames = new Map(recipes.filter((r) => r.displayName).map((r) => [r.id, r.displayName!]));
     recipesElement.replaceChildren();
     for (const r of recipes) {
         const row = recipesElement.insertRow();
@@ -366,7 +372,7 @@ async function showAvailable() {
         for (const e of entries) {
             const row = entriesElement.insertRow();
             row.title = e.path;
-            cell(row, e.recipe);
+            cell(row, nameLabel(e.recipe, recipeNames.get(e.recipe)));
             cell(row, nameLabel(e.package, e.displayName));
             cell(row, e.version);
             cell(row, e.unity ?? "");
