@@ -1,5 +1,7 @@
-// Package state keeps the record of the versions Vpmify has made available:
-// converted into the store and registered with ALCOM.
+// Package state keeps what Vpmify cannot read from the store: where each
+// recipe was added from, and how each version in the store was built. Which
+// versions are available is what ALCOM's settings.json lists, and where a
+// version is and what its package.json says are read from the store.
 // It lives in Vpmify's own folder, not in ALCOM's settings.json, because the
 // official VCC may not keep fields it does not know.
 package state
@@ -16,8 +18,10 @@ import (
 	"github.com/kaikoga/vpmify/internal/semver"
 )
 
-// Format is the version of the state file layout.
-const Format = 1
+// Format is the version of the state file layout. Format 1 also kept each
+// version's folder and "unity", which Load drops: the folder follows from
+// the store, and "unity" is in the version's package.json.
+const Format = 2
 
 // State is the whole record.
 type State struct {
@@ -25,23 +29,23 @@ type State struct {
 	Recipes map[string]*RecipeState `json:"recipes"`
 }
 
-// RecipeState is what Vpmify made available for one recipe.
+// RecipeState is what Vpmify keeps for one recipe.
 type RecipeState struct {
 	// Origin is where the recipe was added from (a file path or URL).
 	Origin   string                   `json:"origin,omitempty"`
 	Packages map[string]*PackageState `json:"packages"`
 }
 
-// PackageState is the versions available for one package name.
+// PackageState is the versions of one package name in the store.
 type PackageState struct {
 	Versions map[string]*VersionState `json:"versions"`
 }
 
-// VersionState is one available version.
+// VersionState is one version in the store.
 type VersionState struct {
-	Path        string `json:"path"`
+	// Fingerprint says how the version was built, so that it is built
+	// again when the recipe now builds it differently.
 	Fingerprint string `json:"fingerprint"`
-	Unity       string `json:"unity,omitempty"`
 }
 
 // New returns an empty state.
@@ -62,9 +66,11 @@ func Load(path string) (*State, error) {
 	if err := json.Unmarshal(data, s); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	if s.Format != Format {
+	// encoding/json leaves out the fields of format 1 that are gone.
+	if s.Format != Format && s.Format != 1 {
 		return nil, fmt.Errorf("%s: unknown format %d", path, s.Format)
 	}
+	s.Format = Format
 	if s.Recipes == nil {
 		s.Recipes = map[string]*RecipeState{}
 	}
@@ -106,9 +112,9 @@ func (r *RecipeState) Package(name string) *PackageState {
 	return p
 }
 
-// AvailableVersions returns the versions of package name that recipe id
-// made available, without creating records.
-func (s *State) AvailableVersions(id, name string) map[string]*VersionState {
+// StoredVersions returns the versions of package name that recipe id has
+// in the store, without creating records.
+func (s *State) StoredVersions(id, name string) map[string]*VersionState {
 	r, ok := s.Recipes[id]
 	if !ok {
 		return nil
@@ -118,20 +124,6 @@ func (s *State) AvailableVersions(id, name string) map[string]*VersionState {
 		return nil
 	}
 	return p.Versions
-}
-
-// AllPaths returns the folder of every available version, sorted.
-func (s *State) AllPaths() []string {
-	var out []string
-	for _, r := range s.Recipes {
-		for _, p := range r.Packages {
-			for _, v := range p.Versions {
-				out = append(out, v.Path)
-			}
-		}
-	}
-	sort.Strings(out)
-	return out
 }
 
 // SortedVersions returns the version keys of p, oldest first. Keys that are

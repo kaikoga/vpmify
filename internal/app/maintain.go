@@ -30,12 +30,11 @@ func (a *App) forget(st *state.State, dirs []string) (change alcom.Change, saved
 	if err := st.Save(a.Layout.State()); err != nil {
 		return change, false, err
 	}
-	gone := a.unused(st, dirs)
-	change, err = a.updateRegistration(nil, gone)
+	change, err = a.updateRegistration(nil, dirs)
 	if err != nil {
 		return change, true, err
 	}
-	for _, d := range gone {
+	for _, d := range dirs {
 		if err := a.removeFromStore(d); err != nil {
 			return change, true, err
 		}
@@ -43,24 +42,15 @@ func (a *App) forget(st *state.State, dirs []string) (change alcom.Change, saved
 	return change, true, nil
 }
 
-// unused returns the folders among dirs that are in the store and that no
-// record of st points to, which may be unregistered and deleted. A record
-// may point outside the store after the user moved Vpmify's data, and a
-// state.json edited by hand may have two records share a folder.
-func (a *App) unused(st *state.State, dirs []string) []string {
-	still := map[string]bool{}
-	for _, p := range st.AllPaths() {
-		still[filepath.Clean(p)] = true
-	}
+// inStore returns the folders among dirs that are in the store, which
+// ALCOM may list.
+func (a *App) inStore(dirs []string) []string {
 	owner := a.reconciler()
 	var out []string
 	for _, d := range dirs {
-		clean := filepath.Clean(d)
-		if !owner.Owns(clean) || still[clean] {
-			a.logf("leaving %s alone: it is outside the store or another recipe uses it", d)
-			continue
+		if owner.Owns(filepath.Clean(d)) {
+			out = append(out, d)
 		}
-		out = append(out, d)
 	}
 	return out
 }
@@ -85,7 +75,7 @@ func (a *App) Clean(apply bool) (entries []Entry, changed bool, err error) {
 			for _, name := range state.SortedKeys(rs.Packages) {
 				ps := rs.Packages[name]
 				for _, v := range ps.SortedVersions() {
-					out = append(out, newEntry(id, name, v, ps.Versions[v].Path))
+					out = append(out, newEntry(id, name, v, a.Layout.PackageDir(id, name, v)))
 				}
 			}
 		}
@@ -203,12 +193,12 @@ func (a *App) Doctor(fix bool) ([]Problem, error) {
 			if !hasRecipe[id] {
 				// package remove --all leaves the record of a gone recipe,
 				// as it leaves every recipe it removes versions from.
-				available := 0
+				stored := 0
 				for _, ps := range rs.Packages {
-					available += len(ps.Versions)
+					stored += len(ps.Versions)
 				}
-				if available > 0 {
-					add(&Problem{Message: fmt.Sprintf("%s: versions are available but the recipe is gone; `vpmify recipe remove %s` deletes them", id, id)})
+				if stored > 0 {
+					add(&Problem{Message: fmt.Sprintf("%s: versions are in the store but the recipe is gone; `vpmify recipe remove %s` deletes them", id, id)})
 				} else {
 					add(&Problem{Message: fmt.Sprintf("%s: the recipe is gone but its record stays; `vpmify recipe remove %s` forgets it", id, id)})
 				}
@@ -218,22 +208,19 @@ func (a *App) Doctor(fix bool) ([]Problem, error) {
 				// Not removed on its own: a project may lock the versions.
 				if r := recipes[id]; r != nil && len(ps.Versions) > 0 {
 					if src, _ := r.Package(name); src == nil {
-						add(&Problem{Message: fmt.Sprintf("%s: versions of %s are available but the recipe no longer provides it; `vpmify package remove --all %s/%s` deletes them", id, name, id, name)})
+						add(&Problem{Message: fmt.Sprintf("%s: versions of %s are in the store but the recipe no longer provides it; `vpmify package remove --all %s/%s` deletes them", id, name, id, name)})
 					}
 				}
 				for _, v := range ps.SortedVersions() {
-					p, inStore := a.checkVersion(id, name, v, ps)
-					if p != nil {
+					if p := a.checkVersion(id, name, v, ps); p != nil {
 						add(p)
 					}
 					// A folder in the store is reported once, by its version.
-					if inStore {
-						keep[a.Layout.PackageDir(id, name, v)] = true
-					}
+					keep[a.Layout.PackageDir(id, name, v)] = true
 				}
 			}
 		}
-		for _, p := range differingCopies(st) {
+		for _, p := range a.differingCopies(st) {
 			add(p)
 		}
 
@@ -270,41 +257,21 @@ func (a *App) Doctor(fix bool) ([]Problem, error) {
 	return out, err
 }
 
-// checkVersion returns the problem with one available version, or nil when its
-// folder holds the package state.json says it does. inStore reports whether
-// the version's folder in the store is accounted for by this record.
-func (a *App) checkVersion(id, name, v string, ps *state.PackageState) (p *Problem, inStore bool) {
-	vs := ps.Versions[v]
-	want := a.Layout.PackageDir(id, name, v)
+// checkVersion returns the problem with one version state.json has, or nil
+// when its folder in the store holds the package.
+func (a *App) checkVersion(id, name, v string, ps *state.PackageState) *Problem {
+	dir := a.Layout.PackageDir(id, name, v)
 	resync := fmt.Sprintf("; `vpmify package pull %s/%s@%s` makes it available again", id, name, v)
 	forget := func() { delete(ps.Versions, v) }
-	if !samePath(vs.Path, want) {
-		// The user may have moved Vpmify's data. The recorded folder is
-		// left alone: it is not in the store, so it is not Vpmify's.
-		msg := fmt.Sprintf("%s: %s %s is recorded at %s, outside the store %s", id, name, v, vs.Path, a.Layout.Packages())
-		if isDir(want) && convert.CheckManifest(want, name, v) == nil {
-			return &Problem{Message: msg, Fix: "record " + want + " instead",
-				change: func() { vs.Path = want }}, true
-		}
-		return &Problem{Message: msg, Fix: "forget the record" + resync,
-			change: forget, forgotten: vs.Path}, false
+	if !isDir(dir) {
+		return &Problem{Message: fmt.Sprintf("%s: %s %s: folder %s is missing", id, name, v, dir),
+			Fix: "forget the record" + resync, change: forget, forgotten: dir}
 	}
-	if !isDir(vs.Path) {
-		return &Problem{Message: fmt.Sprintf("%s: %s %s: folder %s is missing", id, name, v, vs.Path),
-			Fix: "forget the record" + resync, change: forget, forgotten: vs.Path}, true
-	}
-	if err := convert.CheckManifest(vs.Path, name, v); err != nil {
+	if err := convert.CheckManifest(dir, name, v); err != nil {
 		return &Problem{Message: fmt.Sprintf("%s: %s %s: %v", id, name, v, err),
-			Fix: "delete the folder and forget the record" + resync, change: forget, forgotten: vs.Path, dir: vs.Path}, true
+			Fix: "delete the folder and forget the record" + resync, change: forget, dir: dir}
 	}
-	return nil, true
-}
-
-// samePath reports whether x and y name the same folder, ignoring case where
-// the OS does (filepath.Rel compares case-insensitively on Windows).
-func samePath(x, y string) bool {
-	rel, err := filepath.Rel(x, y)
-	return err == nil && rel == "."
+	return nil
 }
 
 // fix saves the state the problems' records were forgotten from,
@@ -331,7 +298,7 @@ func (a *App) fix(st *state.State, problems []*Problem) error {
 	if !fixable {
 		return nil
 	}
-	unregister := a.unused(st, dirs)
+	unregister := a.inStore(dirs)
 	if len(unregister) > 0 {
 		if _, err := alcom.Load(a.Layout.ALCOMSettings()); err != nil {
 			return fmt.Errorf("cannot fix without ALCOM's settings: %w", err)
@@ -416,13 +383,13 @@ func orphansIn(dir string, depth int, keep map[string]bool) (out []string, kept 
 // more recipes make with different package.json. ALCOM tells them apart by
 // name and version only, so it uses one of them, and which one depends on
 // how the package is installed; Vpmify leaves that to ALCOM and only says so.
-func differingCopies(st *state.State) []*Problem {
+func (a *App) differingCopies(st *state.State) []*Problem {
 	type copyOf struct{ recipe, manifest string }
 	byVersion := map[string][]copyOf{}
 	for _, id := range state.SortedKeys(st.Recipes) {
 		for name, ps := range st.Recipes[id].Packages {
-			for v, vs := range ps.Versions {
-				data, err := os.ReadFile(filepath.Join(vs.Path, "package.json"))
+			for v := range ps.Versions {
+				data, err := os.ReadFile(filepath.Join(a.Layout.PackageDir(id, name, v), "package.json"))
 				if err != nil {
 					continue // checkVersion reports it
 				}

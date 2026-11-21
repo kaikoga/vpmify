@@ -1048,7 +1048,7 @@ func (a *App) pullPackage(ctx context.Context, run *pullRun, id string, l *pkgLi
 		}
 		a.noteUnwrittenDependencies(name, rel, dir)
 		unity := l.pkg.Unity(rel.Version, rel.Unity)
-		ps.Versions[v] = &state.VersionState{Path: dir, Fingerprint: fp, Unity: unity}
+		ps.Versions[v] = &state.VersionState{Fingerprint: fp}
 		// Taken before saving: the folder is built, and pull registers it
 		// even when saving fails.
 		run.take(id, name, v, dir)
@@ -1066,8 +1066,7 @@ func (a *App) pullPackage(ctx context.Context, run *pullRun, id string, l *pkgLi
 // store, built with fingerprint fp. ps holds the records of the package.
 func (a *App) built(ps *state.PackageState, id, name, v, fp string) bool {
 	vs, ok := ps.Versions[v]
-	dir := a.Layout.PackageDir(id, name, v)
-	return ok && vs.Fingerprint == fp && samePath(vs.Path, dir) && fsutil.Exists(dir)
+	return ok && vs.Fingerprint == fp && fsutil.Exists(a.Layout.PackageDir(id, name, v))
 }
 
 // noChoiceError is a package a pull chose from that has no version it may
@@ -1618,10 +1617,8 @@ func (a *App) RemoveRecipe(id string, apply bool) (*RemoveResult, error) {
 
 // takeVersions takes out of rs, which may be nil, the versions in the store of
 // package only (every package when it is empty) that are version (every
-// version when it is empty), and returns their folders in the store and
-// their entries. Taking every version of a package forgets the package too.
-// A record that points outside the store, after the user moved Vpmify's
-// data, does not make Vpmify delete that folder.
+// version when it is empty), and returns their folders and their entries.
+// Taking every version of a package forgets the package too.
 func (a *App) takeVersions(rs *state.RecipeState, id, only, version string) (dirs []string, removed []Entry) {
 	removed = []Entry{}
 	if rs == nil {
@@ -1889,7 +1886,7 @@ func (a *App) Versions(ref string, opt VersionsOptions) (*VersionList, error) {
 	out := &VersionList{Recipe: id, Packages: []PackageVersions{}}
 	for _, l := range lists {
 		name := l.pkg.Name
-		converted := st.AvailableVersions(id, name)
+		converted := st.StoredVersions(id, name)
 		pv := PackageVersions{Package: name, OnDemand: l.pkg.OnDemand, Source: l.src.Describe(), Updated: l.updated, Versions: []VersionInfo{}}
 		for i := len(l.releases) - 1; i >= 0; i-- {
 			rel := l.releases[i]

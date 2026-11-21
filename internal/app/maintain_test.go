@@ -160,7 +160,7 @@ func TestDoctorTellsAGoneRecipeWithoutVersions(t *testing.T) {
 		t.Fatal(err, f.log)
 	}
 	msgs := problemMessages(problems)
-	if len(msgs) != 1 || strings.Contains(msgs[0], "versions are available") || !strings.Contains(msgs[0], "`vpmify recipe remove kit` forgets it") {
+	if len(msgs) != 1 || strings.Contains(msgs[0], "versions are in the store") || !strings.Contains(msgs[0], "`vpmify recipe remove kit` forgets it") {
 		t.Errorf("problems = %v", msgs)
 	}
 	if _, err := f.app.RemoveRecipe("kit", true); err != nil {
@@ -202,18 +202,6 @@ func TestDoctorReportsWhatItCannotFix(t *testing.T) {
 	}
 }
 
-func (f *fixture) editState(fn func(st *state.State)) {
-	f.t.Helper()
-	st, err := state.Load(f.app.Layout.State())
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	fn(st)
-	if err := st.Save(f.app.Layout.State()); err != nil {
-		f.t.Fatal(err)
-	}
-}
-
 func (f *fixture) writeStoredRecipe(id, extra string) {
 	f.t.Helper()
 	content := npmRecipe(id, registryURL, pkgName, extra)
@@ -225,74 +213,6 @@ func (f *fixture) writeStoredRecipe(id, extra string) {
 func exists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
-}
-
-// moveRecord points the record of version v outside the store, as after the
-// user moved Vpmify's data, and returns the outside folder.
-func (f *fixture) moveRecord(v string) string {
-	f.t.Helper()
-	outside := filepath.Join(f.t.TempDir(), "old", pkgName, v)
-	if err := os.CopyFS(outside, os.DirFS(f.app.Layout.PackageDir("kit", pkgName, v))); err != nil {
-		f.t.Fatal(err)
-	}
-	f.editState(func(st *state.State) {
-		st.Recipes["kit"].Packages[pkgName].Versions[v].Path = outside
-	})
-	return outside
-}
-
-func TestRemoveLeavesFoldersOutsideTheStore(t *testing.T) {
-	f := newFixture(t)
-	f.reg.add("1.0.0", "2021.3")
-	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
-		t.Fatal(err, f.log)
-	}
-	outside := f.moveRecord("1.0.0")
-
-	if _, err := f.app.RemoveVersions("kit", "1.0.0"); err != nil {
-		t.Fatal(err, f.log)
-	}
-	if got := f.available(); len(got) != 0 {
-		t.Errorf("placed = %v", got)
-	}
-	if !exists(outside) {
-		t.Errorf("%s was deleted", outside)
-	}
-}
-
-func TestRemoveLeavesAFolderAnotherRecipeUses(t *testing.T) {
-	f := newFixture(t)
-	f.reg.add("1.0.0", "2021.3")
-	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
-		t.Fatal(err, f.log)
-	}
-	// A second recipe whose record points at kit's folder, made by hand:
-	// each recipe has its own folders otherwise.
-	f.writeStoredRecipe("kit2", "")
-	dir := f.app.Layout.PackageDir("kit", pkgName, "1.0.0")
-	f.editState(func(st *state.State) {
-		st.Recipe("kit2").Package(pkgName).Versions["1.0.0"] = &state.VersionState{Path: dir}
-	})
-	problems, err := f.app.Doctor(false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// kit2, made by hand, has no version list either.
-	if msgs := problemMessages(problems); len(msgs) != 2 ||
-		!strings.Contains(msgs[0], "kit2: no usable version list: none yet; run `vpmify recipe update kit2`") ||
-		!strings.Contains(msgs[1], "kit2: "+pkgName+" 1.0.0 is recorded at "+dir) {
-		t.Errorf("problems = %v", msgs)
-	}
-
-	if _, err := f.app.RemoveRecipe("kit2", true); err != nil {
-		t.Fatal(err, f.log)
-	}
-	if !exists(dir) {
-		t.Errorf("%s was deleted while kit still records it", dir)
-	}
-	if got, want := f.available(), []string{"1.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("placed = %v, want %v", got, want)
-	}
 }
 
 func TestRemoveDeletesTheEmptyPackageFolder(t *testing.T) {
@@ -535,33 +455,6 @@ func TestRefetchLeavesVersionsUpstreamNoLongerHas(t *testing.T) {
 	}
 	if !strings.Contains(f.log.String(), "the version list no longer has "+pkgName+" 1.0.0") {
 		t.Errorf("log = %s", f.log)
-	}
-}
-
-func TestDoctorRecordsTheStoreCopyOfAMovedRecord(t *testing.T) {
-	f := newFixture(t)
-	f.reg.add("1.0.0", "2021.3")
-	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
-		t.Fatal(err, f.log)
-	}
-	dir := f.app.Layout.PackageDir("kit", pkgName, "1.0.0")
-	outside := f.moveRecord("1.0.0")
-
-	problems, err := f.app.Doctor(true)
-	if err != nil {
-		t.Fatal(err, f.log)
-	}
-	if len(problems) != 1 || !problems[0].Fixed || !strings.Contains(problems[0].Fix, "record "+dir) {
-		t.Errorf("problems = %+v", problems)
-	}
-	if !exists(dir) || !exists(outside) {
-		t.Errorf("a folder was deleted")
-	}
-	if got, want := f.available(), []string{"1.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("placed = %v, want %v", got, want)
-	}
-	if problems, err := f.app.Doctor(false); err != nil || len(problems) != 0 {
-		t.Errorf("after fix: problems = %v, err = %v", problemMessages(problems), err)
 	}
 }
 
