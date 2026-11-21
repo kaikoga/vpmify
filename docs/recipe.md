@@ -228,7 +228,7 @@ The folder must be in upstream's archive, empty. When it is not, the version can
 vpmify recipe add ./my-recipe.json                 # add the recipe and read its version lists
 vpmify recipe versions --all com.example.my-recipe # show the versions that were read
 vpmify package pull com.example.my-recipe          # convert the newest version of each package (but the onDemand ones) and register it with ALCOM
-vpmify package pull com.example.my-recipe@1.2.3    # name a version
+vpmify package pull com.example.my-recipe@1.2.3    # that version only
 ```
 
 After you change a recipe, run `recipe add` again. It replaces the recipe that has the same `id`, and reads the version lists again. The versions whose conversion changes are built again the next time you `package pull` the recipe.

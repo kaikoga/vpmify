@@ -228,7 +228,7 @@ Unity のレジストリから取る依存（`com.unity.*`）は、`dependencies
 vpmify recipe add ./my-recipe.json                # 取り込んで、版の一覧を読む
 vpmify recipe versions --all com.example.my-recipe # 読めた版を見る
 vpmify package pull com.example.my-recipe          # パッケージごとの最新（onDemand を除く）を変換して、ALCOM に登録する
-vpmify package pull com.example.my-recipe@1.2.3    # 版を名指しする
+vpmify package pull com.example.my-recipe@1.2.3    # その版だけ
 ```
 
 レシピを直したら、もう一度 `recipe add` します。同じ `id` のレシピを置き換えて、版の一覧を読み直します。変換の結果が変わる版は、次にそのレシピを `package pull` したときに作り直されます。

@@ -49,14 +49,14 @@ available versions, which ALCOM lists as user packages:
   package pull [--all] [--prerelease] [--refetch] [<id>[/<package>][@<version>]...]
                                convert versions from the version lists and
                                register them with ALCOM, which makes them
-                               available: the newest stable version of each
-                               package (of the one named after "/"; a package
-                               the recipe marks onDemand only when named),
-                               every stable version with --all, and each
-                               @<version> named (of every package that has it,
-                               without "/"); --prerelease lets the newest, or
-                               every version with --all, be a prerelease too;
-                               --refetch also downloads and builds every
+                               available: for <id> or <id>/<package>, the
+                               newest stable version of each package (of the
+                               one named after "/"; a package the recipe marks
+                               onDemand only when named), or every stable
+                               version with --all; --prerelease lets these be
+                               prereleases too; with @<version>, that version
+                               alone (of every package that has it, without
+                               "/"); --refetch also downloads and builds every
                                available version again
   package remove <id>[/<package>]@<version>
   package remove --all <id>[/<package>]

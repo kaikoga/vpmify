@@ -362,7 +362,7 @@ func TestResults(t *testing.T) {
 	}
 
 	// A recipe that fails leaves the others done, and is named in Errors.
-	pulled, err = f.app.Pull(ctx, []string{"kit@1.1.0", "nope"}, PullOptions{})
+	pulled, err = f.app.Pull(ctx, []string{"kit", "nope"}, PullOptions{})
 	if err == nil {
 		t.Fatal("no error for a recipe the user does not have")
 	}
@@ -423,7 +423,7 @@ func TestVersions(t *testing.T) {
 	if _, err := f.app.Add(ctx, f.writeRecipe(`, "versions": ">=1.0.0"`+overrideNewUnity)); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if _, err := f.app.Pull(ctx, []string{"kit@1.0.0"}, PullOptions{}); err != nil {
+	if _, err := f.app.Pull(ctx, []string{"kit", "kit@1.0.0"}, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
 	// The version list keeps only the recipe's range, so 0.9.0 is not taken.

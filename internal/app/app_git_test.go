@@ -521,9 +521,9 @@ func TestSameTag(t *testing.T) {
 	for _, b := range res.Built {
 		built = append(built, fmt.Sprintf("%s %s %v", b.Package, b.Version, b.Dependency))
 	}
-	// The named package is chosen from, the other is only made to satisfy
-	// it.
-	if want := []string{"com.example.pkg 1.1.0 false", "com.example.pkg 1.0.0 false", "com.example.base 2.16.0 true", "com.example.base 2.17.0 true"}; !reflect.DeepEqual(built, want) {
+	// The named version alone is added, and the other package is only made
+	// to satisfy it.
+	if want := []string{"com.example.pkg 1.0.0 false", "com.example.base 2.16.0 true"}; !reflect.DeepEqual(built, want) {
 		t.Errorf("built = %v, want %v", built, want)
 	}
 	m := readManifest(t, f.app.Layout.PackageDir("mono", "com.example.pkg", "1.0.0"))
@@ -577,10 +577,11 @@ func TestPullNamesVersionsByPackage(t *testing.T) {
 	if _, err := f.app.Pull(ctx, []string{"mono/com.example.base@1.0.0"}, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if got, want := f.available(), []string{"1.0.0@2021.3", "1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("after base@1.0.0: available = %v, want %v (base only)", got, want)
+	if got, want := f.available(), []string{"1.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("after base@1.0.0: available = %v, want %v (that version only)", got, want)
 	}
-	if _, err := f.app.Pull(ctx, []string{"mono@1.0.0"}, PullOptions{}); err != nil {
+	// A target without a version beside it still chooses the newest.
+	if _, err := f.app.Pull(ctx, []string{"mono@1.0.0", "mono"}, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if got, want := f.available(), []string{"1.0.0@2021.3", "1.1.0@2021.3", "1.0.0@2021.3", "1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
@@ -893,7 +894,7 @@ func TestVersionFromTagIsWrittenIntoPackageJSON(t *testing.T) {
 	for _, b := range res.Built {
 		built = append(built, b.Version)
 	}
-	if want := []string{"0.15.2002", "0.15.2001"}; !reflect.DeepEqual(built, want) {
+	if want := []string{"0.15.2001"}; !reflect.DeepEqual(built, want) {
 		t.Errorf("built = %v, want %v", built, want)
 	}
 	for _, v := range built {

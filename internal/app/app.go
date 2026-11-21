@@ -558,12 +558,12 @@ type PullOptions struct {
 
 // Pull converts versions of the named recipes (all recipes when args is
 // empty) from their version lists into the store, and registers every
-// available version with ALCOM, which makes them available. It adds the
-// newest stable version of each package that is not onDemand (of the package
-// "<id>/<name>" names), whatever Unity it needs, every stable version with
-// opt.All, prereleases too with opt.Prerelease, and
-// "<id>@<version>" names one more of every package that has it
-// ("<id>/<name>@<version>" of that package). The named recipes' available
+// available version with ALCOM, which makes them available. "<id>" adds the
+// newest stable version of each package that is not onDemand ("<id>/<name>"
+// of that package), whatever Unity it needs, every stable version with
+// opt.All, prereleases too with opt.Prerelease. "<id>@<version>" adds that
+// version alone, of every package that has it ("<id>/<name>@<version>" of
+// that package). The named recipes' available
 // versions that the recipe now builds differently are built again; other
 // recipes' are not, because a recipe's output depends only on the recipe
 // itself. Pull never removes a version, and reads no version
@@ -641,18 +641,21 @@ func (a *App) pull(ctx context.Context, targets []target, opt PullOptions) (*Pul
 	for _, t := range targets {
 		req, ok := reqs[t.id]
 		if !ok {
-			req = &pullRequest{choose: true, all: opt.All, prerelease: opt.Prerelease, only: map[string]bool{}}
+			req = &pullRequest{byUser: true, all: opt.All, prerelease: opt.Prerelease, only: map[string]bool{}}
 			reqs[t.id] = req
 			order = append(order, t.id)
 		}
-		// A target without a package name chooses from every package.
+		// A target with a version adds that version alone; one without
+		// chooses the newest, from every package when it names none.
+		if t.version != "" {
+			req.extra = append(req.extra, pkgVersion{name: t.name, version: t.version})
+			continue
+		}
+		req.choose = true
 		if t.name == "" {
 			req.whole = true
 		} else {
 			req.only[t.name] = true
-		}
-		if t.version != "" {
-			req.extra = append(req.extra, pkgVersion{name: t.name, version: t.version})
 		}
 	}
 
@@ -726,9 +729,11 @@ type pullRequest struct {
 	// onDemand. prerelease lets those be prereleases.
 	choose, all, prerelease bool
 	whole                   bool
-	only        map[string]bool
+	only                    map[string]bool
 	// extra names more versions.
 	extra []pkgVersion
+	// byUser says the user asked for the pull, rather than a dependency.
+	byUser bool
 }
 
 func (req pullRequest) chooses(p *recipe.Package) bool {
@@ -818,13 +823,13 @@ func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pu
 	built := 0
 	warned := len(res.Warnings)
 	for _, l := range lists {
-		n, err := a.pullPackage(ctx, st, id, l, req.chooses(l.pkg), req.all, req.prerelease, req.choose, extra[l.pkg.Name], fresh, res)
+		n, err := a.pullPackage(ctx, st, id, l, req.chooses(l.pkg), req.all, req.prerelease, req.byUser, extra[l.pkg.Name], fresh, res)
 		built += n
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", l.pkg.Name, err))
 		}
 	}
-	if built == 0 && req.choose && len(errs) == 0 && len(res.Warnings) == warned {
+	if built == 0 && req.byUser && len(errs) == 0 && len(res.Warnings) == warned {
 		available := 0
 		for _, ps := range st.Recipe(id).Packages {
 			available += len(ps.Versions)
