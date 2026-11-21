@@ -7,97 +7,102 @@
     <title>Vpmify</title>
 </head>
 <body>
-<main id="drop" data-file-drop-target>
+<div class="app" data-file-drop-target>
     <header class="top">
         <h1>Vpmify</h1>
-        <div class="actions">
-            <span id="spinner" class="spinner" data-i18n-title="app.working" hidden></span>
-            <button id="cancel" type="button" data-i18n="app.cancel" hidden></button>
-            <select id="language" data-i18n-title="app.language">
-                <option value="en">English</option>
-                <option value="ja">日本語</option>
-            </select>
-            <button id="choose" type="button" data-i18n="app.addFiles"></button>
-            <button id="about" type="button" data-i18n="app.about"></button>
-        </div>
+        <nav class="tabs">
+            <button type="button" data-panel="recipes" aria-selected="true" data-i18n="tab.recipes"></button>
+            <button type="button" data-panel="available" aria-selected="false" data-i18n="tab.available"></button>
+            <button type="button" data-panel="about" aria-selected="false" data-i18n="tab.about"></button>
+        </nav>
+        <span class="spacer"></span>
+        <span id="spinner" class="spinner" data-i18n-title="app.working" hidden></span>
+        <button id="cancel" type="button" data-i18n="app.cancel" hidden></button>
+        <select id="language" data-i18n-title="app.language">
+            <option value="en">English</option>
+            <option value="ja">日本語</option>
+        </select>
+        <button id="choose" type="button" data-op data-i18n="app.addFiles"></button>
     </header>
-    <p class="hint" data-i18n="app.dropHint"></p>
-    <p id="error" class="error" hidden></p>
+    <p id="error" class="error banner" hidden></p>
 
-    <section id="confirm-section" hidden>
-        <div id="confirm" class="card"></div>
-    </section>
-
-    <section id="pending-section" hidden>
-        <h2 data-i18n="pending.title"></h2>
-        <div id="pending"></div>
-    </section>
-
-    <section>
-        <header>
-            <h2 data-i18n="recipes.title"></h2>
-            <button id="update-all" type="button" data-i18n="recipes.updateAll"></button>
-        </header>
-        <table>
-            <thead>
-            <tr><th data-i18n="col.recipe"></th><th data-i18n="col.packages"></th><th data-i18n="col.problem"></th></tr>
-            </thead>
-            <tbody id="recipes"></tbody>
-        </table>
-        <p id="no-recipes" data-i18n="recipes.none" hidden></p>
-    </section>
-
-    <section id="versions-section" hidden>
-        <header>
-            <h2 id="versions-title"></h2>
-            <div class="actions">
-                <label><input id="prereleases" type="checkbox"/> <span data-i18n="versions.prereleases"></span></label>
-                <button id="update" type="button" data-i18n="versions.update"></button>
-                <button id="pull-newest" type="button" data-i18n="versions.pullNewest"></button>
-                <button id="remove-recipe" type="button" data-i18n="versions.removeRecipe"></button>
+    <div class="content">
+        <section class="panel" id="panel-recipes">
+            <div class="split">
+                <div class="side">
+                    <div class="toolbar">
+                        <button id="update-all" type="button" class="small" data-op data-i18n="recipes.updateAll"></button>
+                    </div>
+                    <ul id="recipes"></ul>
+                    <p class="hint" data-i18n="app.dropHint"></p>
+                </div>
+                <div class="detail">
+                    <p id="no-recipes" class="muted" data-i18n="recipes.none" hidden></p>
+                    <div id="recipe" hidden>
+                        <div class="recipe-head">
+                            <div id="recipe-label"></div>
+                            <div class="ops">
+                                <button id="update" type="button" class="small" data-op data-i18n="recipe.update"></button>
+                                <button id="pull-newest" type="button" class="small" data-op data-i18n="recipe.pullNewest"></button>
+                                <button id="remove-recipe" type="button" class="small danger" data-op data-i18n="recipe.remove"></button>
+                            </div>
+                        </div>
+                        <p id="recipe-problem" class="error" hidden></p>
+                        <dl>
+                            <dt data-i18n="recipe.origin"></dt>
+                            <dd id="recipe-origin"></dd>
+                            <dt data-i18n="recipe.packages"></dt>
+                            <dd id="recipe-packages"></dd>
+                            <dt data-i18n="recipe.available"></dt>
+                            <dd id="recipe-available"></dd>
+                        </dl>
+                        <div class="toolbar">
+                            <label><input id="prereleases" type="checkbox"/> <span data-i18n="recipe.prereleases"></span></label>
+                            <span class="spacer"></span>
+                            <button id="expand-all" type="button" class="small" data-i18n="recipe.expandAll"></button>
+                            <button id="collapse-all" type="button" class="small" data-i18n="recipe.collapseAll"></button>
+                        </div>
+                        <p id="versions-error" class="note" hidden></p>
+                        <div id="packages"></div>
+                        <p id="no-versions" class="muted" data-i18n="versions.none" hidden></p>
+                    </div>
+                </div>
             </div>
-        </header>
-        <p id="versions-updated" class="note"></p>
-        <table>
-            <thead>
-            <tr><th data-i18n="col.version"></th><th data-i18n="col.unity"></th><th data-i18n="col.from"></th><th data-i18n="col.available"></th><th></th></tr>
-            </thead>
-            <tbody id="versions"></tbody>
-        </table>
-        <p id="no-versions" data-i18n="versions.none" hidden></p>
-    </section>
+            <footer class="log" id="log-footer">
+                <header>
+                    <span data-i18n="log.title"></span>
+                    <button id="log-toggle" type="button" class="small"></button>
+                </header>
+                <pre id="log"></pre>
+            </footer>
+        </section>
 
-    <section>
-        <header>
-            <h2 data-i18n="available.title"></h2>
-            <button id="reload" type="button" data-i18n="available.reload"></button>
-        </header>
-        <p id="settings-error" class="error" hidden></p>
-        <table>
-            <thead>
-            <tr><th data-i18n="col.recipe"></th><th data-i18n="col.package"></th><th data-i18n="col.version"></th><th data-i18n="col.unity"></th><th data-i18n="col.alcom"></th></tr>
-            </thead>
-            <tbody id="entries"></tbody>
-        </table>
-        <p id="empty" data-i18n="available.none" hidden></p>
-    </section>
+        <section class="panel" id="panel-available" hidden>
+            <div class="toolbar">
+                <button id="reload" type="button" class="small" data-op data-i18n="available.reload"></button>
+            </div>
+            <p id="available-error" class="error pad" hidden></p>
+            <table class="flat">
+                <thead>
+                <tr><th data-i18n="col.package"></th><th data-i18n="col.version"></th><th data-i18n="col.unity"></th><th data-i18n="col.recipe"></th><th></th></tr>
+                </thead>
+                <tbody id="entries"></tbody>
+            </table>
+            <p id="empty" class="muted pad" data-i18n="available.none" hidden></p>
+        </section>
 
-    <section>
-        <h2 data-i18n="log.title"></h2>
-        <pre id="log"></pre>
-    </section>
-</main>
-<dialog id="about-dialog">
-    <header>
-        <h2>Vpmify <span id="about-version"></span></h2>
-        <button id="about-close" type="button" data-i18n="about.close"></button>
-    </header>
-    <p><span data-i18n="about.source"></span> <a id="about-source" href="#"></a></p>
-    <h3 data-i18n="about.license"></h3>
-    <pre id="about-license"></pre>
-    <h3 data-i18n="about.notices"></h3>
-    <pre id="about-notices" class="tall"></pre>
-</dialog>
+        <section class="panel about" id="panel-about" hidden>
+            <h2>Vpmify <span id="about-version"></span></h2>
+            <p><span data-i18n="about.source"></span> <a id="about-source" href="#"></a></p>
+            <h3 data-i18n="about.license"></h3>
+            <pre id="about-license"></pre>
+            <h3 data-i18n="about.notices"></h3>
+            <pre id="about-notices" class="tall"></pre>
+        </section>
+    </div>
+</div>
+<dialog id="confirm-dialog" class="danger"></dialog>
+<dialog id="pending-dialog"></dialog>
 <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

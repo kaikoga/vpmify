@@ -6,157 +6,500 @@
        black window, unless the window is given a colour. */
     background: Canvas;
     color: CanvasText;
-    --line: color-mix(in srgb, currentColor 20%, transparent);
+    --line: color-mix(in srgb, currentColor 15%, transparent);
+    --faint: color-mix(in srgb, currentColor 55%, transparent);
+    --band: color-mix(in srgb, currentColor 5%, Canvas);
     --accent: #4a9eff;
+    --ok: #2e9d57;
+    --danger: #c0392b;
 }
 
 body {
     margin: 0;
 }
 
-main {
-    min-height: 100vh;
+button {
+    font: inherit;
+}
+
+[hidden] {
+    display: none !important;
+}
+
+.app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
     box-sizing: border-box;
-    padding: 1rem 1.5rem;
     border: 2px dashed transparent;
 }
 
-main.file-drop-target-active {
+.app.file-drop-target-active {
     border-color: var(--accent);
     background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-}
+/* The bar at the top */
 
 .top {
-    position: sticky;
-    top: 0;
-    background: Canvas;
-    z-index: 1;
-}
-
-.actions {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-}
-
-h1 {
-    font-size: 1.3rem;
-}
-
-h2 {
-    font-size: 1.1rem;
-}
-
-section {
-    margin-top: 1.5rem;
-}
-
-table {
-    width: 100%;
-    border-collapse: collapse;
-}
-
-th, td {
-    text-align: left;
-    padding: 0.3rem 0.5rem;
+    gap: 12px;
+    padding: 8px 16px;
     border-bottom: 1px solid var(--line);
 }
 
-tr.group th {
-    padding-top: 0.8rem;
-    font-weight: normal;
-    font-style: italic;
-}
-
-tr.selectable {
-    cursor: pointer;
-}
-
-tr.selectable:hover {
-    background: color-mix(in srgb, currentColor 6%, transparent);
-}
-
-tr.selected {
-    background: color-mix(in srgb, var(--accent) 18%, transparent);
-}
-
-.card {
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    padding: 0.5rem 0.75rem;
-    margin-bottom: 0.75rem;
-}
-
-#confirm {
-    border-color: color-mix(in srgb, #d33 60%, transparent);
-}
-
-#confirm h3 {
-    font-size: 1rem;
-    margin: 0.25rem 0 0.5rem;
-}
-
-.card .actions {
-    justify-content: flex-end;
-    margin-top: 0.5rem;
-}
-
-.hint, .note {
-    opacity: 0.7;
-    word-break: break-all;
-}
-
-.error {
-    color: #d33;
-}
-
-pre {
-    max-height: 12rem;
-    overflow: auto;
-    font-size: 12px;
-    border: 1px solid var(--line);
-    padding: 0.5rem;
-    white-space: pre-wrap;
-    word-break: break-all;
-}
-
-dialog {
-    width: min(48rem, 90vw);
-    max-height: 85vh;
-    border: 1px solid var(--line);
-    border-radius: 6px;
-}
-
-dialog h2 {
+.top h1 {
+    font-size: 16px;
     margin: 0;
 }
 
-pre.tall {
-    max-height: 20rem;
+.tabs {
+    display: flex;
+    gap: 2px;
+    margin-left: 8px;
+}
+
+.tabs button {
+    border: none;
+    background: none;
+    padding: 6px 10px;
+    border-bottom: 2px solid transparent;
+    color: inherit;
+    cursor: pointer;
+}
+
+.tabs button[aria-selected="true"] {
+    border-bottom-color: var(--accent);
+    font-weight: 600;
+}
+
+.spacer {
+    flex: 1;
 }
 
 .spinner {
-    width: 16px;
-    height: 16px;
+    width: 12px;
+    height: 12px;
     border: 2px solid var(--line);
     border-top-color: var(--accent);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
 }
 
-.spinner[hidden] {
-    display: none;
-}
-
 @keyframes spin {
     to {
         transform: rotate(360deg);
     }
+}
+
+.banner {
+    margin: 0;
+    padding: 6px 16px;
+    border-bottom: 1px solid var(--line);
+}
+
+/* The panels of the tabs */
+
+.content {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+}
+
+#panel-recipes {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+}
+
+.small {
+    font-size: 12px;
+    padding: 2px 8px;
+}
+
+button.danger {
+    color: var(--danger);
+}
+
+.ok {
+    color: var(--ok);
+}
+
+.muted, .hint, .note {
+    color: var(--faint);
+}
+
+.hint, .note {
+    font-size: 12px;
+    word-break: break-all;
+}
+
+.pad {
+    padding: 0 16px;
+}
+
+.error {
+    color: var(--danger);
+}
+
+.label .id {
+    font-size: 12px;
+    color: var(--faint);
+}
+
+.sub {
+    font-size: 12px;
+    color: var(--faint);
+}
+
+/* The recipes on the left, and the chosen one on the right */
+
+.split {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+}
+
+.side {
+    width: 240px;
+    flex: none;
+    border-right: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+}
+
+.side .toolbar {
+    border-bottom: 1px solid var(--line);
+}
+
+.side ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    overflow: auto;
+    flex: 1;
+}
+
+.side li {
+    padding: 8px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.side li:hover {
+    background: color-mix(in srgb, currentColor 6%, Canvas);
+}
+
+.side li.selected {
+    background: color-mix(in srgb, var(--accent) 18%, Canvas);
+}
+
+.side li .label {
+    flex: 1;
+    min-width: 0;
+}
+
+.side li .label .id {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.side li .count {
+    font-size: 12px;
+}
+
+.side .hint {
+    margin: 0;
+    padding: 8px 12px;
+    border-top: 1px solid var(--line);
+}
+
+.detail {
+    flex: 1;
+    min-width: 0;
+    overflow: auto;
+    padding: 16px;
+}
+
+.detail dl {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 2px 12px;
+    margin: 8px 0 12px;
+    font-size: 12px;
+}
+
+.detail dt {
+    color: var(--faint);
+}
+
+.detail dd {
+    margin: 0;
+    word-break: break-all;
+}
+
+.detail .toolbar {
+    padding: 0 0 8px;
+}
+
+.recipe-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.recipe-head .label .main {
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.recipe-head .ops {
+    margin-left: auto;
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+/* A package and its versions */
+
+.pkg {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    margin: 8px 0;
+}
+
+.pkg-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 6px 10px;
+}
+
+.pkg-head .label .main {
+    font-weight: 500;
+}
+
+.pkg-head .summary {
+    margin-left: auto;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    white-space: nowrap;
+}
+
+.twisty {
+    width: 18px;
+    flex: none;
+    border: none;
+    background: none;
+    color: inherit;
+    cursor: pointer;
+    padding: 0;
+    font-size: 11px;
+}
+
+.pkg table {
+    border-collapse: collapse;
+    width: 100%;
+}
+
+.pkg th {
+    text-align: left;
+    font-weight: 500;
+    color: var(--faint);
+    font-size: 12px;
+    padding: 3px 10px 3px 34px;
+    border-top: 1px solid var(--line);
+}
+
+.pkg td {
+    padding: 3px 10px 3px 34px;
+    border-top: 1px solid var(--line);
+    font-variant-numeric: tabular-nums;
+}
+
+.pkg th + th, .pkg td + td {
+    padding-left: 10px;
+}
+
+.pkg col.unity {
+    width: 80px;
+}
+
+.pkg col.from {
+    width: 140px;
+}
+
+.pkg col.ops {
+    width: 190px;
+}
+
+.pkg td.op {
+    text-align: right;
+}
+
+.pkg tr.more td {
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.badge {
+    font-size: 11px;
+    border: 1px solid currentColor;
+    border-radius: 8px;
+    padding: 0 6px;
+    margin-left: 8px;
+}
+
+.badge.ok {
+    color: var(--ok);
+}
+
+.badge.muted {
+    color: var(--faint);
+}
+
+/* The log at the bottom of the recipes */
+
+.log {
+    flex: none;
+    border-top: 1px solid var(--line);
+    background: var(--band);
+    font-size: 12px;
+}
+
+.log header {
+    display: flex;
+    align-items: center;
+    padding: 2px 16px;
+    color: var(--faint);
+}
+
+.log header button {
+    margin-left: auto;
+    font-size: 11px;
+}
+
+.log pre {
+    margin: 0;
+    padding: 0 16px 6px;
+    height: 4.5em;
+    overflow: auto;
+    font-family: ui-monospace, Menlo, monospace;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.log.open pre {
+    height: 14em;
+}
+
+/* The available versions */
+
+table.flat {
+    border-collapse: collapse;
+    width: calc(100% - 32px);
+    margin: 0 16px;
+}
+
+table.flat th {
+    text-align: left;
+    font-weight: 500;
+    color: var(--faint);
+    font-size: 12px;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--line);
+}
+
+table.flat td {
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--line);
+}
+
+table.flat td.op {
+    text-align: right;
+}
+
+/* About */
+
+.about {
+    max-width: 720px;
+    padding: 16px;
+    line-height: 1.6;
+}
+
+.about pre {
+    max-height: 12rem;
+    overflow: auto;
+    font-size: 12px;
+    line-height: 1.4;
+    border: 1px solid var(--line);
+    padding: 0.5rem;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.about pre.tall {
+    max-height: 20rem;
+}
+
+/* The dialogs that ask before removing or adding */
+
+dialog {
+    width: min(40rem, 90vw);
+    max-height: 85vh;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 12px 16px;
+    background: Canvas;
+    color: CanvasText;
+}
+
+dialog.danger {
+    border-color: color-mix(in srgb, var(--danger) 60%, transparent);
+}
+
+dialog h3 {
+    font-size: 15px;
+    margin: 0.25rem 0 0.5rem;
+}
+
+dialog table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 13px;
+}
+
+dialog th {
+    text-align: left;
+    font-weight: 500;
+    color: var(--faint);
+    font-size: 12px;
+}
+
+dialog th, dialog td {
+    padding: 3px 8px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+}
+
+dialog .actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
 }
