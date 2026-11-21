@@ -339,6 +339,7 @@ function showRecipes(recipes: RecipeInfo[], entries: Entry[] | null) {
     recipesElement.replaceChildren();
     for (const r of recipes) {
         const li = el("li");
+        li.dataset.id = r.id;
         if (r.id === selected) {
             li.className = "selected";
         }
@@ -613,8 +614,13 @@ async function refresh() {
     if (g !== generation) {
         return;
     }
-    // The recipes and the choice stay as drawn until they can be read.
+    // The recipes stay as drawn until they can be read, and the choice goes
+    // back to the recipe the right shows.
     if (recipesFailure !== null) {
+        selected = shownRecipe?.id ?? selected;
+        for (const li of recipesElement.children) {
+            li.classList.toggle("selected", (li as HTMLElement).dataset.id === selected);
+        }
         showError(recipesFailure);
         showAvailable(entries, listFailure);
         await showPending().catch(showError);
