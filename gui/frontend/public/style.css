@@ -469,6 +469,11 @@ dialog {
     color: CanvasText;
 }
 
+dialog.file-drop-target-active {
+    outline: 2px dashed var(--accent);
+    outline-offset: 2px;
+}
+
 dialog.danger {
     border-color: color-mix(in srgb, var(--danger) 60%, transparent);
 }

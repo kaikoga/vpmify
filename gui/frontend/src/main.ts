@@ -14,6 +14,7 @@ const cancelElement = byId<HTMLButtonElement>("cancel");
 const languageElement = byId<HTMLSelectElement>("language");
 const recipesElement = byId<HTMLUListElement>("recipes");
 const noRecipesElement = byId<HTMLParagraphElement>("no-recipes");
+const detailElement = byId<HTMLDivElement>("detail");
 const recipeElement = byId<HTMLDivElement>("recipe");
 const recipeLabel = byId<HTMLDivElement>("recipe-label");
 const recipeProblem = byId<HTMLParagraphElement>("recipe-problem");
@@ -241,8 +242,13 @@ function setLogOpen(open: boolean) {
 // hiding says that the GUI itself closes the dialog of the recipes waiting
 // to be added; when the dialog closes otherwise, they are asked about again.
 let hiding = false;
+// asking counts the calls of showPending and of hidePending, so that a
+// list of the recipes waiting that arrives late, such as one read before
+// the user discarded what it shows, is not shown.
+let asking = 0;
 
 function hidePending() {
+    asking++;
     if (pendingDialog.open) {
         hiding = true;
         pendingDialog.close();
@@ -253,7 +259,11 @@ function hidePending() {
 // while the removal dialog is open, and while an operation runs, as the
 // dialog would cover the cancel button.
 async function showPending() {
+    const a = ++asking;
     const pending = (await VpmifyService.Pending()) ?? [];
+    if (a !== asking) {
+        return;
+    }
     const p = pending[0];
     if (!p) {
         hidePending();
@@ -346,6 +356,10 @@ function showRecipes(recipes: RecipeInfo[], entries: Entry[] | null) {
         }
         li.addEventListener("click", () => {
             selected = r.id;
+            // Marked at once, as the right waits for the recipe's versions.
+            for (const other of recipesElement.children) {
+                other.classList.toggle("selected", other === li);
+            }
             clearError();
             refresh();
         });
@@ -359,6 +373,10 @@ let shownRecipe: RecipeInfo | null = null;
 // showRecipe shows recipe r on the right, with what Versions returned for it
 // or why it failed.
 function showRecipe(r: RecipeInfo | null, hasRecipes: boolean, entries: Entry[] | null, versions: VersionsResult | null, versionsFailure: string) {
+    // Another recipe starts from its top; the same one keeps its scroll.
+    if (r && r.id !== shownRecipe?.id) {
+        detailElement.scrollTop = 0;
+    }
     shownRecipe = r;
     noRecipesElement.hidden = hasRecipes;
     recipeElement.hidden = !r;
@@ -595,6 +613,13 @@ async function refresh() {
     if (g !== generation) {
         return;
     }
+    // The recipes and the choice stay as drawn until they can be read.
+    if (recipesFailure !== null) {
+        showError(recipesFailure);
+        showAvailable(entries, listFailure);
+        await showPending().catch(showError);
+        return;
+    }
     if (!recipes.some((r) => r.id === selected)) {
         selected = recipes[0]?.id ?? null;
     }
@@ -611,11 +636,8 @@ async function refresh() {
     if (g !== generation) {
         return;
     }
-    if (recipesFailure !== null) {
-        showError(recipesFailure);
-    }
     showRecipes(recipes, entries);
-    showRecipe(recipes.find((r) => r.id === id) ?? null, recipes.length > 0 || recipesFailure !== null, entries, versions, versionsFailure);
+    showRecipe(recipes.find((r) => r.id === id) ?? null, recipes.length > 0, entries, versions, versionsFailure);
     showAvailable(entries, listFailure);
     await showPending().catch(showError);
 }
