@@ -57,9 +57,9 @@ function button(label: string, onClick: () => void): HTMLButtonElement {
     return b;
 }
 
-// packageLabel names a package with its display name first, as ALCOM shows
-// both.
-function packageLabel(name: string, displayName?: string): string {
+// nameLabel names a package or a recipe with its display name first, as
+// ALCOM shows both for a package.
+function nameLabel(name: string, displayName?: string): string {
     return displayName ? `${displayName} (${name})` : name;
 }
 
@@ -90,7 +90,7 @@ function confirmRemoval(r: Removal) {
         const body = table.createTBody();
         for (const e of r.entries) {
             const row = body.insertRow();
-            cell(row, packageLabel(e.package, e.displayName));
+            cell(row, nameLabel(e.package, e.displayName));
             cell(row, e.version);
             cell(row, e.unity ?? "");
         }
@@ -139,7 +139,7 @@ async function confirmRecipeRemoval(id: string) {
 }
 
 function confirmVersionRemoval(id: string, e: Entry) {
-    const params = {label: packageLabel(e.package, e.displayName), version: e.version};
+    const params = {label: nameLabel(e.package, e.displayName), version: e.version};
     confirmRemoval({
         title: t("remove.version.title", params),
         before: t("remove.version.before", params),
@@ -151,7 +151,7 @@ function confirmVersionRemoval(id: string, e: Entry) {
 }
 
 function confirmPackageRemoval(id: string, name: string, entries: Entry[]) {
-    const params = {label: packageLabel(name, entries[0]?.displayName)};
+    const params = {label: nameLabel(name, entries[0]?.displayName)};
     confirmRemoval({
         title: t("remove.package.title", params),
         before: t("remove.package.before", params),
@@ -224,7 +224,7 @@ async function showPending() {
                 (r.packages ?? []).forEach((pkg, i) => {
                     const row = body.insertRow();
                     row.title = r.origin;
-                    cell(row, i === 0 ? r.id : "");
+                    cell(row, i === 0 ? nameLabel(r.id, r.displayName) : "");
                     cell(row, pkg.name);
                     cell(row, pkg.source);
                     cell(row, pkg.versions || t("pending.anyVersion"));
@@ -261,7 +261,7 @@ async function showRecipes() {
         if (r.origin) {
             row.title = r.origin;
         }
-        cell(row, r.id);
+        cell(row, nameLabel(r.id, r.displayName));
         cell(row, (r.packages ?? []).join(", "));
         cell(row, r.problem ?? "").className = "error";
         row.addEventListener("click", async () => {
@@ -326,7 +326,7 @@ async function showVersions() {
         const th = document.createElement("th");
         th.colSpan = 4;
         th.textContent = t("versions.listRead", {
-            package: packageLabel(p.package, p.displayName),
+            package: nameLabel(p.package, p.displayName),
             source: p.source,
             updated: new Date(p.updated).toLocaleString(currentLang()),
         });
@@ -367,7 +367,7 @@ async function showAvailable() {
             const row = entriesElement.insertRow();
             row.title = e.path;
             cell(row, e.recipe);
-            cell(row, packageLabel(e.package, e.displayName));
+            cell(row, nameLabel(e.package, e.displayName));
             cell(row, e.version);
             cell(row, e.unity ?? "");
             cell(row, t(e.registered ? "available.registered" : "available.notRegistered"));
