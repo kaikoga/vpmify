@@ -405,14 +405,64 @@ func TestOverlayNeedsAnEmptyFolder(t *testing.T) {
 			mono := testutil.NewFakeGitHub("owner", "mono")
 			mono.Tag("v1.0.0", files)
 			f.app.Client.HTTP.Transport = routeByRepo{mono, sub}
-			err := f.addAndPull(PullOptions{}, f.writeFile("pkg.json", overlayRecipe(c.path, s1)))
-			if err == nil || !strings.Contains(err.Error(), "has no empty folder") {
-				t.Errorf("err = %v", err)
+			ctx := context.Background()
+			if _, err := f.app.Add(ctx, f.writeFile("pkg.json", overlayRecipe(c.path, s1))); err != nil {
+				t.Fatal(err, f.log)
+			}
+			// A pull that names no version passes it over with a warning.
+			res, err := f.app.Pull(ctx, []string{"pkg/com.example.pkg"}, PullOptions{})
+			if err != nil {
+				t.Fatal(err, f.log)
+			}
+			if len(res.Warnings) != 1 || res.Warnings[0].Recipe != "pkg" || !strings.Contains(res.Warnings[0].Warning, "has no empty folder") {
+				t.Errorf("warnings = %v", res.Warnings)
+			}
+			if len(res.UpToDate) != 0 {
+				t.Errorf("up to date = %v", res.UpToDate)
+			}
+			// A version named outright fails.
+			if _, err := f.app.Pull(ctx, []string{"pkg/com.example.pkg@1.0.0"}, PullOptions{}); err == nil || !strings.Contains(err.Error(), "has no empty folder") {
+				t.Errorf("named: err = %v", err)
 			}
 			if _, err := os.Stat(f.app.Layout.PackageDir("pkg", "com.example.pkg", "1.0.0")); !os.IsNotExist(err) {
 				t.Errorf("the version was left: %v", err)
 			}
 		})
+	}
+}
+
+// The versions that can be converted are made available beside one passed
+// over, and the newest is not replaced with an older one.
+func TestOverlayFolderPassesOverOneVersion(t *testing.T) {
+	_, sub, s1, _ := overlayRepos()
+	mono := testutil.NewFakeGitHub("owner", "mono")
+	good := monoTag("1.0.0", "1.0.0")
+	good["Packages/Pkg/Sub/"] = ""
+	mono.Tag("v1.0.0", good)
+	bad := monoTag("1.1.0", "1.1.0")
+	bad["Packages/Pkg/Sub/Kept.cs"] = "class Kept {}"
+	mono.Tag("v1.1.0", bad)
+	recipe := overlayRecipe("Sub", s1)
+	ctx := context.Background()
+
+	f := newFixture(t)
+	f.app.Client.HTTP.Transport = routeByRepo{mono, sub}
+	if _, err := f.app.Add(ctx, f.writeFile("pkg.json", recipe)); err != nil {
+		t.Fatal(err, f.log)
+	}
+	res, err := f.app.Pull(ctx, []string{"pkg/com.example.pkg"}, PullOptions{})
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	if len(res.Built) != 0 || len(res.Warnings) != 1 {
+		t.Errorf("newest: built = %v, warnings = %v", res.Built, res.Warnings)
+	}
+	res, err = f.app.Pull(ctx, []string{"pkg/com.example.pkg"}, PullOptions{All: true})
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	if len(res.Built) != 1 || res.Built[0].Version != "1.0.0" || len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0].Warning, "com.example.pkg 1.1.0") {
+		t.Errorf("all: built = %v, warnings = %v", res.Built, res.Warnings)
 	}
 }
 

@@ -61,7 +61,7 @@ func TestJSONSuccess(t *testing.T) {
 		{[]string{"recipe", "list", "--json"}, map[string]any{"recipes": []any{}}},
 		{[]string{"recipe", "update", "--json"}, map[string]any{"recipes": []any{}, "errors": []any{}}},
 		{[]string{"package", "pull", "--json"}, map[string]any{
-			"built": []any{}, "upToDate": []any{}, "registered": []any{}, "unregistered": []any{}, "errors": []any{},
+			"built": []any{}, "upToDate": []any{}, "registered": []any{}, "unregistered": []any{}, "errors": []any{}, "warnings": []any{},
 		}},
 		{[]string{"clean", "--json"}, map[string]any{"applied": false, "entries": []any{}}},
 		{[]string{"doctor", "--json"}, map[string]any{"problems": []any{}, "ok": true}},

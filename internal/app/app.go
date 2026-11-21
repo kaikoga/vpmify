@@ -595,6 +595,15 @@ type PullResult struct {
 	// Errors are the recipes that could not be done, and the dependencies
 	// that could not be made available.
 	Errors []Failure `json:"errors"`
+	// Warnings are the versions chosen without being named that could not
+	// be converted, which Pull passed over.
+	Warnings []Warning `json:"warnings"`
+}
+
+// Warning is what went wrong in a recipe without failing the command.
+type Warning struct {
+	Recipe  string `json:"recipe"`
+	Warning string `json:"warning"`
 }
 
 // Built is one version Pull converted.
@@ -659,7 +668,7 @@ func (a *App) pull(ctx context.Context, targets []target, opt PullOptions) (*Pul
 	if opt.Refetch {
 		fresh = map[string]bool{}
 	}
-	res := &PullResult{Built: []Built{}, UpToDate: []string{}, Registered: []string{}, Unregistered: []string{}, Errors: []Failure{}}
+	res := &PullResult{Built: []Built{}, UpToDate: []string{}, Registered: []string{}, Unregistered: []string{}, Errors: []Failure{}, Warnings: []Warning{}}
 	fails := failures{list: &res.Errors}
 	for _, id := range order {
 		if err := a.pullRecipe(ctx, st, id, *reqs[id], fresh, res); err != nil {
@@ -805,6 +814,7 @@ func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pu
 		}
 	}
 	built := 0
+	warned := len(res.Warnings)
 	for _, l := range lists {
 		n, err := a.pullPackage(ctx, st, id, l, req.chooses(l.pkg), req.all, req.prerelease, req.choose, extra[l.pkg.Name], fresh, res)
 		built += n
@@ -812,7 +822,7 @@ func (a *App) pullRecipe(ctx context.Context, st *state.State, id string, req pu
 			errs = append(errs, fmt.Errorf("%s: %w", l.pkg.Name, err))
 		}
 	}
-	if built == 0 && req.choose && len(errs) == 0 {
+	if built == 0 && req.choose && len(errs) == 0 && len(res.Warnings) == warned {
 		available := 0
 		for _, ps := range st.Recipe(id).Packages {
 			available += len(ps.Versions)
@@ -905,6 +915,17 @@ func (a *App) pullPackage(ctx context.Context, st *state.State, id string, l *pk
 		}
 		a.logf("%s: converting %s %s (%s)", id, name, v, rel.Origin)
 		if err := a.build(ctx, name, rel, expanded, dir); err != nil {
+			// Only a version chosen without being named is passed over: one
+			// the user or a dependency names, or one available before, is
+			// wanted as it is.
+			var folderErr *overlayFolderError
+			_, wasAvailable := ps.Versions[v]
+			if errors.As(err, &folderErr) && !slices.Contains(extra, v) && !wasAvailable {
+				w := fmt.Sprintf("%s %s: %v; not made available", name, v, err)
+				a.logf("%s: warning: %s", id, w)
+				res.Warnings = append(res.Warnings, Warning{Recipe: id, Warning: w})
+				continue
+			}
 			return built, fmt.Errorf("%s: %w", v, err)
 		}
 		a.noteUnwrittenDependencies(name, rel, dir)
@@ -920,6 +941,19 @@ func (a *App) pullPackage(ctx context.Context, st *state.State, id string, l *pk
 		built++
 	}
 	return built, chooseErr
+}
+
+// overlayFolderError is a version whose package has no empty folder where an
+// overlay goes. It is known only once the archive is unpacked, so a pull
+// that chose the version without its being named passes it over with a
+// warning: a recipe written for the other versions must not fail the
+// whole pull.
+type overlayFolderError struct {
+	path string
+}
+
+func (e *overlayFolderError) Error() string {
+	return fmt.Sprintf("overlay %s: the package has no empty folder %s", e.path, e.path)
 }
 
 // noteUnwrittenDependencies tells the user about the upstream UPM
@@ -1175,7 +1209,7 @@ func (a *App) build(ctx context.Context, name string, rel source.Release, overri
 		target := filepath.Join(pkg, filepath.FromSlash(o.Path))
 		entries, err := os.ReadDir(target)
 		if err != nil || len(entries) > 0 {
-			return fmt.Errorf("overlay %s: the package has no empty folder %s", o.Path, o.Path)
+			return &overlayFolderError{path: o.Path}
 		}
 		res, err := convert.ExtractTarGz(overlayArchives[i], target, "", convert.MaxPackageSize-written)
 		if err != nil {
