@@ -15,24 +15,21 @@ import (
 	"github.com/kaikoga/vpmify/internal/state"
 )
 
-// forget saves st, which no longer has some versions, unregisters the
-// folders those versions had from ALCOM, and then deletes them. The
-// registration goes first so that ALCOM never lists a folder that is being
-// deleted, and settings.json is read before st is saved so that a missing
-// settings.json leaves everything as it was.
+// forget unregisters the folders dirs from ALCOM, saves st, which no longer
+// has their versions, and then deletes the folders. The registration goes
+// first so that ALCOM never lists a folder that is gone, and st is saved
+// only after it, so that a failure before leaves the versions recorded and
+// running the same command again finishes the work.
 //
 // saved is true once st is saved, from which point the versions are
 // forgotten whatever fails after; change is what the registration did.
 func (a *App) forget(st *state.State, dirs []string) (change alcom.Change, saved bool, err error) {
-	if _, err := alcom.Load(a.Layout.ALCOMSettings()); err != nil {
+	change, err = a.updateRegistration(nil, dirs)
+	if err != nil {
 		return change, false, err
 	}
 	if err := st.Save(a.Layout.State()); err != nil {
 		return change, false, err
-	}
-	change, err = a.updateRegistration(nil, dirs)
-	if err != nil {
-		return change, true, err
 	}
 	for _, d := range dirs {
 		if err := a.removeFromStore(d); err != nil {
@@ -274,13 +271,13 @@ func (a *App) checkVersion(id, name, v string, ps *state.PackageState) *Problem 
 	return nil
 }
 
-// fix saves the state the problems' records were forgotten from,
-// unregisters from ALCOM the folders it forgets or deletes, and deletes the
+// fix unregisters from ALCOM the folders it forgets or deletes, saves the
+// state the problems' records were forgotten from, and deletes the
 // problems' folders. Folders are deleted only after they are unregistered,
 // so ALCOM never lists a folder that is gone; a forgotten folder that is
-// missing already is unregistered for the same reason. settings.json is
-// read before st is saved, so that one that cannot be read leaves
-// everything as it was.
+// missing already is unregistered for the same reason. st is saved only
+// after the registration, so that a failure before leaves the records and
+// the next doctor finds the problems again.
 func (a *App) fix(st *state.State, problems []*Problem) error {
 	fixable := false
 	var dirs []string
@@ -298,19 +295,13 @@ func (a *App) fix(st *state.State, problems []*Problem) error {
 	if !fixable {
 		return nil
 	}
-	unregister := a.inStore(dirs)
-	if len(unregister) > 0 {
-		if _, err := alcom.Load(a.Layout.ALCOMSettings()); err != nil {
-			return fmt.Errorf("cannot fix without ALCOM's settings: %w", err)
+	if unregister := a.inStore(dirs); len(unregister) > 0 {
+		if _, err := a.updateRegistration(nil, unregister); err != nil {
+			return fmt.Errorf("cannot fix without changing ALCOM's settings: %w", err)
 		}
 	}
 	if err := st.Save(a.Layout.State()); err != nil {
 		return err
-	}
-	if len(unregister) > 0 {
-		if _, err := a.updateRegistration(nil, unregister); err != nil {
-			return err
-		}
 	}
 	var errs []error
 	for _, p := range problems {

@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -155,6 +157,118 @@ func TestPullBuildsAgainOnlyAvailableVersions(t *testing.T) {
 	}
 	if got, want := f.available(), []string{"1.0.0@2021.3", "1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("available = %v, want %v", got, want)
+	}
+}
+
+// readOnly makes dir unwritable until undo is called or the test ends, so
+// that saving a file in it fails.
+func readOnly(t *testing.T, dir string) (undo func()) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("cannot make a folder unwritable on Windows")
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	undo = func() { _ = os.Chmod(dir, 0o755) }
+	t.Cleanup(undo)
+	return undo
+}
+
+// A remove that cannot change settings.json changes nothing, so that the
+// same remove finishes it later.
+func TestRemoveThatCannotUnregisterCanRunAgain(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	f.reg.add("1.1.0", "2021.3")
+	ctx := context.Background()
+	if err := f.addAndPull(PullOptions{All: true}, f.writeRecipe("")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	undo := readOnly(t, filepath.Dir(f.settings))
+	if res, err := f.app.RemoveVersions("kit", "1.0.0"); err == nil || res != nil {
+		t.Errorf("remove = %+v, %v; want nil and an error", res, err)
+	}
+	undo()
+	if _, err := f.app.RemoveVersions("kit", "1.0.0"); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if got, want := f.available(), []string{"1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("available = %v, want %v", got, want)
+	}
+	res, err := f.app.Pull(ctx, []string{"kit"}, PullOptions{})
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	if len(res.Built) != 0 {
+		t.Errorf("pull built %+v", res.Built)
+	}
+}
+
+// doctor --fix that cannot change settings.json keeps the records, so that
+// the next doctor finds the problems again.
+func TestDoctorFixThatCannotUnregisterFindsTheProblemAgain(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	f.reg.add("1.1.0", "2021.3")
+	if err := f.addAndPull(PullOptions{All: true}, f.writeRecipe("")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if err := os.RemoveAll(f.app.Layout.PackageDir("kit", pkgName, "1.0.0")); err != nil {
+		t.Fatal(err)
+	}
+	undo := readOnly(t, filepath.Dir(f.settings))
+	if _, err := f.app.Doctor(true); err == nil {
+		t.Error("no error when settings.json cannot be written")
+	}
+	undo()
+	problems, err := f.app.Doctor(false)
+	if err != nil || len(problems) != 1 || !strings.Contains(problems[0].Message, "1.0.0: folder") {
+		t.Errorf("problems = %v, err = %v", problemMessages(problems), err)
+	}
+	if _, err := f.app.Doctor(true); err != nil {
+		t.Fatal(err, f.log)
+	}
+	want := []string{f.foreign, f.app.Layout.PackageDir("kit", pkgName, "1.1.0")}
+	slices.Sort(want)
+	if got := f.registered(); !reflect.DeepEqual(got, want) {
+		t.Errorf("registered = %v, want %v", got, want)
+	}
+}
+
+// A version pull registered without recording it, as when saving
+// state.json failed, is listed and can be removed.
+func TestListedVersionsCanBeRemoved(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	f.reg.add("1.1.0", "2021.3")
+	ctx := context.Background()
+	if _, err := f.app.Add(ctx, f.writeRecipe("")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if _, err := f.app.Pull(ctx, []string{"kit@1.0.0"}, PullOptions{}); err != nil {
+		t.Fatal(err, f.log)
+	}
+	undo := readOnly(t, f.app.Layout.Home())
+	if _, err := f.app.Pull(ctx, []string{"kit@1.1.0"}, PullOptions{}); err == nil {
+		t.Error("no error when state.json cannot be written")
+	}
+	undo()
+	if got, want := f.available(), []string{"1.0.0@2021.3", "1.1.0@2021.3"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("available = %v, want %v", got, want)
+	}
+	removed, err := f.app.RemoveVersions("kit", "1.1.0")
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	if len(removed.Removed) != 1 || len(removed.Unregistered) != 1 {
+		t.Errorf("remove = %+v", removed)
+	}
+	if got, want := f.available(), []string{"1.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("available = %v, want %v", got, want)
+	}
+	if problems, err := f.app.Doctor(false); err != nil || len(problems) != 0 {
+		t.Errorf("problems = %v, err = %v", problemMessages(problems), err)
 	}
 }
 

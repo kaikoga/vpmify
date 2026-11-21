@@ -646,9 +646,9 @@ type Built struct {
 	Path    string `json:"path"`
 	// Origin is where the version came from upstream, such as the tag.
 	Origin string `json:"origin"`
-	// Dependency is true when the version was added because another
-	// available version depends on it, and false when it was chosen, named
-	// or built again.
+	// Dependency is true when the version was added because a version the
+	// pull took depends on it, and false when it was chosen, named or built
+	// again.
 	Dependency bool `json:"dependency"`
 }
 
@@ -1164,7 +1164,7 @@ func (a *App) addDependencies(ctx context.Context, run *pullRun, managed provide
 			for _, pv := range needs[id] {
 				names = append(names, pv.name+" "+pv.version)
 			}
-			a.logf("%s: adding %s, which available versions depend on", id, strings.Join(names, ", "))
+			a.logf("%s: adding %s, which the versions pulled depend on", id, strings.Join(names, ", "))
 			if err := a.pullRecipe(ctx, run, id, pullRequest{extra: needs[id]}); err != nil {
 				failed["pull "+id] = failure{recipe: id, err: err}
 			}
@@ -1484,7 +1484,7 @@ func (a *App) registeredVersions(reg registration, id, name string) []string {
 // partway.
 func (a *App) updateRegistration(add, remove []string) (alcom.Change, error) {
 	change, err := a.reconciler().Update(add, remove)
-	// Reconcile counts a folder twice when it writes again after another
+	// Update counts a folder twice when it writes again after another
 	// program overwrote the first write.
 	change.Added = uniquePaths(change.Added)
 	change.Removed = uniquePaths(change.Removed)
@@ -1532,7 +1532,7 @@ type RemoveResult struct {
 // the named package; without one it removes every version of the named
 // package, or of the recipe. A package the recipe no longer provides can
 // still be removed by name. Copies already in projects stay. The result is
-// nil when RemoveVersions stopped before forgetting any version.
+// nil when RemoveVersions stopped before changing anything.
 func (a *App) RemoveVersions(ref, version string) (*RemoveResult, error) {
 	id, only, err := parseRef(ref)
 	if err != nil {
@@ -1544,16 +1544,21 @@ func (a *App) RemoveVersions(ref, version string) (*RemoveResult, error) {
 		if err != nil {
 			return err
 		}
-		rs, ok := st.Recipes[id]
-		// Versions are removed by their record, whether the recipe still
-		// provides them or not, or is gone.
-		if !ok && !fsutil.Exists(a.recipePath(id)) {
+		reg, err := a.loadRegistration()
+		if err != nil {
+			return err
+		}
+		rs := st.Recipes[id]
+		// Versions are removed whether the recipe still provides them or
+		// not, or is gone.
+		have := a.versionsOf(rs, id, reg)
+		if rs == nil && len(have) == 0 && !fsutil.Exists(a.recipePath(id)) {
 			return fmt.Errorf("no recipe %q", id)
 		}
-		if only != "" && (!ok || rs.Packages[only] == nil || len(rs.Packages[only].Versions) == 0) {
+		if only != "" && len(have[only]) == 0 {
 			return fmt.Errorf("%s: no version of %s is in the store", id, only)
 		}
-		dirs, removed := a.takeVersions(rs, id, only, version)
+		dirs, removed := a.takeVersions(rs, have, id, only, version)
 		if len(dirs) == 0 {
 			if version != "" {
 				return fmt.Errorf("%s: version %s is not in the store", ref, version)
@@ -1561,12 +1566,22 @@ func (a *App) RemoveVersions(ref, version string) (*RemoveResult, error) {
 			return fmt.Errorf("%s: no version is in the store", id)
 		}
 		change, saved, err := a.forget(st, dirs)
-		if saved {
-			res = &RemoveResult{Applied: true, Removed: removed, Unregistered: nonNil(change.Removed)}
-		}
+		res = removeResult(change, saved, removed)
 		return err
 	})
 	return res, err
+}
+
+// removeResult returns what forget did with the versions removed, or nil
+// when it changed nothing.
+func removeResult(change alcom.Change, saved bool, removed []Entry) *RemoveResult {
+	if !saved && change.Empty() {
+		return nil
+	}
+	if !saved {
+		removed = []Entry{}
+	}
+	return &RemoveResult{Applied: true, Removed: removed, Unregistered: nonNil(change.Removed)}
 }
 
 // RemoveRecipe removes recipe id: it unregisters and deletes every
@@ -1575,7 +1590,7 @@ func (a *App) RemoveVersions(ref, version string) (*RemoveResult, error) {
 // what it would remove, so that the user sees it first. A recipe whose file
 // is gone can still be removed by its record, and one whose record is gone
 // by its file. Copies already in projects stay. The result is nil when
-// RemoveRecipe stopped before forgetting any version.
+// RemoveRecipe stopped before changing anything.
 func (a *App) RemoveRecipe(id string, apply bool) (*RemoveResult, error) {
 	if _, only, err := parseRef(id); err != nil || only != "" {
 		return nil, fmt.Errorf("want a recipe id, not %q", id)
@@ -1586,20 +1601,23 @@ func (a *App) RemoveRecipe(id string, apply bool) (*RemoveResult, error) {
 		if err != nil {
 			return err
 		}
-		rs, ok := st.Recipes[id]
-		if !ok && !fsutil.Exists(a.recipePath(id)) {
+		reg, err := a.loadRegistration()
+		if err != nil {
+			return err
+		}
+		rs := st.Recipes[id]
+		have := a.versionsOf(rs, id, reg)
+		if rs == nil && len(have) == 0 && !fsutil.Exists(a.recipePath(id)) {
 			return fmt.Errorf("no recipe %q", id)
 		}
-		dirs, removed := a.takeVersions(rs, id, "", "")
+		dirs, removed := a.takeVersions(rs, have, id, "", "")
 		if !apply {
 			res = &RemoveResult{Removed: removed, Unregistered: []string{}}
 			return nil
 		}
 		delete(st.Recipes, id)
 		change, saved, err := a.forget(st, dirs)
-		if saved {
-			res = &RemoveResult{Applied: true, Removed: removed, Unregistered: nonNil(change.Removed)}
-		}
+		res = removeResult(change, saved, removed)
 		if err != nil {
 			return err
 		}
@@ -1615,30 +1633,68 @@ func (a *App) RemoveRecipe(id string, apply bool) (*RemoveResult, error) {
 	return res, err
 }
 
-// takeVersions takes out of rs, which may be nil, the versions in the store of
+// versionsOf returns the versions of recipe id that Vpmify has, by package:
+// those rs, which may be nil, records, those whose folders are in the store,
+// and those ALCOM lists in the store. A version can have one without the
+// others after a command failed partway, and whatever `package list` or
+// doctor shows can be removed.
+func (a *App) versionsOf(rs *state.RecipeState, id string, reg registration) map[string]map[string]bool {
+	out := map[string]map[string]bool{}
+	have := func(name, v string) {
+		if out[name] == nil {
+			out[name] = map[string]bool{}
+		}
+		out[name][v] = true
+	}
+	if rs != nil {
+		for name, ps := range rs.Packages {
+			for v := range ps.Versions {
+				have(name, v)
+			}
+		}
+	}
+	recipeDir := filepath.Join(a.Layout.Packages(), id)
+	names, _ := readDirNames(recipeDir)
+	for _, name := range names {
+		versions, _ := readDirNames(filepath.Join(recipeDir, name))
+		for _, v := range versions {
+			if isDir(a.Layout.PackageDir(id, name, v)) {
+				have(name, v)
+			}
+		}
+	}
+	for dir := range reg {
+		if rid, name, v, ok := a.storeVersion(dir); ok && rid == id {
+			have(name, v)
+		}
+	}
+	return out
+}
+
+// takeVersions takes out of rs, which may be nil, the versions in have of
 // package only (every package when it is empty) that are version (every
 // version when it is empty), and returns their folders and their entries.
 // Taking every version of a package forgets the package too.
-func (a *App) takeVersions(rs *state.RecipeState, id, only, version string) (dirs []string, removed []Entry) {
+func (a *App) takeVersions(rs *state.RecipeState, have map[string]map[string]bool, id, only, version string) (dirs []string, removed []Entry) {
 	removed = []Entry{}
-	if rs == nil {
-		return nil, removed
-	}
-	for _, name := range state.SortedKeys(rs.Packages) {
+	for _, name := range state.SortedKeys(have) {
 		if only != "" && name != only {
 			continue
 		}
-		ps := rs.Packages[name]
-		for _, v := range ps.SortedVersions() {
+		versions := state.SortedKeys(have[name])
+		sort.Slice(versions, func(i, j int) bool { return state.VersionLess(versions[i], versions[j]) })
+		for _, v := range versions {
 			if version != "" && v != version {
 				continue
 			}
 			dir := a.Layout.PackageDir(id, name, v)
 			dirs = append(dirs, dir)
 			removed = append(removed, newEntry(id, name, v, dir))
-			delete(ps.Versions, v)
+			if rs != nil && rs.Packages[name] != nil {
+				delete(rs.Packages[name].Versions, v)
+			}
 		}
-		if version == "" {
+		if version == "" && rs != nil {
 			delete(rs.Packages, name)
 		}
 	}
