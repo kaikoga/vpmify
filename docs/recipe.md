@@ -125,7 +125,7 @@ The syntax of the ranges in `tags` and `versions`:
 
 - `name` (required): the name of the package. It must be the `name` of the upstream `package.json`.
 - `versions`: the range of the versions to take, on the version of the package. Every version when omitted. A version outside the range is not in the version list, and cannot be taken even when the user names it. Prereleases in the range are in the list; a `pull` that names no version chooses them only with `--prerelease`.
-- `onDemand`: with `true`, a `pull` that names no package does not choose this package. Its versions are taken only when the `vpmDependencies` of an installed version name the package, or when the user names the package or a version. It keeps a package that upstream no longer releases from showing in ALCOM beside the ones it does (see [univrm.json](../examples/univrm.json)).
+- `onDemand`: with `true`, a `pull` that names no package does not choose this package. Its versions are taken only when the `vpmDependencies` of a version a `pull` takes name the package, or when the user names the package or a version. It keeps a package that upstream no longer releases from showing in ALCOM beside the ones it does (see [univrm.json](../examples/univrm.json)).
 - `overrides`: changes to `package.json` (see "Changing package.json" below).
 
 A package of a github source also takes these fields.

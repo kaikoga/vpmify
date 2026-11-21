@@ -169,7 +169,8 @@ func TestPullAddsTheDependencyItWrites(t *testing.T) {
 	for _, b := range res.Built {
 		built = append(built, fmt.Sprintf("%s %s %v", b.Package, b.Version, b.Dependency))
 	}
-	if want := []string{"com.example.pkg 1.1.0 false", "com.example.pkg 1.0.0 false", "com.example.base 1.0.0 true", "com.example.base 1.1.0 true"}; !reflect.DeepEqual(built, want) {
+	// The dependencies come in the order of the versions that need them.
+	if want := []string{"com.example.pkg 1.1.0 false", "com.example.pkg 1.0.0 false", "com.example.base 1.1.0 true", "com.example.base 1.0.0 true"}; !reflect.DeepEqual(built, want) {
 		t.Errorf("built = %v, want %v", built, want)
 	}
 	m := readManifest(t, f.app.Layout.PackageDir("pkg", "com.example.pkg", "1.0.0"))
@@ -822,7 +823,7 @@ func TestAStaleSourceFailsOnlyWhatIsChosenFromIt(t *testing.T) {
 	}
 }
 
-// remove of a package with no available version is an error, even when
+// remove of a package with no version in the store is an error, even when
 // pull left an empty record for it.
 func TestRemoveOfAPackageWithoutVersions(t *testing.T) {
 	f := newFixture(t)
@@ -834,13 +835,13 @@ func TestRemoveOfAPackageWithoutVersions(t *testing.T) {
 	if _, err := f.app.Add(ctx, f.writeFile("mono.json", recipe)); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if _, err := f.app.RemoveVersions("mono/com.example.base", ""); err == nil || !strings.Contains(err.Error(), "no version of com.example.base is available") {
+	if _, err := f.app.RemoveVersions("mono/com.example.base", ""); err == nil || !strings.Contains(err.Error(), "no version of com.example.base is in the store") {
 		t.Errorf("before pull: err = %v", err)
 	}
 	if _, err := f.app.Pull(ctx, []string{"mono/com.example.pkg"}, PullOptions{}); err != nil {
 		t.Fatal(err, f.log)
 	}
-	if _, err := f.app.RemoveVersions("mono/com.example.base", ""); err == nil || !strings.Contains(err.Error(), "no version of com.example.base is available") {
+	if _, err := f.app.RemoveVersions("mono/com.example.base", ""); err == nil || !strings.Contains(err.Error(), "no version of com.example.base is in the store") {
 		t.Errorf("after pull: err = %v", err)
 	}
 }

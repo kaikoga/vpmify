@@ -39,7 +39,7 @@ recipes and their version lists:
                                with prereleases, --unity only those a project
                                on that Unity can use
   recipe list                  show the recipes
-  recipe remove <id>           unregister and delete the recipe's available
+  recipe remove <id>           unregister and delete the recipe's converted
                                versions, and delete the recipe and its version
                                lists
 
@@ -66,10 +66,10 @@ available versions, which ALCOM lists as user packages:
                                so package pull can make them available again
 
 other commands:
-  doctor [--fix]               find disagreements among recipes, the store and
-                               ALCOM's settings; --fix fixes what it can
+  doctor [--fix]               find disagreements among recipes, Vpmify's record
+                               and the store; --fix fixes what it can
   clean [--yes]                show what clean deletes; --yes unregisters and deletes
-                               every available version and the downloads, keeping
+                               every converted version and the downloads, keeping
                                the recipes
   version                      print the version
 
@@ -265,7 +265,7 @@ func runPackage(ctx context.Context, a *app.App, out output, args []string) int 
 		}
 		res, err := a.List(ids...)
 		if err == nil && !out.json {
-			err = printList(out.stdout, out.stderr, res)
+			err = printList(out.stdout, res)
 		}
 		return out.result(res, err)
 	case "pull":
@@ -503,8 +503,7 @@ func printRemoveRecipe(stdout io.Writer, id string, res *app.RemoveResult, succe
 	return nil
 }
 
-// printEntries prints available versions as a table, or nothing when there
-// are none.
+// printEntries prints versions as a table, or nothing when there are none.
 func printEntries(stdout io.Writer, entries []app.Entry) error {
 	if len(entries) == 0 {
 		return nil
@@ -573,22 +572,15 @@ func printDoctor(stdout io.Writer, problems []app.Problem, succeeded bool) {
 	}
 }
 
-func printList(stdout, stderr io.Writer, res *app.ListResult) error {
-	if res.SettingsError != "" {
-		fmt.Fprintln(stderr, "vpmify: cannot tell what is registered:", res.SettingsError)
-	}
+func printList(stdout io.Writer, res *app.ListResult) error {
 	if len(res.Entries) == 0 {
 		fmt.Fprintln(stdout, "no version is available")
 		return nil
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "RECIPE\tPACKAGE\tVERSION\tUNITY\tREGISTERED")
+	fmt.Fprintln(tw, "RECIPE\tPACKAGE\tVERSION\tUNITY")
 	for _, e := range res.Entries {
-		reg := "no"
-		if e.Registered {
-			reg = "yes"
-		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", e.Recipe, e.Package, e.Version, e.Unity, reg)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", e.Recipe, e.Package, e.Version, e.Unity)
 	}
 	return tw.Flush()
 }

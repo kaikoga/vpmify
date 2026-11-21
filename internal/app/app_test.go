@@ -171,16 +171,9 @@ func (f *fixture) available() []string {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	if res.SettingsError != "" {
-		f.t.Fatal(res.SettingsError)
-	}
 	var out []string
 	for _, e := range res.Entries {
-		reg := ""
-		if !e.Registered {
-			reg = " unregistered"
-		}
-		out = append(out, e.Version+"@"+e.Unity+reg)
+		out = append(out, e.Version+"@"+e.Unity)
 	}
 	return out
 }
@@ -348,7 +341,7 @@ func TestResults(t *testing.T) {
 	if !reflect.DeepEqual(pulled.Built, wantBuilt) || pulled.Built[0].Origin == "" {
 		t.Errorf("built = %+v, want %+v with an origin", pulled.Built, wantBuilt)
 	}
-	if !reflect.DeepEqual(pulled.Registered, []string{dir}) || len(pulled.Unregistered) != 0 || len(pulled.UpToDate) != 0 {
+	if !reflect.DeepEqual(pulled.Registered, []string{dir}) || len(pulled.UpToDate) != 0 {
 		t.Errorf("pull = %+v", pulled)
 	}
 
@@ -670,7 +663,7 @@ func TestRemove(t *testing.T) {
 	if _, err := os.Stat(f.app.Layout.PackageDir("kit", pkgName, "1.0.0")); !os.IsNotExist(err) {
 		t.Errorf("1.0.0 still in the store: %v", err)
 	}
-	if _, err := f.app.RemoveVersions("kit", "1.0.0"); err == nil || !strings.Contains(err.Error(), "version 1.0.0 is not available") {
+	if _, err := f.app.RemoveVersions("kit", "1.0.0"); err == nil || !strings.Contains(err.Error(), "version 1.0.0 is not in the store") {
 		t.Errorf("removing 1.0.0 again: err = %v", err)
 	}
 
@@ -682,7 +675,7 @@ func TestRemove(t *testing.T) {
 	if got := f.available(); len(got) != 0 {
 		t.Errorf("placed = %v", got)
 	}
-	if _, err := f.app.RemoveVersions("kit", ""); err == nil || !strings.Contains(err.Error(), "no version is available") {
+	if _, err := f.app.RemoveVersions("kit", ""); err == nil || !strings.Contains(err.Error(), "no version is in the store") {
 		t.Errorf("removing every version again: err = %v", err)
 	}
 	if _, err := f.app.Pull(ctx, []string{"kit@1.0.0"}, PullOptions{}); err != nil {

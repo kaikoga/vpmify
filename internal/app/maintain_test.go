@@ -45,8 +45,9 @@ func TestDoctorFixes(t *testing.T) {
 	}
 	layout := f.app.Layout
 	// 1.0.0's folder is gone, 1.1.0's package.json says another version,
-	// a stray folder sits in the store, a build was left unfinished, and
-	// ALCOM lost 2.0.0 and lists a store folder state.json does not have.
+	// a stray folder sits in the store, and a build was left unfinished.
+	// ALCOM lost 2.0.0 and lists the stray folder, which doctor does not
+	// report: what ALCOM lists is the user's.
 	if err := os.RemoveAll(layout.PackageDir("kit", pkgName, "1.0.0")); err != nil {
 		t.Fatal(err)
 	}
@@ -81,8 +82,6 @@ func TestDoctorFixes(t *testing.T) {
 		"1.1.0: package.json version",
 		"com.example.stray is in the store",
 		"build-123 is left",
-		"2.0.0 is in the store but not registered",
-		"ALCOM lists " + stray,
 	}
 	msgs := problemMessages(problems)
 	for _, w := range wantSubstrings {
@@ -112,13 +111,13 @@ func TestDoctorFixes(t *testing.T) {
 			t.Errorf("not fixed: %+v", p)
 		}
 	}
-	if got, want := f.available(), []string{"2.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("placed = %v, want %v", got, want)
+	// The folders --fix forgets or deletes are unregistered, the stray one
+	// with the package folder it is in; 2.0.0 stays unregistered.
+	if got := f.available(); len(got) != 0 {
+		t.Errorf("available = %v", got)
 	}
-	wantFolders := []string{f.foreign, layout.PackageDir("kit", pkgName, "2.0.0")}
-	sort.Strings(wantFolders)
-	if got := f.registered(); !reflect.DeepEqual(got, wantFolders) {
-		t.Errorf("registered = %v, want %v", got, wantFolders)
+	if got := f.registered(); !reflect.DeepEqual(got, []string{f.foreign}) {
+		t.Errorf("registered = %v, want %v", got, []string{f.foreign})
 	}
 	for _, gone := range []string{layout.PackageDir("kit", pkgName, "1.1.0"), filepath.Dir(stray), leftover} {
 		if _, err := os.Stat(gone); !os.IsNotExist(err) {
@@ -129,12 +128,16 @@ func TestDoctorFixes(t *testing.T) {
 		t.Errorf("after fix: problems = %v, err = %v", problemMessages(problems), err)
 	}
 
-	// pull --all places the forgotten versions again.
+	// pull --all places the forgotten versions again, and registers 2.0.0
+	// from the store.
 	if _, err := f.app.Pull(ctx, nil, PullOptions{All: true}); err != nil {
 		t.Fatal(err, f.log)
 	}
 	if got, want := f.available(), []string{"1.0.0@2021.3", "1.1.0@2021.3", "2.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("placed after pull = %v, want %v", got, want)
+	}
+	if f.reg.downloads["2.0.0"] != 1 {
+		t.Errorf("2.0.0 downloaded %d times", f.reg.downloads["2.0.0"])
 	}
 }
 

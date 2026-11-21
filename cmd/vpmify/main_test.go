@@ -61,7 +61,7 @@ func TestJSONSuccess(t *testing.T) {
 		{[]string{"recipe", "list", "--json"}, map[string]any{"recipes": []any{}}},
 		{[]string{"recipe", "update", "--json"}, map[string]any{"recipes": []any{}, "errors": []any{}}},
 		{[]string{"package", "pull", "--json"}, map[string]any{
-			"built": []any{}, "upToDate": []any{}, "registered": []any{}, "unregistered": []any{}, "errors": []any{}, "warnings": []any{},
+			"built": []any{}, "upToDate": []any{}, "registered": []any{}, "errors": []any{}, "warnings": []any{},
 		}},
 		{[]string{"clean", "--json"}, map[string]any{"applied": false, "entries": []any{}}},
 		{[]string{"doctor", "--json"}, map[string]any{"problems": []any{}, "ok": true}},
@@ -115,7 +115,7 @@ func TestJSONErrors(t *testing.T) {
 
 // A command that did part of its work prints what it did and "error".
 func TestJSONPartialFailure(t *testing.T) {
-	withData(t, false)
+	withData(t, true)
 	code, obj := runJSON(t, "package", "pull", "--json", "nope")
 	if code != 1 {
 		t.Errorf("code = %d, want 1", code)
@@ -131,11 +131,15 @@ func TestJSONPartialFailure(t *testing.T) {
 	}
 }
 
-func TestJSONListSettingsError(t *testing.T) {
+// Without settings.json no version can be told available, so the commands
+// that show which are fail.
+func TestJSONWithoutSettings(t *testing.T) {
 	withData(t, false)
-	code, obj := runJSON(t, "package", "list", "--json")
-	if msg, _ := obj["settingsError"].(string); code != 0 || msg == "" {
-		t.Errorf("list = %d %v, want 0 and a settingsError", code, obj)
+	for _, args := range [][]string{{"package", "list", "--json"}, {"package", "pull", "--json"}} {
+		code, obj := runJSON(t, args...)
+		if msg, _ := obj["error"].(string); code != 1 || len(obj) != 1 || !strings.Contains(msg, "settings.json not found") {
+			t.Errorf("%v = %d %v, want 1 and only an error about settings.json", args, code, obj)
+		}
 	}
 }
 

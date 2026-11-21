@@ -15,15 +15,11 @@ import (
 	"github.com/kaikoga/vpmify/internal/state"
 )
 
-// forget saves st, which no longer has some versions, brings ALCOM's
-// registration in line with it, and then deletes the folders those versions
-// had. The registration goes first so that ALCOM never lists a folder that
-// is being deleted, and settings.json is read before st is saved so that a
-// missing settings.json leaves everything as it was.
-//
-// Only folders in the store that no other record points to are deleted. A
-// record may point outside the store after the user moved Vpmify's data, and
-// a state.json edited by hand may have two records share a folder.
+// forget saves st, which no longer has some versions, unregisters the
+// folders those versions had from ALCOM, and then deletes them. The
+// registration goes first so that ALCOM never lists a folder that is being
+// deleted, and settings.json is read before st is saved so that a missing
+// settings.json leaves everything as it was.
 //
 // saved is true once st is saved, from which point the versions are
 // forgotten whatever fails after; change is what the registration did.
@@ -34,21 +30,12 @@ func (a *App) forget(st *state.State, dirs []string) (change alcom.Change, saved
 	if err := st.Save(a.Layout.State()); err != nil {
 		return change, false, err
 	}
-	change, err = a.register(st)
+	gone := a.unused(st, dirs)
+	change, err = a.updateRegistration(nil, gone)
 	if err != nil {
 		return change, true, err
 	}
-	still := map[string]bool{}
-	for _, p := range st.AllPaths() {
-		still[filepath.Clean(p)] = true
-	}
-	owner := a.reconciler()
-	for _, d := range dirs {
-		clean := filepath.Clean(d)
-		if !owner.Owns(clean) || still[clean] {
-			a.logf("leaving %s alone: it is outside the store or another recipe uses it", d)
-			continue
-		}
+	for _, d := range gone {
 		if err := a.removeFromStore(d); err != nil {
 			return change, true, err
 		}
@@ -56,8 +43,30 @@ func (a *App) forget(st *state.State, dirs []string) (change alcom.Change, saved
 	return change, true, nil
 }
 
-// Clean deletes every available version, the downloads and the work folders,
-// and unregisters the versions from ALCOM. The recipes and their version
+// unused returns the folders among dirs that are in the store and that no
+// record of st points to, which may be unregistered and deleted. A record
+// may point outside the store after the user moved Vpmify's data, and a
+// state.json edited by hand may have two records share a folder.
+func (a *App) unused(st *state.State, dirs []string) []string {
+	still := map[string]bool{}
+	for _, p := range st.AllPaths() {
+		still[filepath.Clean(p)] = true
+	}
+	owner := a.reconciler()
+	var out []string
+	for _, d := range dirs {
+		clean := filepath.Clean(d)
+		if !owner.Owns(clean) || still[clean] {
+			a.logf("leaving %s alone: it is outside the store or another recipe uses it", d)
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
+// Clean deletes every version in the store, the downloads and the work
+// folders, and unregisters the store from ALCOM. The recipes and their version
 // lists stay, so pull makes the newest versions available again; another
 // version has to be named again, and a project that locks a version not made
 // available again
@@ -76,8 +85,7 @@ func (a *App) Clean(apply bool) (entries []Entry, changed bool, err error) {
 			for _, name := range state.SortedKeys(rs.Packages) {
 				ps := rs.Packages[name]
 				for _, v := range ps.SortedVersions() {
-					vs := ps.Versions[v]
-					out = append(out, newEntry(id, name, v, vs))
+					out = append(out, newEntry(id, name, v, ps.Versions[v].Path))
 				}
 			}
 		}
@@ -137,8 +145,8 @@ func (a *App) removeFromStore(dir string) error {
 	return nil
 }
 
-// Problem is one disagreement doctor found among the recipes, state.json,
-// the store and ALCOM's settings.json.
+// Problem is one disagreement doctor found among the recipes, state.json
+// and the store.
 type Problem struct {
 	Message string `json:"message"`
 	// Fix says what `doctor --fix` does about it; empty when the user has
@@ -150,13 +158,15 @@ type Problem struct {
 	change func()
 	// forgotten is the folder of a record change drops.
 	forgotten string
-	dir       string
-	register  bool
+	// dir is a folder --fix deletes.
+	dir string
 }
 
-// Doctor reports the disagreements among the recipes, state.json, the store
-// and settings.json, and fixes what it can when fix is true. It does not go
-// to the network; converting versions again is pull's work.
+// Doctor reports the disagreements among the recipes, state.json and the
+// store, and fixes what it can when fix is true. It does not go to the
+// network; converting versions again is pull's work. What ALCOM lists is
+// not a problem: the user may unregister a version in ALCOM, and register
+// folders of their own, and a pull of the version registers it again.
 func (a *App) Doctor(fix bool) ([]Problem, error) {
 	var problems []*Problem
 	err := a.withLock(func() error {
@@ -243,30 +253,13 @@ func (a *App) Doctor(fix bool) ([]Problem, error) {
 			add(&Problem{Message: p + " is left from an unfinished build", Fix: "delete it", dir: p})
 		}
 
-		// The registration is compared with the state after the records
-		// above are forgotten, since that is what --fix registers.
-		forgotten := map[string]bool{}
+		if !fix {
+			return nil
+		}
 		for _, p := range problems {
 			if p.change != nil {
 				p.change()
 			}
-			if p.forgotten != "" {
-				forgotten[filepath.Clean(p.forgotten)] = true
-			}
-		}
-		regProblems, regErr := a.checkRegistration(st, forgotten)
-		if regErr != nil {
-			add(&Problem{Message: fmt.Sprintf("cannot check the registration: %v", regErr)})
-		}
-		problems = append(problems, regProblems...)
-
-		if !fix {
-			return nil
-		}
-		if regErr != nil {
-			// Saving the state without registering it would leave ALCOM
-			// listing folders that --fix then deletes.
-			return fmt.Errorf("cannot fix without ALCOM's settings: %w", regErr)
 		}
 		return a.fix(st, problems)
 	})
@@ -291,18 +284,18 @@ func (a *App) checkVersion(id, name, v string, ps *state.PackageState) (p *Probl
 		msg := fmt.Sprintf("%s: %s %s is recorded at %s, outside the store %s", id, name, v, vs.Path, a.Layout.Packages())
 		if isDir(want) && convert.CheckManifest(want, name, v) == nil {
 			return &Problem{Message: msg, Fix: "record " + want + " instead",
-				change: func() { vs.Path = want }, register: true}, true
+				change: func() { vs.Path = want }}, true
 		}
 		return &Problem{Message: msg, Fix: "forget the record" + resync,
-			change: forget, forgotten: vs.Path, register: true}, false
+			change: forget, forgotten: vs.Path}, false
 	}
 	if !isDir(vs.Path) {
 		return &Problem{Message: fmt.Sprintf("%s: %s %s: folder %s is missing", id, name, v, vs.Path),
-			Fix: "forget the record" + resync, change: forget, forgotten: vs.Path, register: true}, true
+			Fix: "forget the record" + resync, change: forget, forgotten: vs.Path}, true
 	}
 	if err := convert.CheckManifest(vs.Path, name, v); err != nil {
 		return &Problem{Message: fmt.Sprintf("%s: %s %s: %v", id, name, v, err),
-			Fix: "delete the folder and forget the record" + resync, change: forget, forgotten: vs.Path, dir: vs.Path, register: true}, true
+			Fix: "delete the folder and forget the record" + resync, change: forget, forgotten: vs.Path, dir: vs.Path}, true
 	}
 	return nil, true
 }
@@ -314,23 +307,41 @@ func samePath(x, y string) bool {
 	return err == nil && rel == "."
 }
 
-// fix saves the state the problems' records were forgotten from, registers
-// it, and deletes the problems' folders. Folders are deleted only after the
-// registration succeeds, so ALCOM never lists a folder that is gone.
+// fix saves the state the problems' records were forgotten from,
+// unregisters from ALCOM the folders it forgets or deletes, and deletes the
+// problems' folders. Folders are deleted only after they are unregistered,
+// so ALCOM never lists a folder that is gone; a forgotten folder that is
+// missing already is unregistered for the same reason. settings.json is
+// read before st is saved, so that one that cannot be read leaves
+// everything as it was.
 func (a *App) fix(st *state.State, problems []*Problem) error {
-	fixable, needRegister := false, false
+	fixable := false
+	var dirs []string
 	for _, p := range problems {
-		fixable = fixable || p.Fix != ""
-		needRegister = needRegister || p.register
+		if p.Fix == "" {
+			continue
+		}
+		fixable = true
+		for _, d := range []string{p.forgotten, p.dir} {
+			if d != "" {
+				dirs = append(dirs, d)
+			}
+		}
 	}
 	if !fixable {
 		return nil
 	}
+	unregister := a.unused(st, dirs)
+	if len(unregister) > 0 {
+		if _, err := alcom.Load(a.Layout.ALCOMSettings()); err != nil {
+			return fmt.Errorf("cannot fix without ALCOM's settings: %w", err)
+		}
+	}
 	if err := st.Save(a.Layout.State()); err != nil {
 		return err
 	}
-	if needRegister {
-		if _, err := a.register(st); err != nil {
+	if len(unregister) > 0 {
+		if _, err := a.updateRegistration(nil, unregister); err != nil {
 			return err
 		}
 	}
@@ -348,41 +359,6 @@ func (a *App) fix(st *state.State, problems []*Problem) error {
 		p.Fixed = true
 	}
 	return errors.Join(errs...)
-}
-
-// checkRegistration returns a problem for each available version ALCOM does not
-// list, and for each folder in the store that ALCOM lists but state.json
-// does not have. Folders in forgotten are left out: the problem with their
-// version already says --fix unregisters them.
-func (a *App) checkRegistration(st *state.State, forgotten map[string]bool) ([]*Problem, error) {
-	s, err := alcom.Load(a.Layout.ALCOMSettings())
-	if err != nil {
-		return nil, err
-	}
-	folders, err := s.UserPackageFolders()
-	if err != nil {
-		return nil, err
-	}
-	var out []*Problem
-	registered := map[string]bool{}
-	for _, f := range folders {
-		registered[filepath.Clean(f)] = true
-	}
-	want := map[string]bool{}
-	for _, p := range st.AllPaths() {
-		clean := filepath.Clean(p)
-		want[clean] = true
-		if !registered[clean] {
-			out = append(out, &Problem{Message: p + " is in the store but not registered with ALCOM", Fix: "register it", register: true})
-		}
-	}
-	owner := a.reconciler()
-	for _, f := range folders {
-		if clean := filepath.Clean(f); owner.Owns(clean) && !want[clean] && !forgotten[clean] {
-			out = append(out, &Problem{Message: "ALCOM lists " + f + ", which state.json does not have", Fix: "unregister it", register: true})
-		}
-	}
-	return out, nil
 }
 
 // osClutter are files the OS's file browser leaves in folders it shows.

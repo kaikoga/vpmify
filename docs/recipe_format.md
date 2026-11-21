@@ -166,7 +166,7 @@ Any other `{…}` in a value of `vpmDependencies` is an error. Placeholders are 
 
 ### How dependencies are followed
 
-ALCOM reads the values of `vpmDependencies` as version ranges. Vpmify follows them too, with the [range syntax](#ranges) below: after a `pull`, it reads the `vpmDependencies` of every version made available, from every recipe. For a dependency on a package that a recipe provides, and that no available version satisfies, Vpmify takes a version:
+ALCOM reads the values of `vpmDependencies` as version ranges. Vpmify follows them too, with the [range syntax](#ranges) below: a `pull` reads the `vpmDependencies` of every version it takes. For a dependency on a package that a recipe provides, and that no available version from any recipe satisfies, Vpmify takes a version, and follows its `vpmDependencies` in turn:
 
 - from the dependent's own recipe first, and then from the other recipes that provide the package, in the order of their `id`;
 - the version the lower bound of a `>=` range names, when the version list has it; otherwise the newest version in the range, prereleases included. A version that cannot be converted is passed over.
