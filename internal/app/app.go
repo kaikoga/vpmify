@@ -868,7 +868,7 @@ func (a *App) pullPackage(ctx context.Context, st *state.State, id string, l *pk
 		case len(accepted) > 0:
 			selected = []source.Release{newest(accepted)}
 		case len(extra) == 0:
-			chooseErr = &noChoiceError{prerelease: prerelease}
+			chooseErr = &noChoiceError{prereleases: !prerelease && len(l.accepted(true)) > 0}
 		}
 	}
 	for _, v := range extra {
@@ -963,14 +963,16 @@ func (a *App) pullPackage(ctx context.Context, st *state.State, id string, l *pk
 // package upstream releases only as prereleases does not fail the others
 // of its recipe, and fails when the user named the package.
 type noChoiceError struct {
-	prerelease bool
+	// prereleases says the pull left out prereleases it could have chosen,
+	// so that only then is --prerelease pointed at.
+	prereleases bool
 }
 
 func (e *noChoiceError) Error() string {
-	if e.prerelease {
-		return "the version list has no version that can be converted"
+	if e.prereleases {
+		return "the version list has only prereleases that can be converted; pull it with --prerelease, or name a version"
 	}
-	return "the version list has no stable version that can be converted; pull it with --prerelease, or name a version"
+	return "the version list has no version that can be converted"
 }
 
 // overlayFolderError is a version whose package has no empty folder where an

@@ -549,6 +549,27 @@ func TestPullNamedVersionWithAnEmptyRange(t *testing.T) {
 	}
 }
 
+// A package without any version to choose is warned of without pointing
+// at --prerelease, which would not help.
+func TestPullOfAPackageWithoutVersions(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	ctx := context.Background()
+	if _, err := f.app.Add(ctx, f.writeRecipe(`, "versions": ">=2.0.0"`)); err != nil {
+		t.Fatal(err, f.log)
+	}
+	res, err := f.app.Pull(ctx, nil, PullOptions{})
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0].Warning, "no version that can be converted") || strings.Contains(res.Warnings[0].Warning, "--prerelease") {
+		t.Errorf("warnings = %v", res.Warnings)
+	}
+	if _, err := f.app.Pull(ctx, nil, PullOptions{Prerelease: true}); err != nil {
+		t.Fatal(err, f.log)
+	}
+}
+
 // Prerelease lets a pull that names no version choose prereleases, which it
 // otherwise leaves for the user to name.
 func TestPullPrerelease(t *testing.T) {
