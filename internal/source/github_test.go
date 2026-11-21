@@ -300,6 +300,47 @@ func TestGitHubWarnsOnlyOfTagsThatMakeAVersion(t *testing.T) {
 	}
 }
 
+// Versions that differ only in build metadata are one version, taken from
+// the oldest tag, as ALCOM cannot tell them apart. From package.json they
+// come in tags of different versions and warn of nothing, as any version
+// kept in newer tags; from tags read as one version they warn.
+func TestGitHubBuildMetadataMakesNoOtherVersion(t *testing.T) {
+	gh := testutil.NewFakeGitHub("owner", "repo")
+	gh.Tag("v1.0.0", map[string]string{"package.json": manifest("com.example.pkg", "1.0.0+a")})
+	gh.Tag("v1.0.1", map[string]string{"package.json": manifest("com.example.pkg", "1.0.0+b")})
+	gh.Tag("v1.1.0", map[string]string{"package.json": manifest("com.example.pkg", "1.1.0")})
+	all, warnings, err := newSource(t, gh, `{"vpmifyFormat": 1, "id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
+  "packages": [{"name": "com.example.pkg"}]}]}`).Releases(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var summary []string
+	for _, r := range all["com.example.pkg"] {
+		summary = append(summary, r.Version.String()+" "+r.Origin)
+	}
+	if want := []string{"1.0.0+a tag v1.0.0", "1.1.0 tag v1.1.0"}; !reflect.DeepEqual(summary, want) {
+		t.Errorf("from package.json: releases = %q, want %q", summary, want)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("from package.json: warnings = %q", warnings)
+	}
+
+	gh = testutil.NewFakeGitHub("owner", "repo")
+	gh.Tag("v1.0.0+a", map[string]string{"package.json": manifest("com.example.pkg", "1.0.0")})
+	gh.Tag("v1.0.0+b", map[string]string{"package.json": manifest("com.example.pkg", "1.0.0")})
+	all, warnings, err = newSource(t, gh, `{"vpmifyFormat": 1, "id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo",
+  "packages": [{"name": "com.example.pkg", "versionFromTag": true}]}]}`).Releases(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := all["com.example.pkg"]; len(got) != 1 || got[0].Version.String() != "1.0.0+a" || got[0].Origin != "tag v1.0.0+a" {
+		t.Errorf("from tags: releases = %+v", got)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "tags v1.0.0+a and v1.0.0+b read as version 1.0.0+a, and com.example.pkg is taken from v1.0.0+a") {
+		t.Errorf("from tags: warnings = %q", warnings)
+	}
+}
+
 // Names that differ only in leading zeros, which compare equal by value,
 // are ordered by their text, so that the tag taken does not change from run
 // to run with the order the ref advertisement comes in.

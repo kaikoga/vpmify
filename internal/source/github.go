@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -126,31 +127,30 @@ func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, []string, 
 	var same sameVersionTags
 	out := map[string][]Release{}
 	for j, p := range g.Packages {
-		// chosen is the tag each version is taken from, by version.
-		chosen := map[string]int{}
-		var order []string
+		// chosen is the tag each version is taken from. Versions that differ
+		// only in build metadata, such as 1.0.0+a and 1.0.0+b, are one
+		// version, as SemVer and ALCOM compare them: both in the user
+		// packages would leave ALCOM to pick either.
+		var chosen []int
 		for i := range tags { // oldest first
 			rel := found[i*n+j]
 			if rel == nil {
 				continue
 			}
-			v := rel.Version.String()
-			cur, ok := chosen[v]
+			c := slices.IndexFunc(chosen, func(k int) bool { return semver.Compare(found[k*n+j].Version, rel.Version) == 0 })
 			switch {
-			case !ok:
-				chosen[v] = i
-				order = append(order, v)
-			case !rel.Version.IsPrerelease() && tags[cur].version.IsPrerelease() && !tags[i].version.IsPrerelease():
-				chosen[v] = i
+			case c < 0:
+				chosen = append(chosen, i)
+			case !rel.Version.IsPrerelease() && tags[chosen[c]].version.IsPrerelease() && !tags[i].version.IsPrerelease():
+				chosen[c] = i
 			}
 		}
 		rels := []Release{}
-		for _, v := range order {
-			i := chosen[v]
+		for _, i := range chosen {
 			rel := found[i*n+j]
 			var names []string
 			for k, t := range tags {
-				if semver.Compare(t.version, tags[i].version) == 0 && found[k*n+j] != nil && found[k*n+j].Version.String() == v {
+				if semver.Compare(t.version, tags[i].version) == 0 && found[k*n+j] != nil && semver.Compare(found[k*n+j].Version, rel.Version) == 0 {
 					names = append(names, t.name)
 				}
 			}
