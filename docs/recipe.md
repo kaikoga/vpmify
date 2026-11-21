@@ -6,7 +6,7 @@ A recipe is a JSON file that says where a UPM package comes from and how to fix 
 
 A recipe does not say which versions to install. The user chooses them with the arguments of `vpmify package pull`, or in the GUI.
 
-Working recipes are in [examples/](../examples/).
+Working recipes are in [examples/](../examples/). Every field and value a recipe takes is described in [recipe_format.md](recipe_format.md).
 
 ## The smallest recipe
 

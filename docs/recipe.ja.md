@@ -6,7 +6,7 @@
 
 どの版を入れるかはレシピに書きません。利用者が `vpmify package pull` の引数（または GUI）で選びます。
 
-実物の例は [examples/](../examples/) にあります。
+実物の例は [examples/](../examples/) にあります。レシピが受けるすべての欄と値は、[recipe_format.md](recipe_format.md)（英語）に書いてあります。
 
 ## いちばん小さいレシピ
 
