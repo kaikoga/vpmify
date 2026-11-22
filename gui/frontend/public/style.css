@@ -133,11 +133,11 @@ button.danger {
     color: var(--ok);
 }
 
-.muted, .hint, .note {
+.muted, .note {
     color: var(--faint);
 }
 
-.hint, .note {
+.note {
     font-size: 12px;
     word-break: break-all;
 }
@@ -218,12 +218,6 @@ button.danger {
 
 .side li .count {
     font-size: 12px;
-}
-
-.side .hint {
-    margin: 0;
-    padding: 8px 12px;
-    border-top: 1px solid var(--line);
 }
 
 .detail {
