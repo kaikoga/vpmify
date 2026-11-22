@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 
 	vpmify "github.com/kaikoga/vpmify/internal/app"
 )
@@ -23,35 +24,84 @@ type Message struct {
 var errPendingGone = errors.New("the recipes are no longer waiting")
 
 // messageOf is what the front end shows for err, or nil without one. Of
-// several errors err joins, the first it knows names the kind; Detail says
-// them all.
+// several errors err joins, the first it knows, depth first, names the
+// kind, and Detail says them all. When err also joins one it does not know,
+// such as a failed download, there is no kind: the words for one failure
+// would hide the other.
 func messageOf(err error) *Message {
 	if err == nil {
 		return nil
 	}
-	m := &Message{Detail: err.Error()}
-	var (
-		noList    *vpmify.NoListError
-		notListed *vpmify.NotListedError
-		noMatch   *vpmify.NoMatchError
-		noRecipe  *vpmify.NoRecipeError
-		link      *linkError
-	)
+	var first *Message
+	unknown := false
+	walkErrors(err, func(e error) bool {
+		if m := kindOf(e); m != nil {
+			if first == nil {
+				first = m
+			}
+			return false
+		}
+		if !wraps(e) {
+			unknown = true
+		}
+		return true
+	})
 	switch {
-	case errors.As(err, &link):
-		return &Message{Kind: link.kind, Args: map[string]string{link.argName: link.arg}}
-	case errors.Is(err, errPendingGone):
-		return &Message{Kind: "pendingGone"}
-	case errors.As(err, &noList):
-		m.Kind, m.Args = "noList", map[string]string{"recipe": noList.Recipe}
-	case errors.As(err, &notListed):
-		m.Kind, m.Args = "notListed", map[string]string{"version": notListed.Version}
-	case errors.As(err, &noMatch):
-		m.Kind, m.Args = "noMatch", map[string]string{"package": noMatch.Package, "range": noMatch.Range}
-	case errors.As(err, &noRecipe):
-		m.Kind, m.Args = "noRecipe", map[string]string{"recipe": noRecipe.Recipe}
+	case first == nil || unknown:
+		return &Message{Detail: err.Error()}
+	case first.Kind == "pendingGone" || strings.HasPrefix(first.Kind, "link"):
+		// The GUI's own failures are said whole by the front end.
+		return first
 	}
-	return m
+	first.Detail = err.Error()
+	return first
+}
+
+// kindOf is the Message of one error the front end knows, without Detail,
+// or nil.
+func kindOf(err error) *Message {
+	switch e := err.(type) {
+	case *linkError:
+		return &Message{Kind: e.kind, Args: map[string]string{e.argName: e.arg}}
+	case *vpmify.NoListError:
+		return &Message{Kind: "noList", Args: map[string]string{"recipe": e.Recipe}}
+	case *vpmify.NotListedError:
+		return &Message{Kind: "notListed", Args: map[string]string{"recipe": e.Recipe, "version": e.Version}}
+	case *vpmify.NoMatchError:
+		return &Message{Kind: "noMatch", Args: map[string]string{"recipe": e.Recipe, "package": e.Package, "range": e.Range}}
+	case *vpmify.NoRecipeError:
+		return &Message{Kind: "noRecipe", Args: map[string]string{"recipe": e.Recipe}}
+	}
+	if err == errPendingGone {
+		return &Message{Kind: "pendingGone"}
+	}
+	return nil
+}
+
+// wraps says whether err only wraps or joins other errors, which say the
+// failure.
+func wraps(err error) bool {
+	switch err.(type) {
+	case interface{ Unwrap() []error }, interface{ Unwrap() error }:
+		return true
+	}
+	return false
+}
+
+// walkErrors calls fn with err and, while fn returns true, the errors it
+// wraps or joins, depth first.
+func walkErrors(err error, fn func(error) bool) {
+	if err == nil || !fn(err) {
+		return
+	}
+	switch e := err.(type) {
+	case interface{ Unwrap() []error }:
+		for _, inner := range e.Unwrap() {
+			walkErrors(inner, fn)
+		}
+	case interface{ Unwrap() error }:
+		walkErrors(e.Unwrap(), fn)
+	}
 }
 
 // uiError is an error a method returns to the front end with its Message,

@@ -19,12 +19,20 @@ func TestMessageOf(t *testing.T) {
 		want *Message
 	}{
 		{"none", nil, nil},
-		{"wrapped and joined", errors.Join(errors.New("other"), fmt.Errorf("kit: %w", noList)),
-			&Message{Kind: "noList", Args: map[string]string{"recipe": "kit"}, Detail: "other\nkit: no usable version list: none yet"}},
+		{"wrapped", fmt.Errorf("kit: %w", noList),
+			&Message{Kind: "noList", Args: map[string]string{"recipe": "kit"}, Detail: "kit: no usable version list: none yet"}},
+		// The first known error in the tree names the kind, whatever its
+		// type.
+		{"joined", errors.Join(fmt.Errorf("a: %w", &vpmify.NoRecipeError{Recipe: "a"}), fmt.Errorf("kit: %w", noList)),
+			&Message{Kind: "noRecipe", Args: map[string]string{"recipe": "a"}, Detail: "a: no recipe \"a\"\nkit: no usable version list: none yet"}},
+		// A failure of another kind would be hidden behind the words for
+		// the known one.
+		{"joined with an unknown", errors.Join(errors.New("GET x: 404"), fmt.Errorf("kit: %w", noList)),
+			&Message{Detail: "GET x: 404\nkit: no usable version list: none yet"}},
 		{"not listed", fmt.Errorf("pkg: %w", &vpmify.NotListedError{Recipe: "kit", Version: "1.2.3", Package: "pkg"}),
-			&Message{Kind: "notListed", Args: map[string]string{"version": "1.2.3"}, Detail: "pkg: the version list has no 1.2.3: it is outside the package's versions, or the version list is older than it"}},
+			&Message{Kind: "notListed", Args: map[string]string{"recipe": "kit", "version": "1.2.3"}, Detail: "pkg: the version list has no 1.2.3: it is outside the package's versions, or the version list is older than it"}},
 		{"no match", &vpmify.NoMatchError{Recipe: "kit", Package: "pkg", Range: ">=1.0.0"},
-			&Message{Kind: "noMatch", Args: map[string]string{"package": "pkg", "range": ">=1.0.0"}, Detail: "the version list of pkg has no version that satisfies it"}},
+			&Message{Kind: "noMatch", Args: map[string]string{"recipe": "kit", "package": "pkg", "range": ">=1.0.0"}, Detail: "the version list of pkg has no version that satisfies it"}},
 		{"no recipe", &vpmify.NoRecipeError{Recipe: "kit"},
 			&Message{Kind: "noRecipe", Args: map[string]string{"recipe": "kit"}, Detail: `no recipe "kit"`}},
 		// The GUI's own failures are said whole by the front end.

@@ -189,11 +189,16 @@ function confirmPackageRemoval(id: string, name: string, displayName: string | u
 }
 
 // messageOf is what to show for a failed call: the service's Message, which
-// Wails hands over as the cause of the error, or else the error's words.
+// Wails hands over as the cause of the error, or else the error's words. A
+// Message this front end cannot say, of a kind it does not know and without
+// the core's words, is shown as the error's words too.
 function messageOf(err: unknown): Message {
     const cause = (err as { cause?: unknown } | null)?.cause;
     if (cause && typeof cause === "object" && "kind" in cause) {
-        return cause as Message;
+        const m = cause as Message;
+        if (m.detail || isKey(`error.${m.kind ?? ""}`)) {
+            return m;
+        }
     }
     return {detail: String(err)};
 }
