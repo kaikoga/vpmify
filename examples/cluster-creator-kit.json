@@ -34,6 +34,18 @@
           ]
         }
       ]
+    },
+    {
+      "type": "github",
+      "url": "https://github.com/ClusterVR/audiolink",
+      "packages": [
+        {
+          "name": "com.llealloo.audiolink",
+          "onDemand": true,
+          "path": "Packages/com.llealloo.audiolink",
+          "versionFromTag": true
+        }
+      ]
     }
   ]
 }
