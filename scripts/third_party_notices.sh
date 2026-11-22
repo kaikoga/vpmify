@@ -22,6 +22,15 @@ set -euo pipefail
 root=$(git rev-parse --show-toplevel)
 cd "$root"
 
+# go list reads the //go:embed pattern of gui/main.go, which needs a file in
+# the front end's build output. A fresh checkout has none until the GUI is
+# built, so put a placeholder there while the dependencies are listed.
+if [ ! -e gui/frontend/dist ]; then
+  mkdir gui/frontend/dist
+  touch gui/frontend/dist/placeholder
+  trap 'rm -rf gui/frontend/dist' EXIT
+fi
+
 go_license=${GO_LICENSE:-$(go env GOROOT)/LICENSE}
 if [ ! -f "$go_license" ]; then
   echo "no Go license at $go_license; give its path as GO_LICENSE" >&2
