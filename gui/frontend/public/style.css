@@ -133,6 +133,11 @@ button.danger {
     color: var(--ok);
 }
 
+.newer {
+    color: var(--accent);
+    font-weight: 600;
+}
+
 .muted, .note {
     color: var(--faint);
 }

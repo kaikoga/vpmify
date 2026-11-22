@@ -209,16 +209,43 @@ async function act(fn: () => Promise<unknown>) {
     await refresh();
 }
 
-// newestChoosable says whether the newest button has a version to choose;
-// showVersions sets it, and setBusy keeps the button off without one.
-let newestChoosable = false;
+// hasNewer says whether the newest button would get a version not yet
+// available; showVersions sets it, and setBusy keeps the button off
+// without one.
+let hasNewer = false;
+
+// newerPackages returns the packages whose newest version is not available
+// yet: of each package not onDemand, the newest version listed that can be
+// converted, which the newest button gets. The lists are newest first, and
+// hold prereleases only when the box shows them.
+function newerPackages(packages: PackageVersions[]): Set<string> {
+    const out = new Set<string>();
+    for (const p of packages) {
+        if (p.onDemand) {
+            continue;
+        }
+        const v = (p.versions ?? []).find((v) => !v.unusable);
+        if (v && !v.available) {
+            out.add(p.package);
+        }
+    }
+    return out;
+}
+
+// newerMark is the mark of a recipe or a package with a newer version to
+// get.
+function newerMark(): HTMLSpanElement {
+    const mark = el("span", "newer", "↑");
+    mark.title = t("recipe.newer");
+    return mark;
+}
 
 function setBusy(value: boolean) {
     busy = value;
     spinnerElement.hidden = !busy;
     cancelElement.hidden = !busy;
     for (const b of document.querySelectorAll<HTMLButtonElement>("button[data-op]")) {
-        b.disabled = busy || (b === pullNewestElement && !newestChoosable);
+        b.disabled = busy || (b === pullNewestElement && !hasNewer);
     }
     if (busy) {
         // The dialog would cover the cancel button; it comes back when the
@@ -333,8 +360,8 @@ function renderPending(p: PendingAdd, more: number) {
 let recipeNames = new Map<string, string>();
 
 // entries are the available versions of every recipe, or null when they
-// could not be listed.
-function showRecipes(recipes: RecipeInfo[], entries: Entry[] | null) {
+// could not be listed; newer is the recipes with a newer version to get.
+function showRecipes(recipes: RecipeInfo[], entries: Entry[] | null, newer: Set<string>) {
     recipeNames = new Map(recipes.filter((r) => r.displayName).map((r) => [r.id, r.displayName!]));
     recipesElement.replaceChildren();
     for (const r of recipes) {
@@ -351,9 +378,14 @@ function showRecipes(recipes: RecipeInfo[], entries: Entry[] | null) {
             const mark = el("span", "error count", "!");
             mark.title = r.problem;
             li.append(mark);
-        } else if (entries) {
-            const n = entries.filter((e) => e.recipe === r.id).length;
-            li.append(n > 0 ? el("span", "ok count", `✔ ${n}`) : el("span", "muted count", "—"));
+        } else {
+            if (newer.has(r.id)) {
+                li.append(newerMark());
+            }
+            if (entries) {
+                const n = entries.filter((e) => e.recipe === r.id).length;
+                li.append(n > 0 ? el("span", "ok count", `✔ ${n}`) : el("span", "muted count", "—"));
+            }
         }
         li.addEventListener("click", () => {
             selected = r.id;
@@ -397,7 +429,7 @@ function showRecipe(r: RecipeInfo | null, hasRecipes: boolean, entries: Entry[] 
 
 // shown is what showVersions was given, which renderPackages draws again
 // when the user opens or closes a package.
-let shown: { id: string, packages: PackageVersions[], entries: Entry[] } | null = null;
+let shown: { id: string, packages: PackageVersions[], entries: Entry[], newer: Set<string> } | null = null;
 
 // open is the packages whose versions are shown, by "<id>/<package>"; seen
 // is those shown before, so that a package opens by itself only the first
@@ -416,12 +448,12 @@ function showVersions(id: string, entries: Entry[], versions: VersionsResult | n
     versionsError.hidden = !why;
     versionsError.textContent = why;
     const packages = versions?.list?.packages ?? [];
-    // The newest button pulls the recipe without naming a package, which
-    // chooses only from the versions shown here (prereleases only when the
-    // box shows them) that can be converted, of packages not onDemand.
-    newestChoosable = packages.some((p) => !p.onDemand && (p.versions ?? []).some((v) => !v.unusable));
-    pullNewestElement.disabled = !newestChoosable || busy;
-    shown = {id, packages, entries};
+    // The newest button pulls the recipe without naming a package, and is
+    // off while it would get nothing new.
+    const newer = newerPackages(packages);
+    hasNewer = newer.size > 0;
+    pullNewestElement.disabled = !hasNewer || busy;
+    shown = {id, packages, entries, newer};
     renderPackages();
 }
 
@@ -430,14 +462,14 @@ function renderPackages() {
         packagesElement.replaceChildren();
         return;
     }
-    const {id, packages, entries} = shown;
-    const blocks = packages.map((p) => packageBlock(id, p.package, p, entries.filter((e) => e.package === p.package)));
+    const {id, packages, entries, newer} = shown;
+    const blocks = packages.map((p) => packageBlock(id, p.package, p, entries.filter((e) => e.package === p.package), newer.has(p.package)));
     // Packages with available versions but no version list, as when their
     // source could not be read, still show those versions.
     const listed = new Set(packages.map((p) => p.package));
     const unlisted = [...new Set(entries.map((e) => e.package))].filter((name) => !listed.has(name));
     for (const name of unlisted) {
-        blocks.push(packageBlock(id, name, null, entries.filter((e) => e.package === name)));
+        blocks.push(packageBlock(id, name, null, entries.filter((e) => e.package === name), false));
     }
     packagesElement.replaceChildren(...blocks);
     noVersionsElement.hidden = blocks.length > 0;
@@ -456,8 +488,9 @@ interface VersionRow {
 }
 
 // packageBlock shows package name of recipe id: its version list p, which
-// is null when there is none, and its available versions entries.
-function packageBlock(id: string, name: string, p: PackageVersions | null, entries: Entry[]): HTMLDivElement {
+// is null when there is none, its available versions entries, and whether
+// it has a newer version to get.
+function packageBlock(id: string, name: string, p: PackageVersions | null, entries: Entry[], newer: boolean): HTMLDivElement {
     const key = `${id}/${name}`;
     if (!seen.has(key)) {
         seen.add(key);
@@ -491,6 +524,9 @@ function packageBlock(id: string, name: string, p: PackageVersions | null, entri
     }
     head.append(info);
     const summary = el("div", "summary");
+    if (newer) {
+        summary.append(newerMark());
+    }
     if (entries.length > 0) {
         summary.append(
             el("span", "ok", t("package.available", {count: entries.length})),
@@ -630,20 +666,23 @@ async function refresh() {
         selected = recipes[0]?.id ?? null;
     }
     const id = selected;
-    let versions: VersionsResult | null = null;
-    let versionsFailure = "";
-    if (id !== null) {
+    // Every recipe's version lists, for the marks of newer versions on the
+    // left; Versions reads the lists Update saved, not upstream.
+    const all = prereleasesElement.checked;
+    const read = await Promise.all(recipes.map(async (r) => {
         try {
-            versions = await VpmifyService.Versions(id, prereleasesElement.checked);
+            return {id: r.id, versions: await VpmifyService.Versions(r.id, all), failure: ""};
         } catch (err) {
-            versionsFailure = String(err);
+            return {id: r.id, versions: null, failure: String(err)};
         }
-    }
+    }));
     if (g !== generation) {
         return;
     }
-    showRecipes(recipes, entries);
-    showRecipe(recipes.find((r) => r.id === id) ?? null, recipes.length > 0, entries, versions, versionsFailure);
+    const newer = new Set(read.filter((x) => newerPackages(x.versions?.list?.packages ?? []).size > 0).map((x) => x.id));
+    const chosen = read.find((x) => x.id === id);
+    showRecipes(recipes, entries, newer);
+    showRecipe(recipes.find((r) => r.id === id) ?? null, recipes.length > 0, entries, chosen?.versions ?? null, chosen?.failure ?? "");
     showAvailable(entries, listFailure);
     await showPending().catch(showError);
 }
