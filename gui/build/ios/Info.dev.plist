@@ -7,7 +7,7 @@
 		<key>CFBundleExecutable</key>
 		<string>vpmify-gui</string>
 		<key>CFBundleGetInfoString</key>
-		<string>This is a comment</string>
+		<string>Convert UPM packages into VPM packages for ALCOM</string>
 		<key>CFBundleIdentifier</key>
 		<string>net.kaikoga.vpmify.dev</string>
 		<key>CFBundleName</key>

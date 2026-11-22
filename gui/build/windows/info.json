@@ -8,10 +8,10 @@
 			"FileVersion": "0.0.0-dev",
 			"ProductVersion": "0.0.0-dev",
 			"CompanyName": "kaikoga",
-			"FileDescription": "Convert UPM packages into VPM packages for ALCOM",
+			"FileDescription": "Vpmify",
 			"LegalCopyright": "© 2026 kaikoga",
 			"ProductName": "Vpmify",
-			"Comments": "This is a comment"
+			"Comments": "Convert UPM packages into VPM packages for ALCOM"
 		}
 	}
 }

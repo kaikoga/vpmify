@@ -8,9 +8,11 @@ info:
   companyName: "kaikoga" # The name of the company
   productName: "Vpmify" # The name of the application
   productIdentifier: "net.kaikoga.vpmify" # The unique product identifier
-  description: "Convert UPM packages into VPM packages for ALCOM" # The application description
+  # Windows shows the description as the program's name, as in Task Manager
+  # and when a browser asks to open a vpmify: link with it.
+  description: "Vpmify" # The application description
   copyright: "© 2026 kaikoga" # Copyright text
-  comments: "" # Comments
+  comments: "Convert UPM packages into VPM packages for ALCOM" # Comments
   # The version of development builds. scripts/release.sh writes the version
   # of the release tag in its place while it builds a release.
   version: "0.0.0-dev" # The application version

@@ -5,7 +5,7 @@
 		<key>CFBundleExecutable</key>
 		<string>vpmify-gui</string>
 		<key>CFBundleGetInfoString</key>
-		<string>This is a comment</string>
+		<string>Convert UPM packages into VPM packages for ALCOM</string>
 		<key>CFBundleIconFile</key>
 		<string>icons</string>
 		<key>CFBundleIconName</key>
