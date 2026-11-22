@@ -68,9 +68,11 @@ else
     echo "the working tree has changes; commit or stash them first" >&2
     exit 1
   fi
-  # The version goes into sed replacements and file names below.
-  if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
-    echo "the tag v$version does not name a SemVer version" >&2
+  # The version goes into sed replacements and file names below. A release
+  # takes no build metadata, whose + GitHub may not keep in the names of the
+  # release files that SHA256SUMS lists.
+  if ! [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+    echo "the tag v$version does not name a SemVer version without build metadata" >&2
     exit 1
   fi
 fi
@@ -152,16 +154,26 @@ stamp_gui_version() {
     gui/build/windows/nsis/project.nsi
   sed -i '' -e "s/name=\"net\.kaikoga\.vpmify\" version=\"0\.0\.0\.0\"/name=\"net.kaikoga.vpmify\" version=\"$core.0\"/" \
     gui/build/windows/wails.exe.manifest
-  local f
-  for f in "${stamped[@]}"; do
-    if git diff --quiet -- "$f"; then
-      echo "$f does not have the development version to replace" >&2
-      exit 1
-    fi
-  done
-  if grep -q -- 0.0.0-dev "${stamped[@]}"; then
-    echo "the development version is left in the GUI's build files:" >&2
-    grep -n -- 0.0.0-dev "${stamped[@]}" >&2
+  # Check each field for the version it should now have, as a version whose
+  # numbers are 0.0.0 leaves some of the files as they were.
+  expect_stamped "$version" plutil -extract CFBundleShortVersionString raw -o - gui/build/darwin/Info.plist
+  expect_stamped "$core" plutil -extract CFBundleVersion raw -o - gui/build/darwin/Info.plist
+  expect_stamped 4 grep -c -F "\"$version\"" gui/build/windows/info.json
+  expect_stamped 1 grep -c -F "INFO_PRODUCTVERSION \"$version\"" gui/build/windows/nsis/wails_tools.nsh
+  expect_stamped 1 grep -c -F "INFO_VERSIONNUMBERS \"$core\"" gui/build/windows/nsis/project.nsi
+  expect_stamped 1 grep -c -F "name=\"net.kaikoga.vpmify\" version=\"$core.0\"" gui/build/windows/wails.exe.manifest
+  # The development version as a whole value, not as the end of one such as 10.0.0-dev.1.
+  if grep -n -E '[">]0\.0\.0-dev["<]' "${stamped[@]}" >&2; then
+    echo "the development version is left in the GUI's build files" >&2
+    exit 1
+  fi
+}
+expect_stamped() {
+  local expected=$1 actual
+  shift
+  actual=$("$@") || true
+  if [ "$actual" != "$expected" ]; then
+    echo "the GUI's build files do not have the version written: '${*: -1}' gave '$actual' for '$expected'" >&2
     exit 1
   fi
 }

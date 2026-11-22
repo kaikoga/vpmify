@@ -22,7 +22,7 @@ Unicode true
 ## !define INFO_PROJECTNAME    "my-project" # Default "vpmify-gui"
 ## !define INFO_COMPANYNAME    "My Company" # Default "kaikoga"
 ## !define INFO_PRODUCTNAME    "My Product Name" # Default "Vpmify"
-## !define INFO_PRODUCTVERSION "1.0.0"     # Default "0.1.0"
+## !define INFO_PRODUCTVERSION "1.0.0"     # Default: the version in wails_tools.nsh
 ## !define INFO_COPYRIGHT      "(c) Now, My Company" # Default "© 2026 kaikoga"
 ###
 ## !define PRODUCT_EXECUTABLE  "Application.exe"      # Default "${INFO_PROJECTNAME}.exe"
