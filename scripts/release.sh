@@ -10,14 +10,15 @@
 #
 # Usage: scripts/release.sh [--snapshot] [--cli-only]
 #
-# The version is taken from the tag v<version> on HEAD. The working tree must
-# be clean, and gui/build/config.yml must have the same version: the GUI's
-# Info.plist and Windows resources are generated from it, by changing the
-# version there and running `wails3 task common:update:build-assets` in gui/.
+# The version is taken from the tag v<version> on HEAD, and the working tree
+# must be clean. The repository keeps the development version 0.0.0-dev in
+# gui/build/config.yml and in the GUI's build files made from it; a release
+# writes its own version into those build files while it builds, and puts them
+# back afterwards. Releases are built by .github/workflows/release.yml.
 # THIRD_PARTY_NOTICES.txt must match what scripts/third_party_notices.sh
 # prints now (it reads GO_LICENSE, as that script says).
 #
-#   --snapshot  build HEAD without a tag, as <config.yml version>-snapshot+<commit>,
+#   --snapshot  build HEAD without a tag, as <config.yml version>+<commit>,
 #               to try the build; the working tree may have changes, and
 #               outdated notices only warn
 #   --cli-only  skip the GUI, whose build takes npm and longer
@@ -48,7 +49,7 @@ fi
 commit=$(git rev-parse --short HEAD)
 dirty=$(git status --porcelain)
 if $snapshot; then
-  version="$config_version-snapshot+$commit"
+  version="$config_version+$commit"
   if [ -n "$dirty" ]; then
     version="$version.dirty"
   fi
@@ -67,8 +68,9 @@ else
     echo "the working tree has changes; commit or stash them first" >&2
     exit 1
   fi
-  if [ "$version" != "$config_version" ]; then
-    echo "the tag is v$version but gui/build/config.yml has $config_version" >&2
+  # The version goes into sed replacements and file names below.
+  if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+    echo "the tag v$version does not name a SemVer version" >&2
     exit 1
   fi
 fi
@@ -125,7 +127,46 @@ for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 wi
   fi
 done
 
+# Write the release's version over the development version in the GUI's build
+# files, field by field. `wails3 task common:update:build-assets` would make
+# them from config.yml, but it also writes Wails' templates back over the
+# changes kept in them, such as the quoted executable path in wails_tools.nsh.
+# The Windows manifest's assembly version takes four numbers, and the bundle
+# version of macOS numbers only, so they get the version without its
+# prerelease and build metadata.
+stamped=(gui/build/darwin/Info.plist gui/build/windows/info.json
+  gui/build/windows/nsis/wails_tools.nsh gui/build/windows/wails.exe.manifest)
+restore_stamped() {
+  git checkout -- "${stamped[@]}"
+}
+stamp_gui_version() {
+  local core=${version%%[-+]*}
+  trap restore_stamped EXIT
+  plutil -replace CFBundleShortVersionString -string "$version" gui/build/darwin/Info.plist
+  plutil -replace CFBundleVersion -string "$core" gui/build/darwin/Info.plist
+  sed -i '' -e "s/\"0\.0\.0-dev\"/\"$version\"/" gui/build/windows/info.json
+  sed -i '' -e "s/INFO_PRODUCTVERSION \"0\.0\.0-dev\"/INFO_PRODUCTVERSION \"$version\"/" \
+    gui/build/windows/nsis/wails_tools.nsh
+  sed -i '' -e "s/name=\"net\.kaikoga\.vpmify\" version=\"0\.0\.0\.0\"/name=\"net.kaikoga.vpmify\" version=\"$core.0\"/" \
+    gui/build/windows/wails.exe.manifest
+  local f
+  for f in "${stamped[@]}"; do
+    if git diff --quiet -- "$f"; then
+      echo "$f does not have the development version to replace" >&2
+      exit 1
+    fi
+  done
+  if grep -q -- 0.0.0-dev "${stamped[@]}"; then
+    echo "the development version is left in the GUI's build files:" >&2
+    grep -n -- 0.0.0-dev "${stamped[@]}" >&2
+    exit 1
+  fi
+}
+
 if ! $cli_only; then
+  if ! $snapshot; then
+    stamp_gui_version
+  fi
   echo "GUI macOS universal"
   (cd gui && wails3 task darwin:package:universal VERSION="$version" && wails3 task darwin:create:dmg)
   cp gui/bin/vpmify-gui.dmg "$out/vpmify-gui_${version}_macos_universal.dmg"

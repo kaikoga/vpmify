@@ -11,7 +11,9 @@ info:
   description: "Convert UPM packages into VPM packages for ALCOM" # The application description
   copyright: "© 2026 kaikoga" # Copyright text
   comments: "" # Comments
-  version: "0.1.0" # The application version
+  # The version of development builds. scripts/release.sh writes the version
+  # of the release tag in its place while it builds a release.
+  version: "0.0.0-dev" # The application version
   # cfBundleIconName: "appicon" # The macOS icon name in Assets.car icon bundles (optional)
   #                               # Should match the name of your .icon file without the extension
   #                               # If not set and Assets.car exists, defaults to "appicon"
