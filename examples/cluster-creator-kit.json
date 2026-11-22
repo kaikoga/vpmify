@@ -2,6 +2,7 @@
   "vpmifyFormat": 1,
   "id": "net.kaikoga.vpmify.cluster-creator-kit",
   "displayName": "Cluster Creator Kit",
+  "url": "https://vpm.kaikoga.net/vpmify/cluster-creator-kit.json",
   "sources": [
     {
       "type": "npm",

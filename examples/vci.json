@@ -2,6 +2,7 @@
   "vpmifyFormat": 1,
   "id": "net.kaikoga.vpmify.vci",
   "displayName": "VCI",
+  "url": "https://vpm.kaikoga.net/vpmify/vci.json",
   "sources": [
     {
       "type": "github",

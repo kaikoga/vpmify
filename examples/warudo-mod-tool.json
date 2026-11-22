@@ -2,6 +2,7 @@
   "vpmifyFormat": 1,
   "id": "net.kaikoga.vpmify.warudo-mod-tool",
   "displayName": "Warudo Mod Tool",
+  "url": "https://vpm.kaikoga.net/vpmify/warudo-mod-tool.json",
   "sources": [
     {
       "type": "github",

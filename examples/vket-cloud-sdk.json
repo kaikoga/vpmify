@@ -2,6 +2,7 @@
   "vpmifyFormat": 1,
   "id": "net.kaikoga.vpmify.vket-cloud-sdk",
   "displayName": "Vket Cloud SDK",
+  "url": "https://vpm.kaikoga.net/vpmify/vket-cloud-sdk.json",
   "sources": [
     {
       "type": "npm",
