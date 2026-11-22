@@ -1,0 +1,55 @@
+# Builds the release files with scripts/release.sh when a tag v<version> is
+# pushed, and puts them in a draft release, which a maintainer publishes by
+# hand. Development builds are made locally (scripts/release.sh --snapshot).
+# A tag with a prerelease, such as v0.1.0-rc.1, makes a draft marked as a
+# prerelease, so the workflow can be tried and the draft deleted.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # scripts/release.sh builds the GUI's macOS app, which takes actool from Xcode.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: gui/go.sum
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gui/frontend/package-lock.json
+
+      # The same Wails as gui/go.mod requires.
+      - name: Install wails3
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.1.0
+
+      # The Windows installers are built with NSIS.
+      - name: Install makensis
+        run: brew install makensis
+
+      - name: Build the release files
+        run: scripts/release.sh
+
+      - name: Create a draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=${TAG#v}
+          flags=(--draft --verify-tag --title "Vpmify $version")
+          case "$version" in
+            *-*) flags+=(--prerelease) ;;
+          esac
+          gh release create "$TAG" "${flags[@]}" dist/"$version"/*
