@@ -15,6 +15,14 @@
               "merge": { "dependencies": { "com.unity.ugui": "1.0.0" } }
             },
             {
+              "versions": "<1.12.3",
+              "merge": { "dependencies": { "com.unity.postprocessing": "2.2.2", "com.unity.timeline": "1.2.6" } }
+            },
+            {
+              "versions": ">=1.12.3 <1.15.0",
+              "merge": { "dependencies": { "com.unity.postprocessing": "2.2.2", "com.unity.timeline": "1.2.18" } }
+            },
+            {
               "versions": ">=1.15.0 <3.4.0",
               "merge": { "dependencies": { "com.unity.postprocessing": "3.2.2", "com.unity.timeline": "1.6.4" } }
             },
