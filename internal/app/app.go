@@ -534,11 +534,14 @@ type target struct {
 	id, name, version string
 }
 
+// parseTargets reads the arguments of pull. An id no recipe can have is
+// left to pull, which fails that recipe alone, as it does one the user does
+// not have.
 func parseTargets(args []string) ([]target, error) {
 	var out []target
 	for _, arg := range args {
 		ref, version, _ := strings.Cut(arg, "@")
-		id, name, err := parseRef(ref)
+		id, name, err := splitRef(ref)
 		if err != nil {
 			return nil, fmt.Errorf("bad target %q: %w", arg, err)
 		}
@@ -558,12 +561,22 @@ func parseTargets(args []string) ([]target, error) {
 // store or Vpmify's folder, and "KIT" would name kit's folders on a file
 // system that ignores case, under a path ALCOM does not list.
 func parseRef(ref string) (id, name string, err error) {
-	id, name, hasName := strings.Cut(ref, "/")
-	if id == "" || (hasName && (name == "" || strings.Contains(name, "/"))) {
-		return "", "", fmt.Errorf("want <recipe> or <recipe>/<package>, not %q", ref)
+	id, name, err = splitRef(ref)
+	if err != nil {
+		return "", "", err
 	}
 	if !recipe.ValidID(id) {
 		return "", "", fmt.Errorf("no recipe %q", id)
+	}
+	return id, name, nil
+}
+
+// splitRef reads "<id>" or "<id>/<name>" as parseRef does, without
+// checking the id.
+func splitRef(ref string) (id, name string, err error) {
+	id, name, hasName := strings.Cut(ref, "/")
+	if id == "" || (hasName && (name == "" || strings.Contains(name, "/"))) {
+		return "", "", fmt.Errorf("want <recipe> or <recipe>/<package>, not %q", ref)
 	}
 	return id, name, nil
 }
@@ -720,6 +733,11 @@ func (a *App) pull(ctx context.Context, targets []target, opt PullOptions) (*Pul
 	for _, id := range order {
 		if ctx.Err() != nil {
 			break
+		}
+		// An id no recipe can have names no folder of the store.
+		if !recipe.ValidID(id) {
+			fails.add(id, fmt.Errorf("no recipe %q", id))
+			continue
 		}
 		if err := a.pullRecipe(ctx, run, id, *reqs[id]); err != nil {
 			fails.add(id, err)

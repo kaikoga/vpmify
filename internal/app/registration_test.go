@@ -160,6 +160,34 @@ func TestPullBuildsAgainOnlyAvailableVersions(t *testing.T) {
 	}
 }
 
+// An id no recipe can have fails that target alone, and the other recipes
+// are pulled.
+func TestPullFailsOnlyTheIDsNoRecipeHas(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	ctx := context.Background()
+	if _, err := f.app.Add(ctx, f.writeRecipe("")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	res, err := f.app.Pull(ctx, []string{"KIT", "kit", "..", "."}, PullOptions{})
+	if err == nil {
+		t.Error("no error for ids no recipe has")
+	}
+	var failed []string
+	for _, e := range res.Errors {
+		failed = append(failed, e.Recipe)
+	}
+	if want := []string{"KIT", "..", "."}; !reflect.DeepEqual(failed, want) {
+		t.Errorf("errors for %v, want %v", failed, want)
+	}
+	if len(res.Built) != 1 || res.Built[0].Recipe != "kit" {
+		t.Errorf("built = %+v", res.Built)
+	}
+	if got, want := f.available(), []string{"1.0.0@2021.3"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("available = %v, want %v", got, want)
+	}
+}
+
 // readOnly makes dir unwritable until undo is called or the test ends, so
 // that saving a file in it fails.
 func readOnly(t *testing.T, dir string) (undo func()) {
