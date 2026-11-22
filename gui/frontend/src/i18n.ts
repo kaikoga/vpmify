@@ -26,7 +26,7 @@ const en = {
     "pending.dismiss": "Dismiss",
 
     "recipes.updateAll": "Update all recipes",
-    "recipes.none": "No recipes yet. Add recipe files from the button at the top.",
+    "recipes.none": "No recipes yet. Add recipe files from the button at the top, or drop them on this window.",
 
     "recipe.update": "Update",
     "recipe.pullNewest": "Get the newest version",
@@ -114,7 +114,7 @@ const ja: Record<Key, string> = {
     "pending.dismiss": "閉じる",
 
     "recipes.updateAll": "全てのレシピを更新",
-    "recipes.none": "レシピはまだありません。上のボタンから、レシピのファイルを追加してください。",
+    "recipes.none": "レシピはまだありません。上のボタンか、この窓へのドロップで、レシピのファイルを追加してください。",
 
     "recipe.update": "更新",
     "recipe.pullNewest": "最新版を取得する",
