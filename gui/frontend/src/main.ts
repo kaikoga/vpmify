@@ -232,8 +232,14 @@ function newerPackages(packages: PackageVersions[]): Set<string> {
     return out;
 }
 
-// newerMark is the mark of a recipe or a package with a newer version to
-// get.
+// updatable returns the packages of newer that have an available version,
+// the ones the user has got and can update: a package never got has a
+// newest version to get too, but nothing to update.
+function updatable(newer: Set<string>, entries: Entry[]): Set<string> {
+    return new Set(entries.map((e) => e.package).filter((name) => newer.has(name)));
+}
+
+// newerMark is the mark of a recipe or a package with an update to get.
 function newerMark(): HTMLSpanElement {
     const mark = el("span", "newer", "↑");
     mark.title = t("recipe.newer");
@@ -360,8 +366,8 @@ function renderPending(p: PendingAdd, more: number) {
 let recipeNames = new Map<string, string>();
 
 // entries are the available versions of every recipe, or null when they
-// could not be listed; newer is the recipes with a newer version to get.
-function showRecipes(recipes: RecipeInfo[], entries: Entry[] | null, newer: Set<string>) {
+// could not be listed; updates is the recipes with an update to get.
+function showRecipes(recipes: RecipeInfo[], entries: Entry[] | null, updates: Set<string>) {
     recipeNames = new Map(recipes.filter((r) => r.displayName).map((r) => [r.id, r.displayName!]));
     recipesElement.replaceChildren();
     for (const r of recipes) {
@@ -379,7 +385,7 @@ function showRecipes(recipes: RecipeInfo[], entries: Entry[] | null, newer: Set<
             mark.title = r.problem;
             li.append(mark);
         } else {
-            if (newer.has(r.id)) {
+            if (updates.has(r.id)) {
                 li.append(newerMark());
             }
             if (entries) {
@@ -429,7 +435,7 @@ function showRecipe(r: RecipeInfo | null, hasRecipes: boolean, entries: Entry[] 
 
 // shown is what showVersions was given, which renderPackages draws again
 // when the user opens or closes a package.
-let shown: { id: string, packages: PackageVersions[], entries: Entry[], newer: Set<string> } | null = null;
+let shown: { id: string, packages: PackageVersions[], entries: Entry[], updates: Set<string> } | null = null;
 
 // open is the packages whose versions are shown, by "<id>/<package>"; seen
 // is those shown before, so that a package opens by itself only the first
@@ -453,7 +459,7 @@ function showVersions(id: string, entries: Entry[], versions: VersionsResult | n
     const newer = newerPackages(packages);
     hasNewer = newer.size > 0;
     pullNewestElement.disabled = !hasNewer || busy;
-    shown = {id, packages, entries, newer};
+    shown = {id, packages, entries, updates: updatable(newer, entries)};
     renderPackages();
 }
 
@@ -462,8 +468,8 @@ function renderPackages() {
         packagesElement.replaceChildren();
         return;
     }
-    const {id, packages, entries, newer} = shown;
-    const blocks = packages.map((p) => packageBlock(id, p.package, p, entries.filter((e) => e.package === p.package), newer.has(p.package)));
+    const {id, packages, entries, updates} = shown;
+    const blocks = packages.map((p) => packageBlock(id, p.package, p, entries.filter((e) => e.package === p.package), updates.has(p.package)));
     // Packages with available versions but no version list, as when their
     // source could not be read, still show those versions.
     const listed = new Set(packages.map((p) => p.package));
@@ -489,8 +495,8 @@ interface VersionRow {
 
 // packageBlock shows package name of recipe id: its version list p, which
 // is null when there is none, its available versions entries, and whether
-// it has a newer version to get.
-function packageBlock(id: string, name: string, p: PackageVersions | null, entries: Entry[], newer: boolean): HTMLDivElement {
+// it has an update to get.
+function packageBlock(id: string, name: string, p: PackageVersions | null, entries: Entry[], update: boolean): HTMLDivElement {
     const key = `${id}/${name}`;
     if (!seen.has(key)) {
         seen.add(key);
@@ -524,7 +530,7 @@ function packageBlock(id: string, name: string, p: PackageVersions | null, entri
     }
     head.append(info);
     const summary = el("div", "summary");
-    if (newer) {
+    if (update) {
         summary.append(newerMark());
     }
     if (entries.length > 0) {
@@ -666,8 +672,8 @@ async function refresh() {
         selected = recipes[0]?.id ?? null;
     }
     const id = selected;
-    // Every recipe's version lists, for the marks of newer versions on the
-    // left; Versions reads the lists Update saved, not upstream.
+    // Every recipe's version lists, for the marks of updates on the left;
+    // Versions reads the lists Update saved, not upstream.
     const all = prereleasesElement.checked;
     const read = await Promise.all(recipes.map(async (r) => {
         try {
@@ -679,9 +685,12 @@ async function refresh() {
     if (g !== generation) {
         return;
     }
-    const newer = new Set(read.filter((x) => newerPackages(x.versions?.list?.packages ?? []).size > 0).map((x) => x.id));
+    const updates = new Set(read.filter((x) => {
+        const ofRecipe = entries?.filter((e) => e.recipe === x.id) ?? [];
+        return updatable(newerPackages(x.versions?.list?.packages ?? []), ofRecipe).size > 0;
+    }).map((x) => x.id));
     const chosen = read.find((x) => x.id === id);
-    showRecipes(recipes, entries, newer);
+    showRecipes(recipes, entries, updates);
     showRecipe(recipes.find((r) => r.id === id) ?? null, recipes.length > 0, entries, chosen?.versions ?? null, chosen?.failure ?? "");
     showAvailable(entries, listFailure);
     await showPending().catch(showError);
