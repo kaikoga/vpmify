@@ -1,3 +1,5 @@
+<img src="gui/build/appicon.svg" alt="Vpmify icon" width="128" height="128">
+
 # Vpmify
 
 Convert UPM packages into VPM packages for ALCOM.
