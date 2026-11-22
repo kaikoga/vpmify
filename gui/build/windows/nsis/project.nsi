@@ -35,9 +35,14 @@ Unicode true
 ####
 !include "wails_tools.nsh"
 
-# The version information for this two must consist of 4 parts
-VIProductVersion "${INFO_PRODUCTVERSION}.0"
-VIFileVersion    "${INFO_PRODUCTVERSION}.0"
+# The version information for this two must consist of 4 parts, which
+# INFO_PRODUCTVERSION with a prerelease, such as the development version, does
+# not give. scripts/release.sh writes the numbers of the
+# release's version here; this file is not written back by
+# `wails3 task common:update:build-assets`, unlike wails_tools.nsh.
+!define INFO_VERSIONNUMBERS "0.0.0"
+VIProductVersion "${INFO_VERSIONNUMBERS}.0"
+VIFileVersion    "${INFO_VERSIONNUMBERS}.0"
 
 VIAddVersionKey "CompanyName"     "${INFO_COMPANYNAME}"
 VIAddVersionKey "FileDescription" "${INFO_PRODUCTNAME} Installer"

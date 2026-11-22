@@ -131,11 +131,12 @@ done
 # files, field by field. `wails3 task common:update:build-assets` would make
 # them from config.yml, but it also writes Wails' templates back over the
 # changes kept in them, such as the quoted executable path in wails_tools.nsh.
-# The Windows manifest's assembly version takes four numbers, and the bundle
-# version of macOS numbers only, so they get the version without its
-# prerelease and build metadata.
+# The Windows manifest's assembly version and the installer's version
+# information take four numbers, and the bundle version of macOS numbers only,
+# so they get the version without its prerelease and build metadata.
 stamped=(gui/build/darwin/Info.plist gui/build/windows/info.json
-  gui/build/windows/nsis/wails_tools.nsh gui/build/windows/wails.exe.manifest)
+  gui/build/windows/nsis/wails_tools.nsh gui/build/windows/nsis/project.nsi
+  gui/build/windows/wails.exe.manifest)
 restore_stamped() {
   git checkout -- "${stamped[@]}"
 }
@@ -147,6 +148,8 @@ stamp_gui_version() {
   sed -i '' -e "s/\"0\.0\.0-dev\"/\"$version\"/" gui/build/windows/info.json
   sed -i '' -e "s/INFO_PRODUCTVERSION \"0\.0\.0-dev\"/INFO_PRODUCTVERSION \"$version\"/" \
     gui/build/windows/nsis/wails_tools.nsh
+  sed -i '' -e "s/INFO_VERSIONNUMBERS \"0\.0\.0\"/INFO_VERSIONNUMBERS \"$core\"/" \
+    gui/build/windows/nsis/project.nsi
   sed -i '' -e "s/name=\"net\.kaikoga\.vpmify\" version=\"0\.0\.0\.0\"/name=\"net.kaikoga.vpmify\" version=\"$core.0\"/" \
     gui/build/windows/wails.exe.manifest
   local f
