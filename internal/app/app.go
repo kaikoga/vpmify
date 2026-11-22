@@ -67,7 +67,7 @@ func (a *App) recipePath(id string) string {
 func (a *App) loadRecipe(id string) (*recipe.Recipe, error) {
 	r, err := recipe.Load(a.recipePath(id))
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("no recipe %q (add it with `vpmify recipe add`)", id)
+		return nil, &NoRecipeError{Recipe: id}
 	}
 	if err != nil {
 		return nil, err
@@ -191,7 +191,12 @@ func checkDrafts(drafts []Draft) error {
 type Failure struct {
 	Recipe string `json:"recipe,omitempty"`
 	Error  string `json:"error"`
+	err    error
 }
+
+// Err is the error Error says in words, for a front end that tells the
+// user how to mend it.
+func (f Failure) Err() error { return f.err }
 
 // failures keeps the Failures of a command and the errors it returns, so
 // that the error still wraps what went wrong.
@@ -201,7 +206,7 @@ type failures struct {
 }
 
 func (f *failures) add(recipe string, err error) {
-	*f.list = append(*f.list, Failure{Recipe: recipe, Error: err.Error()})
+	*f.list = append(*f.list, Failure{Recipe: recipe, Error: err.Error(), err: err})
 	if recipe != "" {
 		err = fmt.Errorf("%s: %w", recipe, err)
 	}
@@ -914,14 +919,14 @@ func (a *App) pullRecipe(ctx context.Context, run *pullRun, id string, req pullR
 		case !matched && len(unusable) > 0:
 			return errors.Join(unusable...)
 		case !matched:
-			return errors.Join(listErr, fmt.Errorf("no version list has %s: it is outside the packages' versions, or `vpmify recipe update %s` has not read it yet", e.version, id))
+			return errors.Join(listErr, &NotListedError{Recipe: id, Version: e.version})
 		}
 	}
 	for _, l := range lists {
 		for _, v := range extra[l.pkg.Name] {
 			rel, ok := l.byVersion[v]
 			if !ok {
-				return fmt.Errorf("%s: the version list has no %s: it is outside the package's versions, or `vpmify recipe update %s` has not read it yet", l.pkg.Name, v, id)
+				return fmt.Errorf("%s: %w", l.pkg.Name, &NotListedError{Recipe: id, Version: v, Package: l.pkg.Name})
 			}
 			if _, err := l.expand(rel); err != nil {
 				return fmt.Errorf("%s: %s: %w", l.pkg.Name, v, err)
@@ -994,7 +999,7 @@ func (a *App) pullPackage(ctx context.Context, run *pullRun, id string, l *pkgLi
 	for _, v := range extra {
 		rel, ok := l.byVersion[v]
 		if !ok {
-			return 0, fmt.Errorf("the version list has no %s: it is outside the package's versions, or `vpmify recipe update %s` has not read it yet", v, id)
+			return 0, &NotListedError{Recipe: id, Version: v, Package: name}
 		}
 		selected = appendRelease(selected, rel)
 	}
@@ -1268,7 +1273,8 @@ func (a *App) dependencyProvider(n unmet, managed providers) (string, string, er
 		if err == nil {
 			return id, v, nil
 		}
-		if errors.Is(err, errNoList) {
+		var noList *NoListError
+		if errors.As(err, &noList) {
 			a.logf("%s: passed over for %s %s: %v", id, n.dep, n.rng, err)
 		}
 		errs = append(errs, fmt.Errorf("%s: %w", id, err))
@@ -1311,7 +1317,7 @@ func (a *App) dependencyVersion(id, name string, rng semver.Range) (string, erro
 			return usable[i].Version.String(), nil
 		}
 	}
-	return "", fmt.Errorf("the version list of %s has no version that satisfies it (`vpmify recipe update %s` reads it again)", name, id)
+	return "", &NoMatchError{Recipe: id, Package: name, Range: rng.String()}
 }
 
 // readVPMDependencies returns the vpmDependencies of the package in dir.
@@ -1846,7 +1852,12 @@ type RecipeInfo struct {
 	// Problem says why the recipe or its version lists cannot be used, such
 	// as a recipe in a form Vpmify no longer reads.
 	Problem string `json:"problem,omitempty"`
+	err     error
 }
+
+// Err is the error Problem says in words, for a front end that tells the
+// user how to mend it.
+func (r RecipeInfo) Err() error { return r.err }
 
 // Recipes lists the user's recipes by id. A recipe that cannot be read is
 // listed with its problem, so that it can be added again or removed.
@@ -1873,6 +1884,7 @@ func (a *App) Recipes() ([]RecipeInfo, error) {
 		}
 		if err != nil {
 			info.Problem = err.Error()
+			info.err = err
 		}
 		out = append(out, info)
 	}

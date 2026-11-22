@@ -494,7 +494,7 @@ func TestPullRefusesAVersionListOfAnotherRecipe(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(f.app.Layout.Recipes(), "kit.json"), []byte(edited), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.app.Pull(ctx, nil, PullOptions{}); err == nil || !strings.Contains(err.Error(), "vpmify recipe update kit") {
+	if _, err := f.app.Pull(ctx, nil, PullOptions{}); noListRecipe(err) != "kit" {
 		t.Errorf("err = %v", err)
 	}
 	if _, err := f.app.Versions("kit", VersionsOptions{}); err == nil {
@@ -602,11 +602,11 @@ func TestBrokenVersionListPointsAtUpdate(t *testing.T) {
 	if err := os.WriteFile(f.app.Layout.Index("kit"), []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.app.Pull(ctx, nil, PullOptions{}); err == nil || !strings.Contains(err.Error(), "run `vpmify recipe update kit`") {
+	if _, err := f.app.Pull(ctx, nil, PullOptions{}); noListRecipe(err) != "kit" {
 		t.Errorf("pull: err = %v", err)
 	}
 	problems, err := f.app.Doctor(false)
-	if err != nil || len(problems) != 1 || !strings.Contains(problems[0].Message, "run `vpmify recipe update kit`") {
+	if err != nil || len(problems) != 1 || noListRecipe(problems[0].Err()) != "kit" {
 		t.Errorf("doctor: problems = %v, err = %v", problemMessages(problems), err)
 	}
 	// update mends it.
@@ -1075,8 +1075,8 @@ func TestRecipesNamesProblems(t *testing.T) {
 	if r := got["broken"]; r.Problem == "" {
 		t.Errorf("broken = %+v, want a problem", r)
 	}
-	if r := got["unread"]; !reflect.DeepEqual(r.Packages, []string{"com.example.other"}) || !strings.Contains(r.Problem, "update") {
-		t.Errorf("unread = %+v, want a problem naming update", r)
+	if r := got["unread"]; !reflect.DeepEqual(r.Packages, []string{"com.example.other"}) || r.Problem == "" || noListRecipe(r.Err()) != "unread" {
+		t.Errorf("unread = %+v, want a problem an update mends", r)
 	}
 	if len(recipes) != 3 {
 		t.Errorf("recipes = %+v", recipes)

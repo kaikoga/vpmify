@@ -143,6 +143,8 @@ type Problem struct {
 	Fix   string `json:"fix,omitempty"`
 	Fixed bool   `json:"fixed,omitempty"`
 
+	// err is the error Message says, when one does.
+	err error
 	// change edits the state the way --fix will save it.
 	change func()
 	// forgotten is the folder of a record change drops.
@@ -150,6 +152,10 @@ type Problem struct {
 	// dir is a folder --fix deletes.
 	dir string
 }
+
+// Err is the error Message says, for a front end that tells the user how to
+// mend it; nil when Message says no error.
+func (p Problem) Err() error { return p.err }
 
 // Doctor reports the disagreements among the recipes, state.json and the
 // store, and fixes what it can when fix is true. It does not go to the
@@ -182,7 +188,7 @@ func (a *App) Doctor(fix bool) ([]Problem, error) {
 			// A missing, stale or broken version list needs the network to
 			// mend, so doctor only points at update.
 			if _, err := a.loadLists(r); err != nil {
-				add(&Problem{Message: fmt.Sprintf("%s: %v", id, err)})
+				add(&Problem{Message: fmt.Sprintf("%s: %v", id, err), err: err})
 			}
 		}
 

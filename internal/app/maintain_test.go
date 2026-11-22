@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -20,6 +21,15 @@ func problemMessages(problems []Problem) []string {
 		out = append(out, p.Message)
 	}
 	return out
+}
+
+// noListRecipe is the recipe of the first *NoListError in err, or "".
+func noListRecipe(err error) string {
+	var e *NoListError
+	if errors.As(err, &e) {
+		return e.Recipe
+	}
+	return ""
 }
 
 func TestDoctorFindsNothingAfterPull(t *testing.T) {

@@ -373,7 +373,7 @@ func TestOverlayFillsTheSubmoduleFolder(t *testing.T) {
 	if err := os.WriteFile(f.app.recipePath("pkg"), []byte(overlayRecipe("Sub", s2)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.app.Pull(ctx, nil, PullOptions{}); err == nil || !strings.Contains(err.Error(), "recipe update pkg") {
+	if _, err := f.app.Pull(ctx, nil, PullOptions{}); noListRecipe(err) != "pkg" {
 		t.Errorf("pull before update: err = %v", err)
 	}
 	if _, err := f.app.Update(ctx, nil); err != nil {

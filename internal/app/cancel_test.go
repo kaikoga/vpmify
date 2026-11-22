@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -152,7 +151,7 @@ func TestCanceledUpdateReadsNothing(t *testing.T) {
 	if len(requests) != 0 {
 		t.Errorf("requests = %v", requests)
 	}
-	if res == nil || !reflect.DeepEqual(res.Errors, []Failure{{Error: "context canceled"}}) {
+	if res == nil || len(res.Errors) != 1 || res.Errors[0].Recipe != "" || res.Errors[0].Error != "context canceled" {
 		t.Errorf("result = %+v", res)
 	}
 }

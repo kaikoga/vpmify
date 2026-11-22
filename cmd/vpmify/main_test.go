@@ -143,6 +143,55 @@ func TestJSONWithoutSettings(t *testing.T) {
 	}
 }
 
+// The core's errors leave the remedy to the front end; the CLI names the
+// command that mends them, wherever it prints one.
+func TestErrorsNameTheCommandThatMendsThem(t *testing.T) {
+	base := withData(t, true)
+	// A recipe that has not been updated has no version list.
+	recipes := paths.Layout{Base: base}.Recipes()
+	if err := os.MkdirAll(recipes, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	recipe := `{"vpmifyFormat": 1, "displayName": "Kit", "id": "kit",
+  "sources": [{"type": "github", "url": "https://github.com/owner/repo.git",
+    "packages": [{"name": "com.example.pkg", "path": "Packages/Pkg"}]}]}`
+	if err := os.WriteFile(filepath.Join(recipes, "kit.json"), []byte(recipe), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const noList = "no usable version list: none yet; run `vpmify recipe update kit`"
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"recipe", "versions", "kit"}, &stdout, &stderr); code != 1 || stderr.String() != "vpmify: "+noList+"\n" {
+		t.Errorf("versions = %d, stderr = %q", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"recipe", "versions", "nope"}, &stdout, &stderr); code != 1 || stderr.String() != "vpmify: no recipe \"nope\"; add it with `vpmify recipe add`\n" {
+		t.Errorf("versions nope = %d, stderr = %q", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"recipe", "list"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "kit cannot be used: "+noList+"\n") {
+		t.Errorf("list = %d, stdout = %q", code, stdout.String())
+	}
+
+	_, obj := runJSON(t, "recipe", "list", "--json")
+	listed, _ := obj["recipes"].([]any)
+	if len(listed) != 1 || listed[0].(map[string]any)["problem"] != noList {
+		t.Errorf("list --json = %v", obj)
+	}
+	code, obj := runJSON(t, "package", "pull", "--json", "kit")
+	errs, _ := obj["errors"].([]any)
+	if code != 1 || obj["error"] != "kit: "+noList || len(errs) != 1 || errs[0].(map[string]any)["error"] != noList {
+		t.Errorf("pull --json = %d %v", code, obj)
+	}
+	_, obj = runJSON(t, "doctor", "--json")
+	problems, _ := obj["problems"].([]any)
+	if len(problems) != 1 || problems[0].(map[string]any)["message"] != "kit: "+noList {
+		t.Errorf("doctor --json = %v", obj)
+	}
+}
+
 // A command from before the namespaces fails and names where it went.
 func TestMovedCommand(t *testing.T) {
 	withData(t, false)

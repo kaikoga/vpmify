@@ -153,6 +153,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return out.usageError("doctor takes only --fix")
 		}
 		problems, err := a.Doctor(flags["--fix"])
+		hintDoctor(problems)
 		ok := problemsLeft(problems) == 0
 		if !asJSON {
 			printDoctor(stdout, problems, err == nil)
@@ -197,6 +198,9 @@ func runRecipe(ctx context.Context, a *app.App, out output, args []string) int {
 			return out.usageError("recipe add takes recipe files or URLs")
 		}
 		res, err := a.Add(ctx, rest...)
+		if res != nil {
+			hintFailures(res.Errors)
+		}
 		if err == nil && !out.json {
 			fmt.Fprintln(out.stderr, "`vpmify recipe versions <id>` lists the versions; `vpmify package pull` makes the newest ones available")
 		}
@@ -207,6 +211,9 @@ func runRecipe(ctx context.Context, a *app.App, out output, args []string) int {
 			return out.usageError(perr.Error())
 		}
 		res, err := a.Update(ctx, ids)
+		if res != nil {
+			hintFailures(res.Errors)
+		}
 		return out.result(res, err)
 	case "versions":
 		rest, unity, perr := takeValue(rest, "--unity")
@@ -229,6 +236,7 @@ func runRecipe(ctx context.Context, a *app.App, out output, args []string) int {
 			return out.usageError("recipe list takes only --json")
 		}
 		recipes, err := a.Recipes()
+		hintProblems(recipes)
 		if err == nil && !out.json {
 			err = printRecipes(out.stdout, recipes)
 		}
@@ -275,6 +283,9 @@ func runPackage(ctx context.Context, a *app.App, out output, args []string) int 
 			return out.usageError(perr.Error())
 		}
 		res, err := a.Pull(ctx, targets, app.PullOptions{All: flags["--all"], Prerelease: flags["--prerelease"], Refetch: flags["--refetch"]})
+		if res != nil {
+			hintFailures(res.Errors)
+		}
 		return out.result(res, err)
 	case "remove":
 		targets, flags, perr := splitFlags(rest, "--all")
@@ -308,6 +319,7 @@ type output struct {
 // returns the exit code. A failed command's result has "error" besides what
 // it did; one that did nothing has only "error".
 func (o output) result(res any, err error) int {
+	err = withHints(err)
 	if err != nil {
 		fmt.Fprintln(o.stderr, "vpmify:", err)
 	}
