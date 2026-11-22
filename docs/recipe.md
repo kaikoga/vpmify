@@ -234,7 +234,7 @@ vpmify package pull com.example.my-recipe@1.2.3    # that version only
 
 After you change a recipe, run `recipe add` again. It replaces the recipe that has the same `id`, and reads the version lists again. The versions whose conversion changes are built again the next time you `package pull` the recipe.
 
-When a recipe is on the web, a link of the form `vpmify://add?url=<https URL of the recipe>` adds it in the GUI.
+When a recipe is on the web, a link of the form `vpmify://recipe/add?url=<https URL of the recipe>` adds it in the GUI.
 
 ## Details
 

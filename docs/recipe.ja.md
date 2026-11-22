@@ -234,7 +234,7 @@ vpmify package pull com.example.my-recipe@1.2.3    # その版だけ
 
 レシピを直したら、もう一度 `recipe add` します。同じ `id` のレシピを置き換えて、版の一覧を読み直します。変換の結果が変わる版は、次にそのレシピを `package pull` したときに作り直されます。
 
-レシピを Web に置くと、`vpmify://add?url=<レシピの https の URL>` のリンクから、GUI に取り込めます。
+レシピを Web に置くと、`vpmify://recipe/add?url=<レシピの https の URL>` のリンクから、GUI に取り込めます。
 
 ## 細かい決まり
 

@@ -22,15 +22,17 @@ func schemeURLs(args []string) []string {
 }
 
 // recipeURLs reads the recipe URLs out of a link such as
-// vpmify://add?url=https://example.com/recipe.json. A link may name several
-// recipes with more url parameters. Only https is taken, so that a web page
-// cannot make Vpmify read a file on the user's machine.
+// vpmify://recipe/add?url=https://example.com/recipe.json, which names what
+// to do as the CLI does (`vpmify recipe add`), so that links can name other
+// things to add later. A link may name several recipes with more url
+// parameters. Only https is taken, so that a web page cannot make Vpmify read
+// a file on the user's machine.
 func recipeURLs(link string) ([]string, error) {
 	u, err := url.Parse(link)
 	if err != nil {
 		return nil, err
 	}
-	if u.Scheme != scheme || u.Host != "add" || (u.Path != "" && u.Path != "/") {
+	if u.Scheme != scheme || u.Host != "recipe" || (u.Path != "/add" && u.Path != "/add/") {
 		return nil, fmt.Errorf("not a link Vpmify knows: %s", link)
 	}
 	refs := u.Query()["url"]
