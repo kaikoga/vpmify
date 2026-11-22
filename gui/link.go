@@ -33,11 +33,11 @@ func recipeURLs(link string) ([]string, error) {
 		return nil, err
 	}
 	if u.Scheme != scheme || u.Host != "recipe" || (u.Path != "/add" && u.Path != "/add/") {
-		return nil, fmt.Errorf("not a link Vpmify knows: %s", link)
+		return nil, &linkError{kind: "linkUnknown", argName: "link", arg: link, text: "not a link Vpmify knows"}
 	}
 	refs := u.Query()["url"]
 	if len(refs) == 0 {
-		return nil, fmt.Errorf("the link names no recipe: %s", link)
+		return nil, &linkError{kind: "linkNoRecipe", argName: "link", arg: link, text: "the link names no recipe"}
 	}
 	for _, ref := range refs {
 		// The prefix is checked as well as the scheme: url.Parse lowercases
@@ -45,8 +45,16 @@ func recipeURLs(link string) ([]string, error) {
 		// lowercase prefix and reads anything else as a file.
 		r, err := url.Parse(ref)
 		if err != nil || r.Scheme != "https" || r.Host == "" || !strings.HasPrefix(ref, "https://") {
-			return nil, fmt.Errorf("the link names a recipe that is not an https URL: %s", ref)
+			return nil, &linkError{kind: "linkNotHttps", argName: "url", arg: ref, text: "the link names a recipe that is not an https URL"}
 		}
 	}
 	return refs, nil
 }
+
+// linkError is a link recipeURLs does not take. kind is the Message's kind,
+// and arg the link or recipe URL it names as argName.
+type linkError struct {
+	kind, argName, arg, text string
+}
+
+func (e *linkError) Error() string { return fmt.Sprintf("%s: %s", e.text, e.arg) }

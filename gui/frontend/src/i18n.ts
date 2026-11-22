@@ -84,6 +84,16 @@ const en = {
     "remove.package.before": "These versions of {label} are removed from ALCOM.",
     "remove.package.after": "If a project has imported them, ALCOM can no longer update or reinstall them. The recipe stays, so you can get them here again.",
     "remove.package.confirm": "Remove versions",
+
+    // The failures the service names by kind, in gui/messages.go.
+    "error.noList": "There is no version list. Press Update.",
+    "error.notListed": "{version} is not in the version list. Press Update, then get it again.",
+    "error.noMatch": "No version of {package} in the version list satisfies {range}. Press Update, then get it again.",
+    "error.noRecipe": "There is no recipe {recipe}.",
+    "error.linkUnknown": "This is not a Vpmify link: {link}",
+    "error.linkNoRecipe": "The link names no recipe: {link}",
+    "error.linkNotHttps": "The recipe in the link is not an https URL: {url}",
+    "error.pendingGone": "This confirmation is already closed.",
 };
 
 export type Key = keyof typeof en;
@@ -173,6 +183,15 @@ const ja: Record<Key, string> = {
     "remove.package.before": "{label} の以下のバージョンが ALCOM から削除されます。",
     "remove.package.after": "これらのパッケージがプロジェクトにインポートされていた場合、ALCOM でアップデートや再インストールを行えなくなります。レシピは残るので、ここからもう一度取得できます。",
     "remove.package.confirm": "バージョンを削除する",
+
+    "error.noList": "バージョンの一覧がありません。「更新」を押してください。",
+    "error.notListed": "{version} はバージョンの一覧にありません。「更新」を押してから、もう一度取得してください。",
+    "error.noMatch": "{package} の {range} に合うバージョンが、バージョンの一覧にありません。「更新」を押してから、もう一度取得してください。",
+    "error.noRecipe": "レシピ {recipe} はありません。",
+    "error.linkUnknown": "Vpmify のリンクではありません: {link}",
+    "error.linkNoRecipe": "リンクにレシピがありません: {link}",
+    "error.linkNotHttps": "リンクのレシピの URL が https ではありません: {url}",
+    "error.pendingGone": "この追加の確認は終わっています。",
 };
 
 export type Lang = "en" | "ja";
@@ -223,6 +242,11 @@ export function setLang(l: Lang) {
 // replaced by params[name].
 export function t(key: Key, params: Record<string, string | number> = {}): string {
     return messages[lang][key].replace(/\{(\w+)\}/g, (m, name: string) => String(params[name] ?? m));
+}
+
+// isKey says whether s is a key of the texts.
+export function isKey(s: string): s is Key {
+    return Object.hasOwn(en, s);
 }
 
 // applyStatic sets the texts of the page's elements that name a key in

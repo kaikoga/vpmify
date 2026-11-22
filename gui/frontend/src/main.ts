@@ -1,8 +1,8 @@
 import {Browser, Events} from "@wailsio/runtime";
-import {type PendingAdd, VpmifyService, type VersionsResult} from "../bindings/github.com/kaikoga/vpmify/gui";
-import type {Entry, PackageVersions, RecipeInfo} from "../bindings/github.com/kaikoga/vpmify/internal/app";
+import {type Message, type PendingAdd, type RecipeItem as RecipeInfo, VpmifyService, type VersionsResult} from "../bindings/github.com/kaikoga/vpmify/gui";
+import type {Entry, PackageVersions} from "../bindings/github.com/kaikoga/vpmify/internal/app";
 import {Busy, Log, Pending} from "../bindings/events";
-import {applyStatic, currentLang, type Key, type Lang, setLang, t} from "./i18n";
+import {applyStatic, currentLang, isKey, type Key, type Lang, setLang, t} from "./i18n";
 
 function byId<T extends HTMLElement>(id: string): T {
     return document.getElementById(id)! as T;
@@ -188,14 +188,59 @@ function confirmPackageRemoval(id: string, name: string, displayName: string | u
     });
 }
 
+// messageOf is what to show for a failed call: the service's Message, which
+// Wails hands over as the cause of the error, or else the error's words.
+function messageOf(err: unknown): Message {
+    const cause = (err as { cause?: unknown } | null)?.cause;
+    if (cause && typeof cause === "object" && "kind" in cause) {
+        return cause as Message;
+    }
+    return {detail: String(err)};
+}
+
+// messageLines are the lines to show for m: in the user's language when the
+// GUI knows its kind, with the core's words under it, or else the core's
+// words alone.
+function messageLines(m: Message): { main: string, detail: string } {
+    const key = `error.${m.kind ?? ""}`;
+    if (!m.kind || !isKey(key)) {
+        return {main: m.detail ?? "", detail: ""};
+    }
+    const args: Record<string, string> = {};
+    for (const [name, value] of Object.entries(m.args ?? {})) {
+        if (value !== undefined) {
+            args[name] = value;
+        }
+    }
+    return {main: t(key, args), detail: m.detail ?? ""};
+}
+
+// showMessage shows m in e, or hides e without one.
+function showMessage(e: HTMLElement, m: Message | null | undefined) {
+    e.hidden = !m;
+    e.replaceChildren();
+    if (!m) {
+        return;
+    }
+    const {main, detail} = messageLines(m);
+    e.append(main);
+    if (detail) {
+        e.append(el("span", "detail", detail));
+    }
+}
+
+// messageText is m as one text, for a title.
+function messageText(m: Message): string {
+    const {main, detail} = messageLines(m);
+    return detail ? `${main}\n${detail}` : main;
+}
+
 function showError(err: unknown) {
-    errorElement.hidden = false;
-    errorElement.textContent = String(err);
+    showMessage(errorElement, messageOf(err));
 }
 
 function clearError() {
-    errorElement.hidden = true;
-    errorElement.textContent = "";
+    showMessage(errorElement, null);
 }
 
 // act runs one operation the user asked for, then shows what changed.
@@ -317,7 +362,9 @@ function renderPending(p: PendingAdd, more: number) {
         el("p", "note", t("pending.from", {from: (p.from ?? []).join(", ")})),
     );
     if (p.error) {
-        pendingDialog.append(el("p", "error", p.error));
+        const e = el("p", "error");
+        showMessage(e, p.error);
+        pendingDialog.append(e);
     } else {
         const table = el("table");
         headRow(table, ["col.recipe", "col.package", "col.source", "col.versions", null]);
@@ -382,7 +429,7 @@ function showRecipes(recipes: RecipeInfo[], entries: Entry[] | null, updates: Se
         li.append(label(r.id, r.displayName));
         if (r.problem) {
             const mark = el("span", "error count", "!");
-            mark.title = r.problem;
+            mark.title = messageText(r.problem);
             li.append(mark);
         } else {
             if (updates.has(r.id)) {
@@ -411,7 +458,7 @@ let shownRecipe: RecipeInfo | null = null;
 
 // showRecipe shows recipe r on the right, with what Versions returned for it
 // or why it failed.
-function showRecipe(r: RecipeInfo | null, hasRecipes: boolean, entries: Entry[] | null, versions: VersionsResult | null, versionsFailure: string) {
+function showRecipe(r: RecipeInfo | null, hasRecipes: boolean, entries: Entry[] | null, versions: VersionsResult | null, versionsFailure: Message | null) {
     // Another recipe starts from its top; the same one keeps its scroll.
     if (r && r.id !== shownRecipe?.id) {
         detailElement.scrollTop = 0;
@@ -424,8 +471,7 @@ function showRecipe(r: RecipeInfo | null, hasRecipes: boolean, entries: Entry[] 
         return;
     }
     recipeLabel.replaceChildren(label(r.id, r.displayName));
-    recipeProblem.hidden = !r.problem;
-    recipeProblem.textContent = r.problem ?? "";
+    showMessage(recipeProblem, r.problem);
     recipeOrigin.textContent = r.origin ?? "";
     recipePackages.textContent = String((r.packages ?? []).length);
     const ofRecipe = entries?.filter((e) => e.recipe === r.id) ?? [];
@@ -448,11 +494,9 @@ const showAll = new Set<string>();
 
 // showVersions shows the versions of recipe id; entries are its available
 // versions.
-function showVersions(id: string, entries: Entry[], versions: VersionsResult | null, failure: string) {
+function showVersions(id: string, entries: Entry[], versions: VersionsResult | null, failure: Message | null) {
     // The packages whose source has no usable list are left out, with why.
-    const why = failure || versions?.error || "";
-    versionsError.hidden = !why;
-    versionsError.textContent = why;
+    showMessage(versionsError, failure ?? versions?.error);
     const packages = versions?.list?.packages ?? [];
     // The newest button pulls the recipe without naming a package, and is
     // off while it would get nothing new.
@@ -613,9 +657,8 @@ function packageBlock(id: string, name: string, p: PackageVersions | null, entri
     return box;
 }
 
-function showAvailable(entries: Entry[] | null, error: string) {
-    availableError.hidden = !error;
-    availableError.textContent = error;
+function showAvailable(entries: Entry[] | null, failure: Message | null) {
+    showMessage(availableError, failure);
     entriesElement.replaceChildren();
     for (const e of entries ?? []) {
         const row = entriesElement.insertRow();
@@ -640,11 +683,11 @@ let generation = 0;
 async function refresh() {
     const g = ++generation;
     let entries: Entry[] | null = null;
-    let listFailure = "";
+    let listFailure: Message | null = null;
     try {
         entries = (await VpmifyService.List()).entries ?? [];
     } catch (err) {
-        listFailure = String(err);
+        listFailure = messageOf(err);
     }
     let recipes: RecipeInfo[] = [];
     let recipesFailure: unknown = null;
@@ -677,9 +720,9 @@ async function refresh() {
     const all = prereleasesElement.checked;
     const read = await Promise.all(recipes.map(async (r) => {
         try {
-            return {id: r.id, versions: await VpmifyService.Versions(r.id, all), failure: ""};
+            return {id: r.id, versions: await VpmifyService.Versions(r.id, all), failure: null};
         } catch (err) {
-            return {id: r.id, versions: null, failure: String(err)};
+            return {id: r.id, versions: null, failure: messageOf(err)};
         }
     }));
     if (g !== generation) {
@@ -691,7 +734,7 @@ async function refresh() {
     }).map((x) => x.id));
     const chosen = read.find((x) => x.id === id);
     showRecipes(recipes, entries, updates);
-    showRecipe(recipes.find((r) => r.id === id) ?? null, recipes.length > 0, entries, chosen?.versions ?? null, chosen?.failure ?? "");
+    showRecipe(recipes.find((r) => r.id === id) ?? null, recipes.length > 0, entries, chosen?.versions ?? null, chosen?.failure ?? null);
     showAvailable(entries, listFailure);
     await showPending().catch(showError);
 }

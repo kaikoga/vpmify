@@ -237,21 +237,46 @@ func quiet(err error) error {
 func (s *VpmifyService) List() (vpmify.ListResult, error) {
 	r, err := s.core.List()
 	if err != nil {
-		return vpmify.ListResult{}, err
+		return vpmify.ListResult{}, describe(err)
 	}
 	return *r, nil
 }
 
+// RecipeItem is one of the user's recipes, as `vpmify recipe list` shows it,
+// with its problem as a Message.
+type RecipeItem struct {
+	ID          string   `json:"id"`
+	DisplayName string   `json:"displayName,omitempty"`
+	Packages    []string `json:"packages"`
+	Origin      string   `json:"origin,omitempty"`
+	Problem     *Message `json:"problem,omitempty"`
+}
+
 // Recipes lists the user's recipes.
-func (s *VpmifyService) Recipes() ([]vpmify.RecipeInfo, error) {
-	return s.core.Recipes()
+func (s *VpmifyService) Recipes() ([]RecipeItem, error) {
+	recipes, err := s.core.Recipes()
+	if err != nil {
+		return nil, describe(err)
+	}
+	out := make([]RecipeItem, 0, len(recipes))
+	for _, r := range recipes {
+		item := RecipeItem{ID: r.ID, DisplayName: r.DisplayName, Packages: r.Packages, Origin: r.Origin}
+		if r.Problem != "" {
+			item.Problem = messageOf(r.Err())
+			if item.Problem == nil {
+				item.Problem = &Message{Detail: r.Problem}
+			}
+		}
+		out = append(out, item)
+	}
+	return out, nil
 }
 
 // VersionsResult is what Versions shows: the version lists that could be
 // read, and why the others could not.
 type VersionsResult struct {
 	List  *vpmify.VersionList `json:"list"`
-	Error string              `json:"error,omitempty"`
+	Error *Message            `json:"error,omitempty"`
 }
 
 // Versions lists the versions in the version lists of a recipe's packages,
@@ -261,32 +286,28 @@ type VersionsResult struct {
 func (s *VpmifyService) Versions(id string, all bool) (VersionsResult, error) {
 	list, err := s.core.Versions(id, vpmify.VersionsOptions{All: all})
 	if list == nil {
-		return VersionsResult{}, err
+		return VersionsResult{}, describe(err)
 	}
-	res := VersionsResult{List: list}
-	if err != nil {
-		res.Error = err.Error()
-	}
-	return res, nil
+	return VersionsResult{List: list, Error: messageOf(err)}, nil
 }
 
 // Update reads the recipes added from URLs again, and the version lists of
 // the recipes.
 func (s *VpmifyService) Update(ctx context.Context, ids []string) error {
-	return quiet(s.run(ctx, func(ctx context.Context) error {
+	return describe(quiet(s.run(ctx, func(ctx context.Context) error {
 		_, err := s.core.Update(ctx, ids)
 		return err
-	}))
+	})))
 }
 
 // Pull makes versions available as `vpmify package pull` does: targets are "<id>"
 // or "<id>/<package>", either with "@<version>". prerelease is
 // `--prerelease`.
 func (s *VpmifyService) Pull(ctx context.Context, targets []string, prerelease bool) error {
-	return quiet(s.run(ctx, func(ctx context.Context) error {
+	return describe(quiet(s.run(ctx, func(ctx context.Context) error {
 		_, err := s.core.Pull(ctx, targets, vpmify.PullOptions{Prerelease: prerelease})
 		return err
-	}))
+	})))
 }
 
 // RemoveVersions unregisters and deletes the versions in the store as
@@ -294,10 +315,10 @@ func (s *VpmifyService) Pull(ctx context.Context, targets []string, prerelease b
 // version is one version, or "" for every version. The front end asks the
 // user first.
 func (s *VpmifyService) RemoveVersions(ctx context.Context, ref, version string) error {
-	return quiet(s.run(ctx, func(context.Context) error {
+	return describe(quiet(s.run(ctx, func(context.Context) error {
 		_, err := s.core.RemoveVersions(ref, version)
 		return err
-	}))
+	})))
 }
 
 // RecipeRemoval returns what removing recipe id would remove, for the user
@@ -313,18 +334,18 @@ func (s *VpmifyService) RecipeRemoval(ctx context.Context, id string) (*vpmify.R
 		return nil, nil
 	}
 	if res == nil {
-		return &vpmify.RemoveResult{}, err
+		return &vpmify.RemoveResult{}, describe(err)
 	}
-	return res, err
+	return res, describe(err)
 }
 
 // RemoveRecipe removes recipe id with its versions in the store, as `vpmify
 // recipe remove` does, after the user confirmed what RecipeRemoval showed.
 func (s *VpmifyService) RemoveRecipe(ctx context.Context, id string) error {
-	return quiet(s.run(ctx, func(context.Context) error {
+	return describe(quiet(s.run(ctx, func(context.Context) error {
 		_, err := s.core.RemoveRecipe(id, true)
 		return err
-	}))
+	})))
 }
 
 // PendingAdd is a set of recipes read from one link or one choice of files,
@@ -336,7 +357,8 @@ type PendingAdd struct {
 	Recipes []vpmify.Draft `json:"recipes"`
 	// Error says why the recipes could not be read; there is nothing to add
 	// then, only to dismiss.
-	Error string `json:"error,omitempty"`
+	Error *Message `json:"error,omitempty"`
+	err   error
 }
 
 // Pending returns the recipes waiting for the user, oldest first. It is
@@ -353,15 +375,15 @@ func (s *VpmifyService) Pending() []PendingAdd {
 func (s *VpmifyService) ConfirmAdd(ctx context.Context, token string) error {
 	p, ok := s.takePending(token)
 	if !ok {
-		return errors.New("the recipes are no longer waiting")
+		return describe(errPendingGone)
 	}
-	if p.Error != "" {
-		return errors.New(p.Error)
+	if p.err != nil {
+		return describe(p.err)
 	}
-	return quiet(s.run(ctx, func(ctx context.Context) error {
+	return describe(quiet(s.run(ctx, func(ctx context.Context) error {
 		_, err := s.core.AddDrafts(ctx, p.Recipes)
 		return err
-	}))
+	})))
 }
 
 // DiscardAdd drops a pending set without adding it.
@@ -420,7 +442,7 @@ func (s *VpmifyService) receiveLink(ctx context.Context, link string) {
 	}()
 	refs, err := recipeURLs(link)
 	if err != nil {
-		s.addPending(PendingAdd{From: []string{link}, Error: err.Error()})
+		s.addPending(PendingAdd{From: []string{link}, Error: messageOf(err), err: err})
 		return
 	}
 	s.readForConfirmation(ctx, []string{link}, refs)
@@ -445,10 +467,7 @@ func (s *VpmifyService) readForConfirmation(ctx context.Context, from, refs []st
 	if errors.Is(err, errCanceled) {
 		return
 	}
-	p := PendingAdd{From: from, Recipes: drafts}
-	if err != nil {
-		p.Error = err.Error()
-	}
+	p := PendingAdd{From: from, Recipes: drafts, Error: messageOf(err), err: err}
 	s.addPending(p)
 }
 
