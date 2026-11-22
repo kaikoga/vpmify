@@ -56,7 +56,8 @@
             { "tags": ">=0.131.0", "path": "Packages/UniGLTF" }
           ],
           "overrides": [
-            { "versions": "<0.125.0", "set": { "vpmDependencies": { "com.vrmc.vrmshaders": "={sameTag}" } } }
+            { "versions": "<0.125.0", "set": { "vpmDependencies": { "com.vrmc.vrmshaders": "={sameTag}" } } },
+            { "versions": ">=0.128.0", "set": { "unity": "2022.3" } }
           ]
         },
         {
@@ -71,7 +72,8 @@
             { "versions": ">=0.63.0 <0.63.1", "set": { "vpmDependencies": { "com.vrmc.meshutility": "={sameTag}", "com.vrmc.unigltf": "={sameTag}", "com.vrmc.vrmshaders": "={sameTag}" } } },
             { "versions": ">=0.63.1 <0.81.0", "set": { "vpmDependencies": { "com.vrmc.unigltf": "={sameTag}", "com.vrmc.vrmshaders": "={sameTag}" } } },
             { "versions": ">=0.81.0 <0.125.0", "set": { "vpmDependencies": { "com.vrmc.gltf": "={sameTag}", "com.vrmc.vrmshaders": "={sameTag}" } } },
-            { "versions": ">=0.125.0", "set": { "vpmDependencies": { "com.vrmc.gltf": "={sameTag}" } } }
+            { "versions": ">=0.125.0", "set": { "vpmDependencies": { "com.vrmc.gltf": "={sameTag}" } } },
+            { "versions": ">=0.128.0", "set": { "unity": "2022.3" } }
           ]
         },
         {
@@ -93,7 +95,8 @@
           ],
           "overrides": [
             { "versions": "<0.125.0", "set": { "vpmDependencies": { "com.vrmc.gltf": "={sameTag}", "com.vrmc.vrmshaders": "={sameTag}" } } },
-            { "versions": ">=0.125.0", "set": { "vpmDependencies": { "com.vrmc.gltf": "={sameTag}" } } }
+            { "versions": ">=0.125.0", "set": { "vpmDependencies": { "com.vrmc.gltf": "={sameTag}" } } },
+            { "versions": ">=0.128.0", "set": { "unity": "2022.3" } }
           ]
         }
       ]
