@@ -34,7 +34,7 @@ npm のレジストリにあるパッケージを、そのまま出すレシピ�
 ```
 レシピ
 ├─ vpmifyFormat
-├─ id, displayName
+├─ id, displayName, url
 └─ sources[]              どこから取るか
    ├─ type                "npm" か "github"
    ├─ （type ごとの欄）
@@ -53,6 +53,7 @@ npm のレジストリにあるパッケージを、そのまま出すレシピ�
 - `vpmifyFormat`（必須）: レシピの形の版。今は `1` です。これのない JSON は、レシピとして読みません。Vpmify は、自分が知っているより新しい版のレシピを、新しい Vpmify が要ると言って断ります。
 - `id`（必須）: レシピの識別子。VPM のリポジトリの id と同じく、レシピを書く人のドメインを逆さにした形（`com.example.univrm`）にします。使える文字は英小文字・数字・`.`・`_`・`-` で、先頭は英小文字か数字。コマンドの引数（`vpmify package pull <id>`）に使います。同じ `id` のレシピを取り込むと、前のものを置き換えます。
 - `displayName`（必須）: 人が読む名前。
+- `url`（省略可）: レシピを公開している URL（`https://example.com/recipes/univrm.json`）。レシピを読む人や道具のための欄で、Vpmify は読みません。
 - `sources`（必須）: ソースの並び。1 つ以上。
 
 ソースを複数書くのは、パッケージと、それが依存するパッケージを、1 つのレシピでまとめて入れられるようにするためです（例: [vket-cloud-sdk.json](../examples/vket-cloud-sdk.json)）。

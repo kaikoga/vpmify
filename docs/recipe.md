@@ -34,7 +34,7 @@ This recipe offers a package of an npm registry as it is.
 ```
 recipe
 ├─ vpmifyFormat
-├─ id, displayName
+├─ id, displayName, url
 └─ sources[]              where packages come from
    ├─ type                "npm" or "github"
    ├─ (fields of the type)
@@ -53,6 +53,7 @@ recipe
 - `vpmifyFormat` (required): the format of the recipe. It is `1` now. A JSON file without it is not read as a recipe. Vpmify refuses a recipe in a format newer than it knows, and says a newer Vpmify is needed.
 - `id` (required): the identifier of the recipe. Write it in reverse domain form with the domain of whoever writes the recipe (`com.example.univrm`), as the ids of VPM repositories are. It takes lowercase letters, digits, `.`, `_` and `-`, and starts with a letter or a digit. Commands take it as an argument (`vpmify package pull <id>`). Adding a recipe replaces the recipe that has the same `id`.
 - `displayName` (required): the name people read.
+- `url` (optional): the URL the recipe is published at (`https://example.com/recipes/univrm.json`), for people and tools that read the recipe. Vpmify does not read it.
 - `sources` (required): the sources, one or more.
 
 A recipe has several sources so that it can offer a package together with the packages it depends on (see [vket-cloud-sdk.json](../examples/vket-cloud-sdk.json)).
