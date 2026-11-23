@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"strings"
 
 	vpmify "github.com/kaikoga/vpmify/internal/app"
 )
@@ -33,11 +32,11 @@ func messageOf(err error) *Message {
 		return nil
 	}
 	var first *Message
-	unknown := false
+	own, unknown := false, false
 	walkErrors(err, func(e error) bool {
-		if m := kindOf(e); m != nil {
+		if m, gui := kindOf(e); m != nil {
 			if first == nil {
-				first = m
+				first, own = m, gui
 			}
 			return false
 		}
@@ -49,7 +48,7 @@ func messageOf(err error) *Message {
 	switch {
 	case first == nil || unknown:
 		return &Message{Detail: err.Error()}
-	case first.Kind == "pendingGone" || strings.HasPrefix(first.Kind, "link"):
+	case own:
 		// The GUI's own failures are said whole by the front end.
 		return first
 	}
@@ -58,24 +57,24 @@ func messageOf(err error) *Message {
 }
 
 // kindOf is the Message of one error the front end knows, without Detail,
-// or nil.
-func kindOf(err error) *Message {
+// or nil, and whether the failure is the GUI's own rather than the core's.
+func kindOf(err error) (m *Message, gui bool) {
 	switch e := err.(type) {
 	case *linkError:
-		return &Message{Kind: e.kind, Args: map[string]string{e.argName: e.arg}}
+		return &Message{Kind: e.kind, Args: map[string]string{e.argName: e.arg}}, true
 	case *vpmify.NoListError:
-		return &Message{Kind: "noList", Args: map[string]string{"recipe": e.Recipe}}
+		return &Message{Kind: "noList", Args: map[string]string{"recipe": e.Recipe}}, false
 	case *vpmify.NotListedError:
-		return &Message{Kind: "notListed", Args: map[string]string{"recipe": e.Recipe, "version": e.Version}}
+		return &Message{Kind: "notListed", Args: map[string]string{"recipe": e.Recipe, "version": e.Version}}, false
 	case *vpmify.NoMatchError:
-		return &Message{Kind: "noMatch", Args: map[string]string{"recipe": e.Recipe, "package": e.Package, "range": e.Range}}
+		return &Message{Kind: "noMatch", Args: map[string]string{"recipe": e.Recipe, "package": e.Package, "range": e.Range}}, false
 	case *vpmify.NoRecipeError:
-		return &Message{Kind: "noRecipe", Args: map[string]string{"recipe": e.Recipe}}
+		return &Message{Kind: "noRecipe", Args: map[string]string{"recipe": e.Recipe}}, false
 	}
 	if err == errPendingGone {
-		return &Message{Kind: "pendingGone"}
+		return &Message{Kind: "pendingGone"}, true
 	}
-	return nil
+	return nil, false
 }
 
 // wraps says whether err only wraps or joins other errors, which say the
