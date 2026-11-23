@@ -2,37 +2,52 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 
 	vpmify "github.com/kaikoga/vpmify/internal/app"
 )
 
-// Message is a failure for the front end to show. Kind names one the front
-// end says in the user's language with Args, as the CLI names the command
-// that mends it; the front end shows Detail, the core's words in English,
-// under it, or alone when it does not know Kind. A failure of the GUI's own
-// has no Detail: the front end's words say all of it.
+// Message is a failure for the front end to show. Items are the failures in
+// it the front end says in the user's language, a line each, as the CLI
+// names the command that mends them; the front end shows Detail, the core's
+// words in English, under them, or alone without Items. A failure of the
+// GUI's own has no Detail: the front end's words say all of it.
 type Message struct {
-	Kind   string            `json:"kind,omitempty"`
-	Args   map[string]string `json:"args,omitempty"`
-	Detail string            `json:"detail,omitempty"`
+	Items  []Item `json:"items,omitempty"`
+	Detail string `json:"detail,omitempty"`
 }
 
-// messageOf is what the front end shows for err, or nil without one. Of
-// several errors err joins, the first it knows, depth first, names the
-// kind, and Detail says them all. When err also joins one it does not know,
-// such as a failed download, there is no kind: the words for one failure
-// would hide the other.
+// Item is one failure the front end says: Kind names its words, which Args
+// fill.
+type Item struct {
+	Kind string            `json:"kind"`
+	Args map[string]string `json:"args,omitempty"`
+}
+
+// messageOf is what the front end shows for err, or nil without one. Each
+// error err wraps or joins that the front end knows is an Item, depth
+// first, once however often it is joined (the sources of one recipe fail
+// alike), and Detail says them all. Every one is said: the first alone
+// would name one recipe of several, and updating it does not help when
+// another is the one that lacks the version. When err also joins one it
+// does not know, such as a failed download, there are no Items: the words
+// for one failure would hide the other.
 func messageOf(err error) *Message {
 	if err == nil {
 		return nil
 	}
-	var first *Message
-	own, unknown := false, false
+	var items []Item
+	seen := map[string]bool{}
+	own, unknown := true, false
 	walkErrors(err, func(e error) bool {
-		if m, gui := kindOf(e); m != nil {
-			if first == nil {
-				first, own = m, gui
+		if it, gui := kindOf(e); it != nil {
+			// fmt prints a map's keys sorted.
+			key := fmt.Sprint(it.Kind, it.Args)
+			if !seen[key] {
+				seen[key] = true
+				items = append(items, *it)
 			}
+			own = own && gui
 			return false
 		}
 		if !wraps(e) {
@@ -41,30 +56,29 @@ func messageOf(err error) *Message {
 		return true
 	})
 	switch {
-	case first == nil || unknown:
+	case len(items) == 0 || unknown:
 		return &Message{Detail: err.Error()}
 	case own:
 		// The GUI's own failures are said whole by the front end.
-		return first
+		return &Message{Items: items}
 	}
-	first.Detail = err.Error()
-	return first
+	return &Message{Items: items, Detail: err.Error()}
 }
 
-// kindOf is the Message of one error the front end knows, without Detail,
-// or nil, and whether the failure is the GUI's own rather than the core's.
-func kindOf(err error) (m *Message, gui bool) {
+// kindOf is the Item of one error the front end knows, or nil, and whether
+// the failure is the GUI's own rather than the core's.
+func kindOf(err error) (it *Item, gui bool) {
 	switch e := err.(type) {
 	case *linkError:
-		return &Message{Kind: e.kind, Args: map[string]string{e.argName: e.arg}}, true
+		return &Item{Kind: e.kind, Args: map[string]string{e.argName: e.arg}}, true
 	case *vpmify.NoListError:
-		return &Message{Kind: "noList", Args: map[string]string{"recipe": e.Recipe}}, false
+		return &Item{Kind: "noList", Args: map[string]string{"recipe": e.Recipe}}, false
 	case *vpmify.NotListedError:
-		return &Message{Kind: "notListed", Args: map[string]string{"recipe": e.Recipe, "version": e.Version}}, false
+		return &Item{Kind: "notListed", Args: map[string]string{"recipe": e.Recipe, "version": e.Version}}, false
 	case *vpmify.NoMatchError:
-		return &Message{Kind: "noMatch", Args: map[string]string{"recipe": e.Recipe, "package": e.Package, "range": e.Range, "dependent": e.Dependent}}, false
+		return &Item{Kind: "noMatch", Args: map[string]string{"recipe": e.Recipe, "package": e.Package, "range": e.Range, "dependent": e.Dependent}}, false
 	case *vpmify.NoRecipeError:
-		return &Message{Kind: "noRecipe", Args: map[string]string{"recipe": e.Recipe}}, false
+		return &Item{Kind: "noRecipe", Args: map[string]string{"recipe": e.Recipe}}, false
 	}
 	return nil, false
 }
@@ -111,7 +125,7 @@ func (e *uiError) MarshalJSON() ([]byte, error) { return json.Marshal(e.msg) }
 // is otherwise.
 func describe(err error) error {
 	m := messageOf(err)
-	if m == nil || m.Kind == "" {
+	if m == nil || len(m.Items) == 0 {
 		return err
 	}
 	return &uiError{err: err, msg: m}

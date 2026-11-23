@@ -194,30 +194,38 @@ function confirmPackageRemoval(id: string, name: string, displayName: string | u
 // the core's words, is shown as the error's words too.
 function messageOf(err: unknown): Message {
     const cause = (err as { cause?: unknown } | null)?.cause;
-    if (cause && typeof cause === "object" && "kind" in cause) {
+    if (cause && typeof cause === "object" && "items" in cause) {
         const m = cause as Message;
-        if (m.detail || isKey(`error.${m.kind ?? ""}`)) {
+        if (m.detail || saysAll(m)) {
             return m;
         }
     }
     return {detail: String(err)};
 }
 
-// messageLines are the lines to show for m: in the user's language when the
-// GUI knows its kind, with the core's words under it, or else the core's
-// words alone.
-function messageLines(m: Message): { main: string, detail: string } {
-    const key = `error.${m.kind ?? ""}`;
-    if (!m.kind || !isKey(key)) {
-        return {main: m.detail ?? "", detail: ""};
+// saysAll says whether this front end knows the kind of every item of m.
+function saysAll(m: Message): boolean {
+    const items = m.items ?? [];
+    return items.length > 0 && items.every((it) => isKey(`error.${it.kind}`));
+}
+
+// messageLines are the lines to show for m: in the user's language, one for
+// each item, when the GUI knows all their kinds, with the core's words
+// under them, or else the core's words alone.
+function messageLines(m: Message): { main: string[], detail: string } {
+    if (!saysAll(m)) {
+        return {main: [m.detail ?? ""], detail: ""};
     }
-    const args: Record<string, string> = {};
-    for (const [name, value] of Object.entries(m.args ?? {})) {
-        if (value !== undefined) {
-            args[name] = value;
+    const main = (m.items ?? []).map((it) => {
+        const args: Record<string, string> = {};
+        for (const [name, value] of Object.entries(it.args ?? {})) {
+            if (value !== undefined) {
+                args[name] = value;
+            }
         }
-    }
-    return {main: t(key, args), detail: m.detail ?? ""};
+        return t(`error.${it.kind}` as Key, args);
+    });
+    return {main, detail: m.detail ?? ""};
 }
 
 // showMessage shows m in e, or hides e without one.
@@ -228,7 +236,12 @@ function showMessage(e: HTMLElement, m: Message | null | undefined) {
         return;
     }
     const {main, detail} = messageLines(m);
-    e.append(main);
+    main.forEach((line, i) => {
+        if (i > 0) {
+            e.append(el("br"));
+        }
+        e.append(line);
+    });
     if (detail) {
         e.append(el("span", "detail", detail));
     }
@@ -237,7 +250,7 @@ function showMessage(e: HTMLElement, m: Message | null | undefined) {
 // messageText is m as one text, for a title.
 function messageText(m: Message): string {
     const {main, detail} = messageLines(m);
-    return detail ? `${main}\n${detail}` : main;
+    return [...main, ...(detail ? [detail] : [])].join("\n");
 }
 
 function showError(err: unknown) {
