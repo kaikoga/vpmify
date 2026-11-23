@@ -1588,6 +1588,69 @@ type RemoveResult struct {
 // still be removed by name. Copies already in projects stay. The result is
 // nil when RemoveVersions stopped before changing anything.
 func (a *App) RemoveVersions(ref, version string) (*RemoveResult, error) {
+	pick := every
+	if version != "" {
+		pick = func(versions []string) []string {
+			if slices.Contains(versions, version) {
+				return []string{version}
+			}
+			return nil
+		}
+	}
+	return a.removeVersions(ref, pick, version == "", func(id string) error {
+		if version != "" {
+			return fmt.Errorf("%s: version %s is not in the store", ref, version)
+		}
+		return fmt.Errorf("%s: no version is in the store", id)
+	})
+}
+
+// RemoveOutdated removes, as RemoveVersions does, the versions in the store
+// of every package of the recipe ref names, or of the named package, but
+// the newest stable version and the newest prerelease of each: the
+// versions a pull of the recipe would not choose now. Only the recipe's own
+// versions are looked at, even where another recipe provides the same
+// package, so that it never removes what a pull of the recipe has just
+// made available. Nothing to remove is not an error.
+func (a *App) RemoveOutdated(ref string) (*RemoveResult, error) {
+	return a.removeVersions(ref, outdated, false, func(string) error {
+		a.logf("%s: no outdated version is in the store", ref)
+		return nil
+	})
+}
+
+// every returns all the versions, for removing every one.
+func every(versions []string) []string { return versions }
+
+// outdated returns the versions, oldest first, but the newest stable one
+// and the newest prerelease. A version that does not read as one is kept,
+// since it cannot be told older.
+func outdated(versions []string) []string {
+	stable, pre := -1, -1
+	for i, v := range versions {
+		sv, err := semver.Parse(v)
+		switch {
+		case err != nil:
+		case sv.IsPrerelease():
+			pre = i
+		default:
+			stable = i
+		}
+	}
+	var out []string
+	for i, v := range versions {
+		if _, err := semver.Parse(v); err == nil && i != stable && i != pre {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// removeVersions removes the versions pick takes, of the versions of each
+// package of the recipe ref names, or of the named package, which it is
+// given oldest first. whole says pick takes every version, which forgets
+// the package too. none says what removing nothing means.
+func (a *App) removeVersions(ref string, pick func([]string) []string, whole bool, none func(id string) error) (*RemoveResult, error) {
 	id, only, err := parseRef(ref)
 	if err != nil {
 		return nil, err
@@ -1612,12 +1675,13 @@ func (a *App) RemoveVersions(ref, version string) (*RemoveResult, error) {
 		if only != "" && len(have[only]) == 0 {
 			return fmt.Errorf("%s: no version of %s is in the store", id, only)
 		}
-		dirs, removed := a.takeVersions(rs, have, id, only, version)
+		dirs, removed := a.takeVersions(rs, have, id, only, pick, whole)
 		if len(dirs) == 0 {
-			if version != "" {
-				return fmt.Errorf("%s: version %s is not in the store", ref, version)
+			if err := none(id); err != nil {
+				return err
 			}
-			return fmt.Errorf("%s: no version is in the store", id)
+			res = &RemoveResult{Applied: true, Removed: []Entry{}, Unregistered: []string{}}
+			return nil
 		}
 		change, saved, err := a.forget(st, dirs)
 		res = removeResult(change, saved, removed)
@@ -1664,7 +1728,7 @@ func (a *App) RemoveRecipe(id string, apply bool) (*RemoveResult, error) {
 		if rs == nil && len(have) == 0 && !fsutil.Exists(a.recipePath(id)) {
 			return fmt.Errorf("no recipe %q", id)
 		}
-		dirs, removed := a.takeVersions(rs, have, id, "", "")
+		dirs, removed := a.takeVersions(rs, have, id, "", every, true)
 		if !apply {
 			res = &RemoveResult{Removed: removed, Unregistered: []string{}}
 			return nil
@@ -1728,10 +1792,10 @@ func (a *App) versionsOf(rs *state.RecipeState, id string, reg registration) map
 }
 
 // takeVersions takes out of rs, which may be nil, the versions in have of
-// package only (every package when it is empty) that are version (every
-// version when it is empty), and returns their folders and their entries.
-// Taking every version of a package forgets the package too.
-func (a *App) takeVersions(rs *state.RecipeState, have map[string]map[string]bool, id, only, version string) (dirs []string, removed []Entry) {
+// package only (every package when it is empty) that pick takes of them,
+// given oldest first, and returns their folders and their entries. whole
+// says pick takes every version, which forgets the package too.
+func (a *App) takeVersions(rs *state.RecipeState, have map[string]map[string]bool, id, only string, pick func([]string) []string, whole bool) (dirs []string, removed []Entry) {
 	removed = []Entry{}
 	for _, name := range state.SortedKeys(have) {
 		if only != "" && name != only {
@@ -1739,10 +1803,7 @@ func (a *App) takeVersions(rs *state.RecipeState, have map[string]map[string]boo
 		}
 		versions := state.SortedKeys(have[name])
 		sort.Slice(versions, func(i, j int) bool { return state.VersionLess(versions[i], versions[j]) })
-		for _, v := range versions {
-			if version != "" && v != version {
-				continue
-			}
+		for _, v := range pick(versions) {
 			dir := a.Layout.PackageDir(id, name, v)
 			dirs = append(dirs, dir)
 			removed = append(removed, newEntry(id, name, v, dir))
@@ -1750,7 +1811,7 @@ func (a *App) takeVersions(rs *state.RecipeState, have map[string]map[string]boo
 				delete(rs.Packages[name].Versions, v)
 			}
 		}
-		if version == "" && rs != nil {
+		if whole && rs != nil {
 			delete(rs.Packages, name)
 		}
 	}

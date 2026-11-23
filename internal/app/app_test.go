@@ -642,6 +642,47 @@ func TestChangedOverridesRebuildInPlace(t *testing.T) {
 	}
 }
 
+// Removing the outdated versions keeps the newest stable version and the
+// newest prerelease of each package, older than it or not.
+func TestRemoveOutdated(t *testing.T) {
+	f := newFixture(t)
+	for _, v := range []string{"1.0.0", "1.1.0", "1.2.0-beta.1", "1.0.1-beta.1", "1.1.0-beta.1"} {
+		f.reg.add(v, "2021.3")
+	}
+	if err := f.addAndPull(PullOptions{All: true, Prerelease: true}, f.writeRecipe("")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if got := f.available(); len(got) != 5 {
+		t.Fatalf("placed = %v", got)
+	}
+	res, err := f.app.RemoveOutdated("kit")
+	if err != nil {
+		t.Fatal(err, f.log)
+	}
+	var removed []string
+	for _, e := range res.Removed {
+		removed = append(removed, e.Version)
+	}
+	if want := []string{"1.0.0", "1.0.1-beta.1", "1.1.0-beta.1"}; !reflect.DeepEqual(removed, want) {
+		t.Errorf("removed = %v, want %v", removed, want)
+	}
+	if got, want := f.available(), []string{"1.1.0@2021.3", "1.2.0-beta.1@2021.3"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("placed = %v, want %v", got, want)
+	}
+	if len(res.Unregistered) != 3 {
+		t.Errorf("unregistered = %v", res.Unregistered)
+	}
+	// Nothing left to remove is not an error, by recipe or by package.
+	for _, ref := range []string{"kit", "kit/" + pkgName} {
+		if res, err := f.app.RemoveOutdated(ref); err != nil || len(res.Removed) != 0 {
+			t.Errorf("%s again: %+v, %v", ref, res, err)
+		}
+	}
+	if _, err := f.app.RemoveOutdated("kit/com.example.nope"); err == nil || !strings.Contains(err.Error(), "no version of com.example.nope is in the store") {
+		t.Errorf("a package without versions: err = %v", err)
+	}
+}
+
 func TestRemove(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")

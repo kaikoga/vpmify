@@ -61,8 +61,11 @@ available versions, which ALCOM lists as user packages:
                                available version again
   package remove <id>[/<package>]@<version>
   package remove --all <id>[/<package>]
-                               unregister and delete a converted version, or
-                               every version, of a recipe's packages or of one
+  package remove --outdated <id>[/<package>]
+                               unregister and delete a converted version,
+                               every version, or every version but the newest
+                               stable one and the newest prerelease of each
+                               package, of a recipe's packages or of one
                                package, available or not; the recipe and its
                                version lists stay, so package pull can make
                                them available again
@@ -290,18 +293,24 @@ func runPackage(ctx context.Context, a *app.App, out output, args []string) int 
 		}
 		return out.result(res, err)
 	case "remove":
-		targets, flags, perr := splitFlags(rest, "--all")
+		targets, flags, perr := splitFlags(rest, "--all", "--outdated")
 		if perr != nil || len(targets) != 1 {
-			return out.usageError("package remove takes one <id>[/<package>]@<version>, or --all and one <id>[/<package>]")
+			return out.usageError("package remove takes one <id>[/<package>]@<version>, or --all or --outdated and one <id>[/<package>]")
 		}
-		// A version or --all is always named, so that removing every version
-		// is never what a short command does by chance.
+		// A version, --all or --outdated is always named, so that removing
+		// every version is never what a short command does by chance.
 		ref, version, named := strings.Cut(targets[0], "@")
 		switch {
-		case flags["--all"] && named:
-			return out.usageError("package remove takes either @<version> or --all, not both")
-		case !flags["--all"] && (!named || version == ""):
-			return out.usageError("package remove needs @<version>, or --all to remove every version")
+		case flags["--all"] && flags["--outdated"]:
+			return out.usageError("package remove takes either --all or --outdated, not both")
+		case (flags["--all"] || flags["--outdated"]) && named:
+			return out.usageError("package remove takes either @<version>, or --all or --outdated, not both")
+		case !flags["--all"] && !flags["--outdated"] && (!named || version == ""):
+			return out.usageError("package remove needs @<version>, --all to remove every version, or --outdated to remove every version but the newest")
+		}
+		if flags["--outdated"] {
+			res, err := a.RemoveOutdated(ref)
+			return out.result(res, err)
 		}
 		res, err := a.RemoveVersions(ref, version)
 		return out.result(res, err)

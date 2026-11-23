@@ -92,12 +92,16 @@ func TestJSONErrors(t *testing.T) {
 		{[]string{"package", "list", "--json", "nope"}, 1},
 		// An id that is not one names no file, such as state.json.
 		{[]string{"package", "list", "--json", "../state"}, 1},
-		// package remove always names a version or --all.
+		// package remove always names a version, --all or --outdated, and
+		// only one of them.
 		{[]string{"package", "remove", "--json", "nope"}, 2},
 		{[]string{"package", "remove", "--json", "nope@"}, 2},
 		{[]string{"package", "remove", "--json", "--all", "nope@1.0.0"}, 2},
+		{[]string{"package", "remove", "--json", "--outdated", "nope@1.0.0"}, 2},
+		{[]string{"package", "remove", "--json", "--all", "--outdated", "nope"}, 2},
 		{[]string{"package", "remove", "--json", "nope@1.0.0"}, 1},
 		{[]string{"package", "remove", "--json", "--all", "nope"}, 1},
+		{[]string{"package", "remove", "--json", "--outdated", "nope"}, 1},
 		{[]string{"package", "--json"}, 2},
 		{[]string{"nope", "--json"}, 2},
 		{[]string{"--json"}, 2},
