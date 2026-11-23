@@ -3,8 +3,10 @@
 // ALCOM does not coordinate with other processes when it writes
 // settings.json. It caches the file for one second, and when it changes a
 // setting it reloads the file if the cache is older, changes it and writes
-// it back (vrc-get-gui/src/state/settings.rs, SettingsState::load_mut). A
-// change Vpmify makes inside that short window is lost when ALCOM saves.
+// it back (vrc-get-gui/src/state/settings.rs, SettingsState::load_mut). It
+// writes the file back when its settings page opens too, whether anything
+// changed or not (environment_get_settings). A change Vpmify makes inside
+// that short window is lost when ALCOM saves.
 // Vpmify therefore keeps its read-change-write short, and reads the file
 // again after a delay to see that its change is still there.
 package alcom
@@ -214,7 +216,44 @@ func (r *Reconciler) run(e edit) (Change, error) {
 		}
 		r.logf("settings.json changed while Vpmify was writing it; trying again")
 	}
-	return total, fmt.Errorf("%s: another program kept overwriting the user package folders; close ALCOM and run again", r.Path)
+	err := fmt.Errorf("%s: another program kept overwriting the user package folders; close ALCOM and run again", r.Path)
+	// What was written was lost, maybe in part: the change is what the
+	// file says now.
+	kept, rerr := r.inEffect(total)
+	if rerr != nil {
+		return Change{}, errors.Join(err, rerr)
+	}
+	return kept, err
+}
+
+// inEffect is the part of c that the file has now: the folders it added
+// that are registered, and the folders it removed that are not, each once.
+func (r *Reconciler) inEffect(c Change) (Change, error) {
+	s, err := Load(r.Path)
+	if err != nil {
+		return Change{}, err
+	}
+	current, err := s.UserPackageFolders()
+	if err != nil {
+		return Change{}, err
+	}
+	registered := cleanSet(current)
+	var kept Change
+	seen := map[string]bool{}
+	for _, f := range c.Added {
+		if clean := filepath.Clean(f); registered[clean] && !seen[clean] {
+			seen[clean] = true
+			kept.Added = append(kept.Added, f)
+		}
+	}
+	seen = map[string]bool{}
+	for _, f := range c.Removed {
+		if clean := filepath.Clean(f); !registered[clean] && !seen[clean] {
+			seen[clean] = true
+			kept.Removed = append(kept.Removed, f)
+		}
+	}
+	return kept, nil
 }
 
 func (r *Reconciler) logf(format string, args ...any) {

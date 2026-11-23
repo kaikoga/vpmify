@@ -170,6 +170,33 @@ func TestReconcileRetriesWhenOverwritten(t *testing.T) {
 	}
 }
 
+// When the change keeps getting lost, what it reports is what the file
+// says after: not the folders it added that are gone again, nor the ones
+// it removed that are back.
+func TestUpdateReportsWhatStaysWhenOverwritten(t *testing.T) {
+	base := t.TempDir()
+	owned := filepath.Join(base, "Vpmify", "packages")
+	gone := filepath.Join(owned, "a", "0.9.0")
+	add1 := filepath.Join(owned, "a", "1.0.0")
+	add2 := filepath.Join(owned, "a", "1.1.0")
+	p := writeSettings(t, base, `{"userPackageFolders": [`+quote(gone)+`]}`)
+	r := &Reconciler{Path: p, Owned: owned}
+	// ALCOM saving a copy that has gone back and only one of the folders
+	// added, every time.
+	r.afterSave = func() {
+		if err := os.WriteFile(p, []byte(`{"userPackageFolders": [`+quote(gone)+`, `+quote(add1)+`]}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	change, err := r.Update([]string{add1, add2}, []string{gone})
+	if err == nil || !strings.Contains(err.Error(), "kept overwriting") {
+		t.Errorf("err = %v", err)
+	}
+	if !reflect.DeepEqual(change.Added, []string{add1}) || len(change.Removed) != 0 {
+		t.Errorf("change = %+v", change)
+	}
+}
+
 func TestLoadMissing(t *testing.T) {
 	_, err := Load(filepath.Join(t.TempDir(), "settings.json"))
 	if err == nil || !strings.Contains(err.Error(), "start ALCOM once") {
