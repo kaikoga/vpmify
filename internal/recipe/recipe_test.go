@@ -398,6 +398,13 @@ func TestFingerprint(t *testing.T) {
 	if other.Sources[0].Fingerprint(a, "A", "commit1", nil, nil) != base {
 		t.Error("a sibling changed the fingerprint")
 	}
+	// The tags the source reads and the versions it gives them decide which
+	// versions there are, not how one is built.
+	wider := mustParse(t, `{"vpmifyFormat": 1, "displayName": "", "id": "pkg", "sources": [{"type": "github", "url": "https://github.com/owner/repo.git", "tags": ">=0.1.0", "tagVersion": {"match": "release-(\\d+)\\.(\\d+)\\.(\\d+)", "version": "{1}.{2}.{3}"}, "packages": [{"name": "a"}, {"name": "b"}]}]}`)
+	_, wa := wider.Package("a")
+	if wider.Sources[0].Fingerprint(wa, "A", "commit1", nil, nil) != base {
+		t.Error("the source's tags changed the fingerprint")
+	}
 	// No overlays is what versions built before overlays came have.
 	if s.Fingerprint(a, "A", "commit1", nil, []BuiltOverlay{}) != base {
 		t.Error("an empty list of overlays changed the fingerprint")

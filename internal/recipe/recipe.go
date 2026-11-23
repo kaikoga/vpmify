@@ -854,23 +854,25 @@ type BuiltOverlay struct {
 // Fingerprint identifies how a version of package p is built from upstream:
 // from folder dir of the archive cacheKey, with the overrides as expanded
 // for it and the overlays. An available version whose fingerprint differs
-// is built again when its recipe is pulled. The source's other packages are
-// not in it, so that editing one package does not build the others again;
-// what they give through {sameTag} is, in expanded. Overlays are omitted
-// when there are none, so that versions built before they came keep their
-// fingerprints.
+// is built again when its recipe is pulled. The source's fields are not in
+// it: the archive names where it comes from, and the tags the source reads
+// and the versions it gives them decide which versions there are, not how
+// one is built, so that widening the tags does not build every version
+// again. The source's other packages are not in it either, so that editing
+// one package does not build the others again; what they give through
+// {sameTag} is, in expanded. Overlays are omitted when there are none, so
+// that versions built before they came keep their fingerprints.
 func (s *Source) Fingerprint(p *Package, dir, cacheKey string, expanded []Edit, overlays []BuiltOverlay) string {
 	h := sha256.New()
 	// encoding/json writes map keys sorted, so this is stable.
 	data, _ := json.Marshal(struct {
 		Revision  int            `json:"revision"`
-		Source    sourceFields   `json:"source"`
 		Name      string         `json:"name"`
 		Dir       string         `json:"dir"`
 		Archive   string         `json:"archive"`
 		Overrides []Edit         `json:"overrides"`
 		Overlays  []BuiltOverlay `json:"overlays,omitempty"`
-	}{convertRevision, s.fields(), p.Name, dir, cacheKey, expanded, overlays})
+	}{convertRevision, p.Name, dir, cacheKey, expanded, overlays})
 	h.Write(data)
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
