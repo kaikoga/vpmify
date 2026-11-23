@@ -683,6 +683,82 @@ func TestRemoveOutdated(t *testing.T) {
 	}
 }
 
+// Removing the outdated versions looks only at the available versions in
+// the package's range: it never leaves none available, nor removes what a
+// pull has just made available.
+func TestRemoveOutdatedLooksAtTheAvailableVersionsInRange(t *testing.T) {
+	removed := func(t *testing.T, f *fixture) []string {
+		t.Helper()
+		res, err := f.app.RemoveOutdated("kit")
+		if err != nil {
+			t.Fatal(err, f.log)
+		}
+		out := []string{}
+		for _, e := range res.Removed {
+			out = append(out, e.Version)
+		}
+		return out
+	}
+	setup := func(t *testing.T) *fixture {
+		f := newFixture(t)
+		for _, v := range []string{"1.0.0", "1.1.0"} {
+			f.reg.add(v, "2021.3")
+		}
+		if err := f.addAndPull(PullOptions{All: true}, f.writeRecipe("")); err != nil {
+			t.Fatal(err, f.log)
+		}
+		return f
+	}
+	t.Run("unregistered newest", func(t *testing.T) {
+		f := setup(t)
+		f.unregister(f.app.Layout.PackageDir("kit", pkgName, "1.1.0"))
+		if got := removed(t, f); len(got) != 0 {
+			t.Errorf("removed %v", got)
+		}
+		if got := f.available(); !reflect.DeepEqual(got, []string{"1.0.0@2021.3"}) {
+			t.Errorf("available = %v", got)
+		}
+	})
+	t.Run("newest whose folder is gone", func(t *testing.T) {
+		f := setup(t)
+		dir := f.app.Layout.PackageDir("kit", pkgName, "1.1.0")
+		f.unregister(dir)
+		if err := os.RemoveAll(dir); err != nil {
+			t.Fatal(err)
+		}
+		if got := removed(t, f); len(got) != 0 {
+			t.Errorf("removed %v", got)
+		}
+	})
+	t.Run("range narrowed", func(t *testing.T) {
+		f := setup(t)
+		f.writeStoredRecipe("kit", `, "versions": "<1.1.0"`)
+		ctx := context.Background()
+		if _, err := f.app.Update(ctx, []string{"kit"}); err != nil {
+			t.Fatal(err, f.log)
+		}
+		if _, err := f.app.Pull(ctx, []string{"kit"}, PullOptions{}); err != nil {
+			t.Fatal(err, f.log)
+		}
+		// 1.0.0 is the newest in the range; 1.1.0, outside it, stays too.
+		if got := removed(t, f); len(got) != 0 {
+			t.Errorf("removed %v", got)
+		}
+		if got := f.available(); !reflect.DeepEqual(got, []string{"1.0.0@2021.3", "1.1.0@2021.3"}) {
+			t.Errorf("available = %v", got)
+		}
+	})
+	t.Run("recipe gone", func(t *testing.T) {
+		f := setup(t)
+		if err := os.Remove(f.app.recipePath("kit")); err != nil {
+			t.Fatal(err)
+		}
+		if got := removed(t, f); !reflect.DeepEqual(got, []string{"1.0.0"}) {
+			t.Errorf("removed %v", got)
+		}
+	})
+}
+
 func TestRemove(t *testing.T) {
 	f := newFixture(t)
 	f.reg.add("1.0.0", "2021.3")
