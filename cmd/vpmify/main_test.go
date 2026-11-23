@@ -64,6 +64,7 @@ func TestJSONSuccess(t *testing.T) {
 			"built": []any{}, "upToDate": []any{}, "registered": []any{}, "errors": []any{}, "warnings": []any{},
 		}},
 		{[]string{"clean", "--json"}, map[string]any{"applied": false, "entries": []any{}}},
+		{[]string{"sync", "--json"}, map[string]any{"registered": []any{}}},
 		{[]string{"doctor", "--json"}, map[string]any{"problems": []any{}, "ok": true}},
 	}
 	for _, tt := range tests {
@@ -87,6 +88,7 @@ func TestJSONErrors(t *testing.T) {
 		{[]string{"recipe", "remove", "--json", "nope/com.example.pkg"}, 1},
 		// recipe remove removes without asking, so it takes no --yes.
 		{[]string{"recipe", "remove", "--json", "--yes", "nope"}, 2},
+		{[]string{"sync", "--json", "kit"}, 2},
 		{[]string{"recipe", "probe", "--json"}, 2},
 		{[]string{"recipe", "probe", "--json", "a", "b"}, 2},
 		{[]string{"recipe", "probe", "--json", "nope"}, 1},

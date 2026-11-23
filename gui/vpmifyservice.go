@@ -300,6 +300,15 @@ func (s *VpmifyService) Update(ctx context.Context, ids []string) error {
 	})))
 }
 
+// Sync registers with ALCOM again the versions Vpmify keeps that ALCOM does
+// not list, as `vpmify sync` does.
+func (s *VpmifyService) Sync(ctx context.Context) error {
+	return describe(quiet(s.run(ctx, func(context.Context) error {
+		_, err := s.core.Sync()
+		return err
+	})))
+}
+
 // Pull makes versions available as `vpmify package pull` does: targets are "<id>"
 // or "<id>/<package>", either with "@<version>". prerelease is
 // `--prerelease`.

@@ -26,6 +26,7 @@ const en = {
     "pending.dismiss": "Dismiss",
 
     "recipes.updateAll": "Update all recipes",
+    "recipes.sync": "Sync with ALCOM",
     "recipes.none": "No recipes yet. Add recipe files from the button at the top, or drop them on this window.",
 
     "recipe.update": "Update",
@@ -124,6 +125,7 @@ const ja: Record<Key, string> = {
     "pending.dismiss": "閉じる",
 
     "recipes.updateAll": "全てのレシピを更新",
+    "recipes.sync": "ALCOM に同期",
     "recipes.none": "レシピはまだありません。上のボタンか、この窓へのドロップで、レシピのファイルを追加してください。",
 
     "recipe.update": "更新",

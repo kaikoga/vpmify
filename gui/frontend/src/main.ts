@@ -781,6 +781,7 @@ for (const tab of document.querySelectorAll<HTMLButtonElement>(".tabs button")) 
 cancelElement.addEventListener("click", () => VpmifyService.Cancel().catch(showError));
 byId("choose").addEventListener("click", () => act(() => VpmifyService.ChooseRecipeFiles()));
 byId("update-all").addEventListener("click", () => act(() => VpmifyService.Update([])));
+byId("sync").addEventListener("click", () => act(() => VpmifyService.Sync()));
 byId("update").addEventListener("click", () => {
     if (shownRecipe) {
         const id = shownRecipe.id;

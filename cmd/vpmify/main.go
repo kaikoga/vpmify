@@ -77,6 +77,9 @@ available versions, which ALCOM lists as user packages:
                                them available again
 
 other commands:
+  sync                         register with ALCOM again every converted version
+                               Vpmify keeps that ALCOM does not list, as when
+                               ALCOM lost them; unregisters nothing
   doctor [--fix]               find disagreements among recipes, Vpmify's record
                                and the store; --fix fixes what it can
   clean [--yes]                show what clean deletes; --yes unregisters and deletes
@@ -145,6 +148,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runRecipe(ctx, a, out, rest)
 	case "package":
 		return runPackage(ctx, a, out, rest)
+	case "sync":
+		if args, _, perr := splitFlags(rest); perr != nil || len(args) > 0 {
+			return out.usageError("sync takes only --json")
+		}
+		res, err := a.Sync()
+		return out.result(res, err)
 	case "clean":
 		args, flags, perr := splitFlags(rest, "--yes", "-y")
 		if perr != nil || len(args) > 0 {
