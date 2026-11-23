@@ -754,6 +754,32 @@ func TestListOfRecipes(t *testing.T) {
 			t.Errorf("list %s: err = %v", id, err)
 		}
 	}
+	if res, err := f.app.List("kit/" + pkgName); err != nil || len(res.Entries) != 1 || res.Entries[0].Package != pkgName {
+		t.Errorf("list kit/%s = %+v, %v", pkgName, res, err)
+	}
+	// A mistyped package would list nothing without saying why.
+	if _, err := f.app.List("kit/com.example.nope"); err == nil || !strings.Contains(err.Error(), "kit: the recipe has no package com.example.nope") {
+		t.Errorf("list kit/com.example.nope: err = %v", err)
+	}
+	if _, err := f.app.List("kit/"); err == nil || !strings.Contains(err.Error(), "want <recipe> or <recipe>/<package>") {
+		t.Errorf("list kit/: err = %v", err)
+	}
+}
+
+// A package the recipe no longer has is listed by name while versions of
+// it are available.
+func TestListOfAPackageTheRecipeDropped(t *testing.T) {
+	f := newFixture(t)
+	f.reg.add("1.0.0", "2021.3")
+	if err := f.addAndPull(PullOptions{}, f.writeRecipe("")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if err := os.WriteFile(filepath.Join(f.app.Layout.Recipes(), "kit.json"), []byte(npmRecipe("kit", registryURL, "com.example.other", "")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := f.app.List("kit/" + pkgName); err != nil || len(res.Entries) != 1 {
+		t.Errorf("list = %+v, %v", res, err)
+	}
 }
 
 func TestRegistersEvenWhenARecipeFails(t *testing.T) {

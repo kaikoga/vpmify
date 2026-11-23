@@ -44,8 +44,9 @@ recipes and their version lists:
                                lists
 
 available versions, which ALCOM lists as user packages:
-  package list [<id>...]       show the available versions, of every recipe or
-                               of the ones named
+  package list [<id>[/<package>]...]
+                               show the available versions, of every recipe or
+                               of the recipes and packages named
   package pull [--all] [--prerelease] [--refetch] [<id>[/<package>][@<version>]...]
                                convert versions from the version lists and
                                register them with ALCOM, which makes them

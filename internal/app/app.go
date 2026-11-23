@@ -1814,22 +1814,40 @@ type ListResult struct {
 	Entries []Entry `json:"entries"`
 }
 
-// List returns the available versions of the recipes ids, or of every
-// recipe when there are none: the folders in the store that ALCOM lists. A
-// settings.json that cannot be read is an error, since then no version can
-// be told available.
-func (a *App) List(ids ...string) (*ListResult, error) {
+// List returns the available versions of the recipes and packages refs
+// name ("<id>" or "<id>/<package>"), or of every recipe when there are
+// none: the folders in the store that ALCOM lists. A settings.json that
+// cannot be read is an error, since then no version can be told available.
+func (a *App) List(refs ...string) (*ListResult, error) {
 	st, err := state.Load(a.Layout.State())
 	if err != nil {
 		return nil, err
 	}
-	for _, id := range ids {
+	type filter struct{ id, name string }
+	var filters []filter
+	for _, ref := range refs {
+		id, name, err := splitRef(ref)
+		if err != nil {
+			return nil, err
+		}
 		// An id that is not one is refused before it names a file, such as
 		// "../state" naming state.json.
-		_, ok := st.Recipes[id]
+		rs, ok := st.Recipes[id]
 		if !ok && (!recipe.ValidID(id) || !fsutil.Exists(a.recipePath(id))) {
 			return nil, fmt.Errorf("no recipe %q", id)
 		}
+		// A package the recipe neither has nor had is a mistyped name,
+		// which would list nothing without saying why.
+		if name != "" && (rs == nil || rs.Packages[name] == nil) {
+			r, err := a.loadRecipe(id)
+			if err != nil {
+				return nil, err
+			}
+			if _, p := r.Package(name); p == nil {
+				return nil, fmt.Errorf("%s: the recipe has no package %s", id, name)
+			}
+		}
+		filters = append(filters, filter{id, name})
 	}
 	registered, err := a.loadRegistration()
 	if err != nil {
@@ -1838,7 +1856,8 @@ func (a *App) List(ids ...string) (*ListResult, error) {
 	res := &ListResult{Entries: []Entry{}}
 	for dir := range registered {
 		id, name, v, ok := a.storeVersion(dir)
-		if !ok || len(ids) > 0 && !slices.Contains(ids, id) {
+		named := slices.ContainsFunc(filters, func(f filter) bool { return f.id == id && (f.name == "" || f.name == name) })
+		if !ok || len(filters) > 0 && !named {
 			continue
 		}
 		res.Entries = append(res.Entries, newEntry(id, name, v, dir))
