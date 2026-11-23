@@ -39,6 +39,12 @@ recipes and their version lists:
                                with prereleases, --unity only those a project
                                on that Unity can use
   recipe list                  show the recipes
+  recipe probe <id|recipe.json|URL>
+                               read the upstreams of a recipe, added or not,
+                               and show the tags and versions each source takes
+                               and the ones it leaves out and why, for writing
+                               recipes; upstreams change, so it may read
+                               otherwise later; keeps nothing
   recipe remove <id>           unregister and delete the recipe's converted
                                versions, and delete the recipe and its version
                                lists
@@ -193,7 +199,7 @@ var movedCommands = map[string]string{
 // runRecipe runs the commands on recipes and their version lists.
 func runRecipe(ctx context.Context, a *app.App, out output, args []string) int {
 	if len(args) == 0 {
-		return out.usageError("recipe needs a command: add, update, versions, list or remove")
+		return out.usageError("recipe needs a command: add, update, versions, list, probe or remove")
 	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {
@@ -236,6 +242,18 @@ func runRecipe(ctx context.Context, a *app.App, out output, args []string) int {
 			}
 		}
 		return out.result(list, err)
+	case "probe":
+		refs, _, perr := splitFlags(rest)
+		if perr != nil || len(refs) != 1 {
+			return out.usageError("recipe probe takes one recipe id, recipe file or URL")
+		}
+		res, err := a.Probe(ctx, refs[0])
+		if res != nil && !out.json {
+			if perr := printProbe(out.stdout, res); perr != nil && err == nil {
+				err = perr
+			}
+		}
+		return out.result(res, err)
 	case "list":
 		if args, _, perr := splitFlags(rest); perr != nil || len(args) > 0 {
 			return out.usageError("recipe list takes only --json")
@@ -485,6 +503,64 @@ func printVersions(stdout io.Writer, list *app.VersionList) error {
 		}
 	}
 	fmt.Fprintf(stdout, "\n`vpmify package pull` makes the newest version of each package available; `vpmify package pull %s/<package>@<version>` adds another.\n", list.Recipe)
+	return nil
+}
+
+// printProbe prints how each source of a recipe reads its upstream: the
+// versions it takes, and what it leaves out, by reason.
+func printProbe(stdout io.Writer, res *app.ProbeResult) error {
+	for i, s := range res.Sources {
+		if i > 0 {
+			fmt.Fprintln(stdout)
+		}
+		fmt.Fprintf(stdout, "%s: %s\n", res.Recipe, s.Source)
+		if s.Error != "" {
+			fmt.Fprintf(stdout, "  cannot be read: %s\n", s.Error)
+			continue
+		}
+		for _, p := range s.Packages {
+			var vs []string
+			for _, v := range p.Versions {
+				if v.Tag != "" && v.Tag != v.Version {
+					vs = append(vs, fmt.Sprintf("%s (tag %s)", v.Version, v.Tag))
+				} else {
+					vs = append(vs, v.Version)
+				}
+			}
+			if len(vs) == 0 {
+				fmt.Fprintf(stdout, "  %s: takes no version\n", p.Package)
+				continue
+			}
+			fmt.Fprintf(stdout, "  %s: takes %d: %s\n", p.Package, len(vs), strings.Join(vs, ", "))
+		}
+		for _, w := range s.Warnings {
+			fmt.Fprintf(stdout, "  warning: %s\n", w)
+		}
+		if len(s.Skipped) == 0 {
+			continue
+		}
+		fmt.Fprintln(stdout, "  leaves out:")
+		var reasons []string
+		byReason := map[string][]string{}
+		for _, k := range s.Skipped {
+			if _, ok := byReason[k.Reason]; !ok {
+				reasons = append(reasons, k.Reason)
+			}
+			what := k.Tag
+			if what == "" {
+				what = k.Version
+			} else if k.Version != "" && k.Version != k.Tag {
+				what += " (" + k.Version + ")"
+			}
+			if k.Package != "" && len(s.Packages) > 1 {
+				what += " for " + k.Package
+			}
+			byReason[k.Reason] = append(byReason[k.Reason], what)
+		}
+		for _, r := range reasons {
+			fmt.Fprintf(stdout, "    %s: %s\n", r, strings.Join(byReason[r], ", "))
+		}
+	}
 	return nil
 }
 

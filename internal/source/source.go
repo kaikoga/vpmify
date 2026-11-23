@@ -39,6 +39,9 @@ type Release struct {
 	CacheKey string
 	// Origin says where the version was found, for messages.
 	Origin string
+	// Tag is the Git tag the version was taken from (Git sources). The
+	// version lists do not keep it: only probing the source reads it.
+	Tag string
 	// Overlays go into folders of the package, in the recipe's order.
 	Overlays []Overlay
 }
@@ -61,6 +64,27 @@ type Source interface {
 	// versions are kept together, so that {sameTag} sees one reading of the
 	// tags.
 	Releases(ctx context.Context) (map[string][]Release, []string, error)
+}
+
+// Skip is a tag or version an upstream has that a source does not take,
+// and why, for whoever writes the recipe: the versions a user's update
+// reads leave these out without a word, since the user cannot mend them.
+type Skip struct {
+	// Tag is the Git tag, if the source has tags.
+	Tag string `json:"tag,omitempty"`
+	// Package is the package the tag or version is left out for, or empty
+	// for every package of the source.
+	Package string `json:"package,omitempty"`
+	// Version is what the tag or version reads as, if it reads as one.
+	Version string `json:"version,omitempty"`
+	Reason  string `json:"reason"`
+}
+
+// Prober is a Source that says what it leaves out.
+type Prober interface {
+	Source
+	// Probe is Releases, with what it does not take and why.
+	Probe(ctx context.Context) (map[string][]Release, []Skip, []string, error)
 }
 
 // New returns the upstream of a recipe source. cacheDir keeps what the

@@ -51,33 +51,44 @@ func registryKey(registry string) string {
 // Releases lists the versions of each package in the registry, oldest
 // first. Versions whose number is not SemVer are left out.
 func (n *NPM) Releases(ctx context.Context) (map[string][]Release, []string, error) {
-	out := map[string][]Release{}
-	for _, name := range n.Packages {
-		rels, err := n.releases(ctx, name)
-		if err != nil {
-			return nil, nil, fmt.Errorf("%s: %w", name, err)
-		}
-		out[name] = rels
-	}
-	return out, nil, nil
+	out, _, warnings, err := n.Probe(ctx)
+	return out, warnings, err
 }
 
-func (n *NPM) releases(ctx context.Context, name string) ([]Release, error) {
+// Probe is Releases, with the versions it leaves out and why.
+func (n *NPM) Probe(ctx context.Context) (map[string][]Release, []Skip, []string, error) {
+	out := map[string][]Release{}
+	var skips []Skip
+	for _, name := range n.Packages {
+		rels, s, err := n.releases(ctx, name)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("%s: %w", name, err)
+		}
+		out[name] = rels
+		skips = append(skips, s...)
+	}
+	return out, skips, nil, nil
+}
+
+func (n *NPM) releases(ctx context.Context, name string) ([]Release, []Skip, error) {
 	u := strings.TrimRight(n.Registry, "/") + "/" + url.PathEscape(name)
 	var doc packument
 	if err := n.Client.GetJSON(ctx, u, &doc); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if doc.Name != name {
-		return nil, fmt.Errorf("registry returned %q for %q", doc.Name, name)
+		return nil, nil, fmt.Errorf("registry returned %q for %q", doc.Name, name)
 	}
 	var out []Release
+	var skips []Skip
 	for key, rec := range doc.Versions {
 		v, err := semver.Parse(key)
 		if err != nil {
+			skips = append(skips, Skip{Package: name, Version: key, Reason: "not a version"})
 			continue
 		}
 		if rec.Dist.Tarball == "" {
+			skips = append(skips, Skip{Package: name, Version: key, Reason: "the registry gives no archive"})
 			continue
 		}
 		unity, _ := rec.Unity.(string)
@@ -92,5 +103,7 @@ func (n *NPM) releases(ctx context.Context, name string) ([]Release, error) {
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return semver.Compare(out[i].Version, out[j].Version) < 0 })
-	return out, nil
+	// The registry's versions are a map: the order is the keys'.
+	sort.Slice(skips, func(i, j int) bool { return skips[i].Version < skips[j].Version })
+	return out, skips, nil
 }

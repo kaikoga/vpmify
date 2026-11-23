@@ -70,17 +70,22 @@ func NewGitHub(s *recipe.Source, client *fetch.Client, cacheDir string) (*GitHub
 	for _, p := range s.Packages {
 		pkgs = append(pkgs, GitHubPackage{Name: p.Name, PathFor: p.PathFor, VersionFromTag: p.TakesTagVersion, OverlaysFor: p.OverlaysFor})
 	}
-	return &GitHub{
+	g := &GitHub{
 		Owner: owner, Repo: repo,
 		Packages:     pkgs,
-		TagVersion:   s.TagVersionOf,
 		AcceptTag:    s.AcceptsTag,
 		Client:       client,
 		CacheDir:     cacheDir,
 		GitBase:      "https://github.com",
 		RawBase:      "https://raw.githubusercontent.com",
 		CodeloadBase: "https://codeload.github.com",
-	}, nil
+	}
+	// Without a rule TagVersion is nil, as tags reads it, so that probing
+	// says the name is not a version rather than blaming a rule.
+	if s.TagVersion != nil {
+		g.TagVersion = s.TagVersionOf
+	}
+	return g, nil
 }
 
 type tag struct {
@@ -99,12 +104,19 @@ type tag struct {
 // names the release's packages, not a release candidate's prereleases.
 // Each release keeps the versions the other packages have in its tag.
 func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, []string, error) {
-	tags, err := g.tags(ctx)
+	out, _, warnings, err := g.Probe(ctx)
+	return out, warnings, err
+}
+
+// Probe is Releases, with the tags it does not take and why.
+func (g *GitHub) Probe(ctx context.Context) (map[string][]Release, []Skip, []string, error) {
+	tags, skips, err := g.tags(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	n := len(g.Packages)
 	found := make([]*Release, len(tags)*n)
+	reasons := make([]string, len(tags)*n)
 	errs := make([]error, len(tags)*n)
 	sem := make(chan struct{}, 8)
 	var wg sync.WaitGroup
@@ -115,13 +127,13 @@ func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, []string, 
 				defer wg.Done()
 				sem <- struct{}{}
 				defer func() { <-sem }()
-				found[i*n+j], errs[i*n+j] = g.release(ctx, t, p)
+				found[i*n+j], reasons[i*n+j], errs[i*n+j] = g.release(ctx, t, p)
 			}()
 		}
 	}
 	wg.Wait()
 	if err := errors.Join(errs...); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	var same sameVersionTags
 	out := map[string][]Release{}
@@ -134,6 +146,7 @@ func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, []string, 
 		for i := range tags { // oldest first
 			rel := found[i*n+j]
 			if rel == nil {
+				skips = append(skips, Skip{Tag: tags[i].name, Package: p.Name, Version: tags[i].version.String(), Reason: reasons[i*n+j]})
 				continue
 			}
 			c := slices.IndexFunc(chosen, func(k int) bool { return semver.Compare(found[k*n+j].Version, rel.Version) == 0 })
@@ -143,6 +156,14 @@ func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, []string, 
 			case !rel.Version.IsPrerelease() && tags[chosen[c]].version.IsPrerelease() && !tags[i].version.IsPrerelease():
 				chosen[c] = i
 			}
+		}
+		for i := range tags {
+			rel := found[i*n+j]
+			if rel == nil || slices.Contains(chosen, i) {
+				continue
+			}
+			c := slices.IndexFunc(chosen, func(k int) bool { return semver.Compare(found[k*n+j].Version, rel.Version) == 0 })
+			skips = append(skips, Skip{Tag: tags[i].name, Package: p.Name, Version: rel.Version.String(), Reason: fmt.Sprintf("the same version as tag %s, which is taken", tags[chosen[c]].name)})
 		}
 		rels := []Release{}
 		for _, i := range chosen {
@@ -170,26 +191,30 @@ func (g *GitHub) Releases(ctx context.Context) (map[string][]Release, []string, 
 	for _, rels := range out {
 		sort.SliceStable(rels, func(i, j int) bool { return semver.Compare(rels[i].Version, rels[j].Version) < 0 })
 	}
-	return out, same.warnings(), nil
+	return out, skips, same.warnings(), nil
 }
 
 // tags lists the tags whose name reads as a version the recipe accepts,
-// oldest first.
-func (g *GitHub) tags(ctx context.Context) ([]tag, error) {
+// oldest first, and the other tags, in name order, with why they are not
+// read.
+func (g *GitHub) tags(ctx context.Context) ([]tag, []Skip, error) {
 	readVersion := g.TagVersion
+	unread := "tagVersion does not read the name as a version"
 	if readVersion == nil {
 		readVersion = recipe.PlainTagVersion
+		unread = "the name is not a version"
 	}
 	u := fmt.Sprintf("%s/%s/%s.git/info/refs?service=git-upload-pack", g.GitBase, g.Owner, g.Repo)
 	data, err := g.Client.GetBytes(ctx, u, g.Client.MaxMetadata)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	refs, err := parseRefAdvertisement(data)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", u, err)
+		return nil, nil, fmt.Errorf("%s: %w", u, err)
 	}
 	var out []tag
+	var skips []Skip
 	for name, commit := range refs {
 		tagName, ok := strings.CutPrefix(name, "refs/tags/")
 		if !ok {
@@ -197,13 +222,16 @@ func (g *GitHub) tags(ctx context.Context) ([]tag, error) {
 		}
 		v, ok := readVersion(tagName)
 		if !ok {
+			skips = append(skips, Skip{Tag: tagName, Reason: unread})
 			continue
 		}
 		if g.AcceptTag != nil && !g.AcceptTag(v) {
+			skips = append(skips, Skip{Tag: tagName, Version: v.String(), Reason: "outside the source's tags"})
 			continue
 		}
 		out = append(out, tag{name: tagName, version: v, commit: commit})
 	}
+	sort.Slice(skips, func(i, j int) bool { return naturalLess(skips[i].Tag, skips[j].Tag) })
 	// Tags of one version are in name order, numbers by value, which stands
 	// for their age: the ref advertisement has no dates.
 	sort.Slice(out, func(i, j int) bool {
@@ -212,7 +240,7 @@ func (g *GitHub) tags(ctx context.Context) ([]tag, error) {
 		}
 		return naturalLess(out[i].name, out[j].name)
 	})
-	return out, nil
+	return out, skips, nil
 }
 
 // sameVersionTags gathers the tags that read as one version and hold the
@@ -360,22 +388,26 @@ func parseRefAdvertisement(data []byte) (map[string]string, error) {
 	return refs, nil
 }
 
-// release returns package p's release in tag t, or nil when the tag's
-// folder for the package does not have it.
-func (g *GitHub) release(ctx context.Context, t tag, p GitHubPackage) (*Release, error) {
+// release returns package p's release in tag t, or nil and why when the
+// tag's folder for the package does not have it.
+func (g *GitHub) release(ctx context.Context, t tag, p GitHubPackage) (*Release, string, error) {
 	dir := ""
 	if p.PathFor != nil {
 		var ok bool
 		if dir, ok = p.PathFor(t.version); !ok {
-			return nil, nil
+			return nil, "the package's paths give no folder for it", nil
 		}
 	}
 	data, ok, err := g.manifest(ctx, t.commit, dir)
 	if err != nil {
-		return nil, fmt.Errorf("tag %s: %w", t.name, err)
+		return nil, "", fmt.Errorf("tag %s: %w", t.name, err)
 	}
 	if !ok {
-		return nil, nil
+		where := dir
+		if where == "" {
+			where = "the top folder"
+		}
+		return nil, "no package.json in " + where, nil
 	}
 	var m struct {
 		Name         string            `json:"name"`
@@ -383,19 +415,22 @@ func (g *GitHub) release(ctx context.Context, t tag, p GitHubPackage) (*Release,
 		Unity        any               `json:"unity"`
 		Dependencies map[string]string `json:"dependencies"`
 	}
-	if err := json.Unmarshal(data, &m); err != nil || m.Name != p.Name {
-		return nil, nil
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, "package.json cannot be read", nil
+	}
+	if m.Name != p.Name {
+		return nil, fmt.Sprintf("package.json names %q", m.Name), nil
 	}
 	if m.Version == "" {
 		// Not read with versionFromTag either: the conversion checks the
 		// package.json version against UpstreamVersion, whose "" means the
 		// same as Version.
-		return nil, nil
+		return nil, "package.json has no version", nil
 	}
 	v, upstream := t.version, m.Version
 	if p.VersionFromTag == nil || !p.VersionFromTag(t.version) {
 		if v, err = semver.Parse(m.Version); err != nil {
-			return nil, nil
+			return nil, fmt.Sprintf("package.json has version %q, which is not a version", m.Version), nil
 		}
 		upstream = ""
 	}
@@ -404,7 +439,7 @@ func (g *GitHub) release(ctx context.Context, t tag, p GitHubPackage) (*Release,
 		for _, o := range p.OverlaysFor(t.version) {
 			owner, repo, err := recipe.GitHubRepo(o.URL)
 			if err != nil {
-				return nil, fmt.Errorf("tag %s: overlay %s: %w", t.name, o.Path, err)
+				return nil, "", fmt.Errorf("tag %s: overlay %s: %w", t.name, o.Path, err)
 			}
 			overlays = append(overlays, Overlay{
 				Path:       o.Path,
@@ -424,8 +459,9 @@ func (g *GitHub) release(ctx context.Context, t tag, p GitHubPackage) (*Release,
 		Pinned:          true,
 		CacheKey:        path.Join("git", "github.com", g.Owner, g.Repo, t.commit+".tar.gz"),
 		Origin:          "tag " + t.name,
+		Tag:             t.name,
 		Overlays:        overlays,
-	}, nil
+	}, "", nil
 }
 
 // manifest returns package.json in folder dir of commit, from the cache
