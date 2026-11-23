@@ -183,6 +183,32 @@ func TestPullAddsTheDependencyItWrites(t *testing.T) {
 	}
 }
 
+// A recipe that provides the dependency too but has no version list is
+// passed over for the next, and the log says it in the front end's words,
+// which may name what mends it.
+func TestPullPassesOverAProviderWithoutAList(t *testing.T) {
+	f := newFixture(t)
+	gh := monorepo("1.0.0", "1.1.0")
+	f.app.Client.HTTP.Transport = gh
+	f.app.LogError = func(err error) string { return err.Error() + "; mended so" }
+	ctx := context.Background()
+	if _, err := f.app.Add(ctx,
+		f.writeGitRecipe("pkg", "com.example.pkg", "Packages/Pkg", pkgNeedsBase),
+		f.writeGitRecipe("abase", "com.example.base", "Packages/Base", ""),
+		f.writeGitRecipe("base", "com.example.base", "Packages/Base", "")); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if err := os.Remove(f.app.Layout.Index("abase")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.app.Pull(ctx, []string{"pkg"}, PullOptions{}); err != nil {
+		t.Fatal(err, f.log)
+	}
+	if want := "abase: passed over for com.example.base >=1.1.0: no usable version list: none yet; mended so\n"; !strings.Contains(f.log.String(), want) {
+		t.Errorf("log = %s, want %q", f.log, want)
+	}
+}
+
 // An onDemand package is not chosen by a pull that names no package, with
 // --all either: it comes as a dependency, or when the user names it or a
 // version.

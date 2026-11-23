@@ -126,6 +126,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		Layout:      paths.Layout{Base: base},
 		Client:      fetch.NewClient("vpmify/" + version),
 		Log:         stderr,
+		LogError:    hinted,
 		VerifyDelay: 2 * time.Second,
 	}
 

@@ -39,6 +39,11 @@ type App struct {
 	Client *fetch.Client
 	// Log receives progress messages.
 	Log io.Writer
+	// LogError, when set, is the words for an error that a progress
+	// message says while the work goes on: a front end may add the
+	// commands that mend it, which the core's words leave to it. The
+	// error's own words are used otherwise.
+	LogError func(error) string
 	// VerifyDelay is how long to wait before reading settings.json back.
 	VerifyDelay time.Duration
 }
@@ -47,6 +52,14 @@ func (a *App) logf(format string, args ...any) {
 	if a.Log != nil {
 		fmt.Fprintf(a.Log, format+"\n", args...)
 	}
+}
+
+// logError is the words for err in a progress message.
+func (a *App) logError(err error) string {
+	if a.LogError != nil {
+		return a.LogError(err)
+	}
+	return err.Error()
 }
 
 func (a *App) withLock(fn func() error) error {
@@ -1275,7 +1288,7 @@ func (a *App) dependencyProvider(n unmet, managed providers) (string, string, er
 		}
 		var noList *NoListError
 		if errors.As(err, &noList) {
-			a.logf("%s: passed over for %s %s: %v", id, n.dep, n.rng, err)
+			a.logf("%s: passed over for %s %s: %s", id, n.dep, n.rng, a.logError(err))
 		}
 		errs = append(errs, fmt.Errorf("%s: %w", id, err))
 	}
