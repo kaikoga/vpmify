@@ -43,12 +43,14 @@ func (e *NotListedError) Error() string {
 }
 
 // NoMatchError says that the version list of package Package of recipe
-// Recipe has no version in Range, which a dependency asks for. The list may
-// be older than the version, which updating the recipe mends.
+// Recipe has no version in Range, which Dependent, "<name> <version>" of a
+// package that depends on it, asks for. The list may be older than the
+// version, which updating the recipe mends.
 type NoMatchError struct {
-	Recipe  string
-	Package string
-	Range   string
+	Recipe    string
+	Package   string
+	Range     string
+	Dependent string
 }
 
 func (e *NoMatchError) Error() string {

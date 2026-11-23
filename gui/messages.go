@@ -62,7 +62,7 @@ func kindOf(err error) (m *Message, gui bool) {
 	case *vpmify.NotListedError:
 		return &Message{Kind: "notListed", Args: map[string]string{"recipe": e.Recipe, "version": e.Version}}, false
 	case *vpmify.NoMatchError:
-		return &Message{Kind: "noMatch", Args: map[string]string{"recipe": e.Recipe, "package": e.Package, "range": e.Range}}, false
+		return &Message{Kind: "noMatch", Args: map[string]string{"recipe": e.Recipe, "package": e.Package, "range": e.Range, "dependent": e.Dependent}}, false
 	case *vpmify.NoRecipeError:
 		return &Message{Kind: "noRecipe", Args: map[string]string{"recipe": e.Recipe}}, false
 	}

@@ -256,6 +256,10 @@ func TestPullFailsWhenTheDependencyCannotBeAdded(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "com.example.pkg 1.1.0 needs com.example.base >=1.1.0") {
 		t.Errorf("err = %v", err)
 	}
+	var noMatch *NoMatchError
+	if !errors.As(err, &noMatch) || *noMatch != (NoMatchError{Recipe: "base", Package: "com.example.base", Range: ">=1.1.0", Dependent: "com.example.pkg 1.1.0"}) {
+		t.Errorf("no match = %+v", noMatch)
+	}
 }
 
 type failCodeload struct{ next http.RoundTripper }

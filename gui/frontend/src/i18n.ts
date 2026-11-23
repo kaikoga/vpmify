@@ -86,9 +86,9 @@ const en = {
     "remove.package.confirm": "Remove versions",
 
     // The failures the service names by kind, in gui/messages.go.
-    "error.noList": "The recipe {recipe} has no version list. Press Update on that recipe.",
-    "error.notListed": "{version} is not in the version list of the recipe {recipe}. Press Update on that recipe, then get it again.",
-    "error.noMatch": "The version list of the recipe {recipe} has no version of {package} that satisfies {range}. Press Update on that recipe, then get it again.",
+    "error.noList": "The recipe {recipe} has no version list.",
+    "error.notListed": "{version} is not in the version list of the recipe {recipe}.",
+    "error.noMatch": "{dependent} needs {package} {range}, which no version in the version list of the recipe {recipe} satisfies.",
     "error.noRecipe": "There is no recipe {recipe}.",
     "error.linkUnknown": "The link is not supported.",
     "error.linkNoRecipe": "The link names no recipe: {link}",
@@ -183,9 +183,9 @@ const ja: Record<Key, string> = {
     "remove.package.after": "これらのパッケージがプロジェクトにインポートされていた場合、ALCOM でアップデートや再インストールを行えなくなります。レシピは残るので、ここからもう一度取得できます。",
     "remove.package.confirm": "バージョンを削除する",
 
-    "error.noList": "レシピ {recipe} のバージョンの一覧がありません。そのレシピの「更新」を押してください。",
-    "error.notListed": "{version} は、レシピ {recipe} のバージョンの一覧にありません。そのレシピの「更新」を押してから、もう一度取得してください。",
-    "error.noMatch": "レシピ {recipe} のバージョンの一覧に、{package} の {range} に合うバージョンがありません。そのレシピの「更新」を押してから、もう一度取得してください。",
+    "error.noList": "レシピ {recipe} のバージョンの一覧がありません。",
+    "error.notListed": "{version} は、レシピ {recipe} のバージョンの一覧にありません。",
+    "error.noMatch": "{dependent} が求める {package} {range} に合うバージョンが、レシピ {recipe} のバージョンの一覧にありません。",
     "error.noRecipe": "レシピ {recipe} はありません。",
     "error.linkUnknown": "非対応のリンクです。",
     "error.linkNoRecipe": "リンクにレシピがありません: {link}",

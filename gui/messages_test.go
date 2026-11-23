@@ -31,8 +31,8 @@ func TestMessageOf(t *testing.T) {
 			&Message{Detail: "GET x: 404\nkit: no usable version list: none yet"}},
 		{"not listed", fmt.Errorf("pkg: %w", &vpmify.NotListedError{Recipe: "kit", Version: "1.2.3", Package: "pkg"}),
 			&Message{Kind: "notListed", Args: map[string]string{"recipe": "kit", "version": "1.2.3"}, Detail: "pkg: the version list has no 1.2.3: it is outside the package's versions, or the version list is older than it"}},
-		{"no match", &vpmify.NoMatchError{Recipe: "kit", Package: "pkg", Range: ">=1.0.0"},
-			&Message{Kind: "noMatch", Args: map[string]string{"recipe": "kit", "package": "pkg", "range": ">=1.0.0"}, Detail: "the version list of pkg has no version that satisfies it"}},
+		{"no match", &vpmify.NoMatchError{Recipe: "kit", Package: "pkg", Range: ">=1.0.0", Dependent: "app 2.0.0"},
+			&Message{Kind: "noMatch", Args: map[string]string{"recipe": "kit", "package": "pkg", "range": ">=1.0.0", "dependent": "app 2.0.0"}, Detail: "the version list of pkg has no version that satisfies it"}},
 		{"no recipe", &vpmify.NoRecipeError{Recipe: "kit"},
 			&Message{Kind: "noRecipe", Args: map[string]string{"recipe": "kit"}, Detail: `no recipe "kit"`}},
 		// The GUI's own failures are said whole by the front end.

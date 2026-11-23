@@ -1269,7 +1269,7 @@ func (a *App) dependencyProvider(n unmet, managed providers) (string, string, er
 	}
 	var errs []error
 	for _, id := range candidates {
-		v, err := a.dependencyVersion(id, n.dep, n.rng)
+		v, err := a.dependencyVersion(id, n)
 		if err == nil {
 			return id, v, nil
 		}
@@ -1282,11 +1282,12 @@ func (a *App) dependencyProvider(n unmet, managed providers) (string, string, er
 	return "", "", errors.Join(errs...)
 }
 
-// dependencyVersion picks the version of package name of recipe id to add
-// for rng: the version its lower bound names when the version list has it,
-// which keeps packages released in lockstep (UniVRM's) together, or else
-// the newest version that satisfies it.
-func (a *App) dependencyVersion(id, name string, rng semver.Range) (string, error) {
+// dependencyVersion picks the version of package n.dep of recipe id to add
+// for n.rng: the version its lower bound names when the version list has
+// it, which keeps packages released in lockstep (UniVRM's) together, or
+// else the newest version that satisfies it.
+func (a *App) dependencyVersion(id string, n unmet) (string, error) {
+	name, rng := n.dep, n.rng
 	r, err := a.loadRecipe(id)
 	if err != nil {
 		return "", err
@@ -1317,7 +1318,7 @@ func (a *App) dependencyVersion(id, name string, rng semver.Range) (string, erro
 			return usable[i].Version.String(), nil
 		}
 	}
-	return "", &NoMatchError{Recipe: id, Package: name, Range: rng.String()}
+	return "", &NoMatchError{Recipe: id, Package: name, Range: rng.String(), Dependent: n.dependent}
 }
 
 // readVPMDependencies returns the vpmDependencies of the package in dir.
