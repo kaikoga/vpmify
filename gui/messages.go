@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 
 	vpmify "github.com/kaikoga/vpmify/internal/app"
 )
@@ -17,10 +16,6 @@ type Message struct {
 	Args   map[string]string `json:"args,omitempty"`
 	Detail string            `json:"detail,omitempty"`
 }
-
-// errPendingGone is a pending set confirmed after it was confirmed or
-// discarded, which a second click can do.
-var errPendingGone = errors.New("the recipes are no longer waiting")
 
 // messageOf is what the front end shows for err, or nil without one. Of
 // several errors err joins, the first it knows, depth first, names the
@@ -70,9 +65,6 @@ func kindOf(err error) (m *Message, gui bool) {
 		return &Message{Kind: "noMatch", Args: map[string]string{"recipe": e.Recipe, "package": e.Package, "range": e.Range}}, false
 	case *vpmify.NoRecipeError:
 		return &Message{Kind: "noRecipe", Args: map[string]string{"recipe": e.Recipe}}, false
-	}
-	if err == errPendingGone {
-		return &Message{Kind: "pendingGone"}, true
 	}
 	return nil, false
 }

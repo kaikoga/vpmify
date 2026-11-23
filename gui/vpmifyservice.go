@@ -375,7 +375,9 @@ func (s *VpmifyService) Pending() []PendingAdd {
 func (s *VpmifyService) ConfirmAdd(ctx context.Context, token string) error {
 	p, ok := s.takePending(token)
 	if !ok {
-		return describe(errPendingGone)
+		// Confirmed or discarded already, as a second click can do: the
+		// first took care of it, and there is nothing to say.
+		return nil
 	}
 	if p.err != nil {
 		return describe(p.err)

@@ -37,7 +37,6 @@ func TestMessageOf(t *testing.T) {
 			&Message{Kind: "noRecipe", Args: map[string]string{"recipe": "kit"}, Detail: `no recipe "kit"`}},
 		// The GUI's own failures are said whole by the front end.
 		{"link", linkErr, &Message{Kind: "linkNotHttps", Args: map[string]string{"url": "http://example.com/r.json"}}},
-		{"pending gone", errPendingGone, &Message{Kind: "pendingGone"}},
 		{"unknown", errors.New("GET x: 404"), &Message{Detail: "GET x: 404"}},
 	}
 	for _, tt := range tests {

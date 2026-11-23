@@ -90,10 +90,9 @@ const en = {
     "error.notListed": "{version} is not in the version list of the recipe {recipe}. Press Update on that recipe, then get it again.",
     "error.noMatch": "The version list of the recipe {recipe} has no version of {package} that satisfies {range}. Press Update on that recipe, then get it again.",
     "error.noRecipe": "There is no recipe {recipe}.",
-    "error.linkUnknown": "This is not a Vpmify link: {link}",
+    "error.linkUnknown": "The link is not supported.",
     "error.linkNoRecipe": "The link names no recipe: {link}",
     "error.linkNotHttps": "The recipe in the link is not an https URL: {url}",
-    "error.pendingGone": "This confirmation is already closed.",
 };
 
 export type Key = keyof typeof en;
@@ -188,10 +187,9 @@ const ja: Record<Key, string> = {
     "error.notListed": "{version} は、レシピ {recipe} のバージョンの一覧にありません。そのレシピの「更新」を押してから、もう一度取得してください。",
     "error.noMatch": "レシピ {recipe} のバージョンの一覧に、{package} の {range} に合うバージョンがありません。そのレシピの「更新」を押してから、もう一度取得してください。",
     "error.noRecipe": "レシピ {recipe} はありません。",
-    "error.linkUnknown": "Vpmify のリンクではありません: {link}",
+    "error.linkUnknown": "非対応のリンクです。",
     "error.linkNoRecipe": "リンクにレシピがありません: {link}",
     "error.linkNotHttps": "リンクのレシピの URL が https ではありません: {url}",
-    "error.pendingGone": "この追加の確認は終わっています。",
 };
 
 export type Lang = "en" | "ja";
