@@ -1564,7 +1564,7 @@ func uniquePaths(paths []string) []string {
 	return out
 }
 
-// RemoveResult is what RemoveVersions or RemoveRecipe did, or what
+// RemoveResult is what RemoveVersions, RemoveOutdated or RemoveRecipe did, or what
 // RemoveRecipe would do when Applied is false.
 type RemoveResult struct {
 	// Applied is false when RemoveRecipe only showed what it would remove.

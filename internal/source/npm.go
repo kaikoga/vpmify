@@ -49,7 +49,8 @@ func registryKey(registry string) string {
 }
 
 // Releases lists the versions of each package in the registry, oldest
-// first. Versions whose number is not SemVer are left out.
+// first. Versions whose number is not SemVer, and versions without an
+// archive, are left out.
 func (n *NPM) Releases(ctx context.Context) (map[string][]Release, []string, error) {
 	out, _, warnings, err := n.Probe(ctx)
 	return out, warnings, err

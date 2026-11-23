@@ -33,7 +33,7 @@ type GitHub struct {
 	Owner, Repo string
 	Packages    []GitHubPackage
 	// TagVersion reads the version of a tag from its name; false means the
-	// tag is not read.
+	// tag is not read. nil reads it as recipe.PlainTagVersion does.
 	TagVersion func(name string) (semver.Version, bool)
 	AcceptTag  func(semver.Version) bool
 	Client     *fetch.Client
