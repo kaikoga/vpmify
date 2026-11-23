@@ -91,7 +91,7 @@ const en = {
     "error.noMatch": "{dependent} needs {package} {range}, which no version in the version list of the recipe {recipe} satisfies.",
     "error.noRecipe": "There is no recipe {recipe}.",
     "error.linkUnknown": "The link is not supported.",
-    "error.linkNoRecipe": "The link names no recipe: {link}",
+    "error.linkNoRecipe": "The link names no recipe.",
     "error.linkNotHttps": "The recipe in the link is not an https URL: {url}",
 };
 
@@ -188,7 +188,7 @@ const ja: Record<Key, string> = {
     "error.noMatch": "{dependent} が求める {package} {range} に合うバージョンが、レシピ {recipe} のバージョンの一覧にありません。",
     "error.noRecipe": "レシピ {recipe} はありません。",
     "error.linkUnknown": "非対応のリンクです。",
-    "error.linkNoRecipe": "リンクにレシピがありません: {link}",
+    "error.linkNoRecipe": "リンクにレシピがありません。",
     "error.linkNotHttps": "リンクのレシピの URL が https ではありません: {url}",
 };
 
