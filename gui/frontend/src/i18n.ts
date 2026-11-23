@@ -26,7 +26,6 @@ const en = {
     "pending.dismiss": "Dismiss",
 
     "recipes.updateAll": "Update all recipes",
-    "recipes.sync": "Sync with ALCOM",
     "recipes.none": "No recipes yet. Add recipe files from the button at the top, or drop them on this window.",
 
     "recipe.update": "Update",
@@ -57,6 +56,7 @@ const en = {
     "version.remove": "Remove",
 
     "available.reload": "Reload",
+    "available.sync": "Sync available versions",
     "available.none": "No version is available yet.",
 
     "log.title": "Log",
@@ -125,7 +125,6 @@ const ja: Record<Key, string> = {
     "pending.dismiss": "閉じる",
 
     "recipes.updateAll": "全てのレシピを更新",
-    "recipes.sync": "ALCOM に同期",
     "recipes.none": "レシピはまだありません。上のボタンか、この窓へのドロップで、レシピのファイルを追加してください。",
 
     "recipe.update": "更新",
@@ -156,6 +155,7 @@ const ja: Record<Key, string> = {
     "version.remove": "取り除く",
 
     "available.reload": "再読み込み",
+    "available.sync": "利用可能なバージョンを同期する",
     "available.none": "利用可能なバージョンはまだありません。",
 
     "log.title": "ログ",
