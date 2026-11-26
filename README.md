@@ -22,6 +22,17 @@ To build it from source instead, with Go 1.27 or later:
 go install github.com/kaikoga/vpmify/cmd/vpmify@latest
 ```
 
+## Use the CLI
+
+Add a recipe, which tells Vpmify where a package comes from, then pull its newest version. ALCOM lists it as a user package.
+
+```sh
+vpmify recipe add https://vpm.kaikoga.net/vpmify/cluster-creator-kit.json
+vpmify package pull net.kaikoga.vpmify.cluster-creator-kit
+```
+
+Example recipes are in [examples](examples) and on [vpm.kaikoga.net/vpmify](https://vpm.kaikoga.net/vpmify/). `vpmify help` shows every command. To write a recipe, see [docs/recipe.md](docs/recipe.md) and [docs/recipe_format.md](docs/recipe_format.md).
+
 ## AI Disclosure
 
 Vpmify is developed with AI coding tools. Most of its code and documentation were written by Claude Code, directed by the maintainer, who is responsible for it.
