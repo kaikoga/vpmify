@@ -6,6 +6,8 @@ Convert UPM packages into VPM packages for ALCOM.
 
 Vpmify converts UPM packages, from the tags of GitHub repositories and from UPM registries, into VPM packages on your machine, and registers them with ALCOM as user packages.
 
+The GUI and recipes are explained at [docs.kaikoga.net](https://docs.kaikoga.net/en/vpmify) ([日本語](https://docs.kaikoga.net/vpmify)).
+
 ## Install the CLI
 
 Download the archive for your OS and CPU from [GitHub Releases](https://github.com/kaikoga/vpmify/releases):
